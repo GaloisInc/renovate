@@ -1,0 +1,8 @@
+packages: deps/elf-edit
+          deps/flexdis86
+          deps/dwarf/
+
+          deps/macaw/
+          deps/macaw-x86/
+          deps/parameterized-utils/
+          ./
