@@ -23,7 +23,6 @@ module Renovate.ELF (
   rewriteElf,
   entryPoints,
   RewriterConfig(..),
-  Instrumentor(..),
   RewriterInfo(..),
   SomeBlocks(..)
   ) where
@@ -113,8 +112,8 @@ data SomeBlocks = forall i a w
                 . (MM.MemWidth w, ISA.InstructionConstraints i a)
                 => SomeBlocks (ISA.ISA i a w) [SFE.ConcreteBlock i w]
 
-data Instrumentor = DefaultInstrumentor
-                  | IdentityInstrumentor
+-- data Instrumentor = DefaultInstrumentor
+--                   | IdentityInstrumentor
 
 -- | Apply an instrumentation pass to the code in an ELF binary,
 -- rewriting the binary.
@@ -128,10 +127,11 @@ data Instrumentor = DefaultInstrumentor
 -- determined by examining metadata in the ELF file that lists the
 -- machine architecture.  Supported architectures are listed in the
 -- Renovate.Arch module hierarchy.
+
 withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
               -- ^ The ELF file to analyze
-              -> Instrumentor
+              -> Rewriter
               -> (forall i a w arch . (R.ArchBits arch w,
                                        Typeable w,
                                        KnownNat w,
@@ -143,16 +143,13 @@ withElfConfig :: (C.MonadThrow m)
                                    -> m t)
               -> m t
 withElfConfig e0 i k =
-  case (e0, withElf e0 E.elfMachine, i) of
-    (E.Elf32 _, mach, _) ->
+  case (e0, withElf e0 E.elfMachine) of
+    (E.Elf32 _, mach) ->
       -- No support for 32 bit architectures yet.  Should change with ARM
       C.throwM (UnsupportedArchitecture mach)
-    (E.Elf64 e, E.EM_X86_64, DefaultInstrumentor) ->
-      withMemory e $ k X86_64.config e
-    (E.Elf64 e, E.EM_X86_64, IdentityInstrumentor) ->
-      let config' = X86_64.config { rcInstrumentor = I.identity }
-      in withMemory e $ k config' e
-    (E.Elf64 _, mach, _) -> C.throwM (UnsupportedArchitecture mach)
+    (E.Elf64 e, E.EM_X86_64) ->
+      withMemory e $ k X86_64.config { rcInstrumentor = iX86_64 i } e
+    (E.Elf64 _, mach) -> C.throwM (UnsupportedArchitecture mach)
 
 rewriteElf :: (ISA.InstructionConstraints i a,
                E.ElfWidthConstraints w,
