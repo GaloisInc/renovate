@@ -112,9 +112,6 @@ data SomeBlocks = forall i a w
                 . (MM.MemWidth w, ISA.InstructionConstraints i a)
                 => SomeBlocks (ISA.ISA i a w) [SFE.ConcreteBlock i w]
 
--- data Instrumentor = DefaultInstrumentor
---                   | IdentityInstrumentor
-
 -- | Apply an instrumentation pass to the code in an ELF binary,
 -- rewriting the binary.
 --
