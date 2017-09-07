@@ -2,9 +2,11 @@
 -- | An 'ABI' implementation for the x86_64 ABI
 --
 -- Currently, this is for Linux; Windows and OS X would require different ABIs
-module Renovate.Arch.X86_64.ABI (
-  abi
-  ) where
+module Renovate.Arch.X86_64.ABI
+( abi
+, instrOperands
+, instrOpcode
+) where
 
 import Data.Bits
 import Data.Int ( Int64 )

@@ -9,6 +9,8 @@ import qualified Data.Traversable as T
 
 import           Prelude
 
+import qualified Data.Macaw.Memory as MC
+
 import           Renovate.BasicBlock
 import           Renovate.ISA
 import           Renovate.Redirect.Monad
@@ -21,7 +23,7 @@ import           Renovate.Redirect.Monad
 -- blocks.  We will generate a diagnostic for each one.
 --
 -- This is a low level helper mostly exposed for testing
-redirectOriginalBlocks :: (Monad m, T.Traversable t, InstructionConstraints i a)
+redirectOriginalBlocks :: (MC.MemWidth w, Monad m, T.Traversable t, InstructionConstraints i a)
                        => t (ConcreteBlock i w, ConcreteBlock i w)
                        -> RewriterT i a w m (t (ConcreteBlock i w, ConcreteBlock i w))
 redirectOriginalBlocks = T.traverse redirectBlock
@@ -35,7 +37,7 @@ redirectOriginalBlocks = T.traverse redirectBlock
 --
 -- Note that the address of the jump instruction is the address of the
 -- original block (since it will be the first instruction).
-redirectBlock :: (Monad m, InstructionConstraints i a)
+redirectBlock :: (MC.MemWidth w, Monad m, InstructionConstraints i a)
               => (ConcreteBlock i w, ConcreteBlock i w)
               -> RewriterT i a w m (ConcreteBlock i w, ConcreteBlock i w)
 redirectBlock unmodified@(origBlock, instrBlock) = do

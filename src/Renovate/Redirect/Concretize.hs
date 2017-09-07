@@ -131,13 +131,13 @@ mapJumpAddress concreteAddressMap (tagged, insnAddr) = do
       | Just concAddr <- M.lookup symAddr concreteAddressMap ->
         case isaModifyJumpTarget isa (isaConcretizeAddresses isa insnAddr i) insnAddr concAddr of
           Nothing -> do
-            let err :: Diagnostic w
+            let err :: Diagnostic
                 err = InstructionIsNotJump (show i)
             logDiagnostic err
             throwError err
           Just insns -> return insns
       | otherwise -> do
-          let err :: Diagnostic w
+          let err :: Diagnostic
               err = NoConcreteAddressForSymbolicTarget symAddr "concretizeJumps"
           logDiagnostic err
           throwError err

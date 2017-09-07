@@ -62,7 +62,7 @@ redirect :: (Monad m, InstructionConstraints i a, KnownNat w, MM.MemWidth w, Typ
          -> [ConcreteBlock i w]
          -- ^ The original basic blocks
          -> SymbolMap w
-         -> m (Either E.SomeException ([ConcreteBlock i w], [ConcreteBlock i w]), NewSymbolsMap w, [Diagnostic w])
+         -> m (Either E.SomeException ([ConcreteBlock i w], [ConcreteBlock i w]), NewSymbolsMap w, [Diagnostic])
 redirect isa instrumentor mem strat layoutAddr blocks symmap = runRewriterT isa symmap $ do
   baseSymBlocks <- symbolizeBasicBlocks mem (L.sortBy (comparing basicBlockAddress) blocks)
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do

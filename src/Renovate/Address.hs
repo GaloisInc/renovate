@@ -13,7 +13,6 @@ module Renovate.Address (
 
 import qualified GHC.Err.Located as L
 
-import           Control.Lens ( (^.) )
 import           Data.Int ( Int64 )
 import           Data.Maybe ( fromMaybe )
 import           Data.Word ( Word64 )

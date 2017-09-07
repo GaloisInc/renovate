@@ -22,6 +22,8 @@ module Renovate.Config (
   withMemory,
   rewriteElf,
   entryPoints,
+  riSectionBaseAddress,
+  riInitialBytes,
   Rewriter(..),
   RewriterConfig(..),
   RewriterInfo(..),
@@ -57,7 +59,6 @@ import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.Memory.ElfLoader as MM
 import qualified Data.Macaw.Types as MM
-import qualified Data.Parameterized.Some as PU
 
 import qualified Renovate.Address as SFE
 import qualified Renovate.Analysis.FunctionRecovery as FR
@@ -103,7 +104,7 @@ data RewriterInfo w =
                , _riSectionBaseAddress :: Maybe Word64
                , _riInitialBytes :: Maybe B.ByteString
                , _riBlockRecoveryDiagnostics :: [R.Diagnostic]
-               , _riRedirectionDiagnostics :: [PU.Some SFE.Diagnostic]
+               , _riRedirectionDiagnostics :: [SFE.Diagnostic]
                , _riRecoveredBlocks :: Maybe SomeBlocks
                , _riInstrumentationInfo :: Maybe (I.InstrumentInfo w)
                , _riELF :: E.Elf w
@@ -661,10 +662,10 @@ instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutA
       let cfgs = FR.recoverFunctions isa mem blockInfo
       case I.runInstrument (SFE.relFromSegmentOff entryPoint) newGlobalBase cfgs (SFE.redirect isa (rcInstrumentor cfg) mem strat layoutAddr blocks symmap) of
         ((Left exn2, _newSyms, diags2), _info) -> do
-          riRedirectionDiagnostics L..= map PU.Some diags2
+          riRedirectionDiagnostics L..= diags2
           C.throwM (RewriterFailure exn2 diags2)
         ((Right (overwrittenBlocks, instrumentationBlocks), newSyms, diags2), info) -> do
-          riRedirectionDiagnostics L..= map PU.Some diags2
+          riRedirectionDiagnostics L..= diags2
           riInstrumentationInfo L..= Just info
           let allBlocks = overwrittenBlocks ++ instrumentationBlocks
           case cfg of
@@ -683,7 +684,7 @@ mkNewDataSection baseAddr info = do
 data ElfRewriteException = RewrittenTextSectionSizeMismatch Int Int
                          | StringTableNotFound
                          | BlockRecoveryFailure C.SomeException [R.Diagnostic]
-                         | forall w . (KnownNat w) => RewriterFailure C.SomeException [SFE.Diagnostic w]
+                         | RewriterFailure C.SomeException [SFE.Diagnostic]
                          | UnsupportedArchitecture E.ElfMachine
                          | MemoryLoadError String
                          | NoTextSectionFound
@@ -701,18 +702,18 @@ newtype ElfRewriter w a = ElfRewriter { unElfRewrite :: S.StateT (RewriterInfo w
                                     S.MonadState (RewriterInfo w))
 
 emptyRewriterInfo :: E.Elf w -> RewriterInfo w
-emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress = Nothing
-                                 , _riOverwrittenRegions = []
-                                 , _riAppendedSegments = []
-                                 , _riEntryPointAddress = Nothing
-                                 , _riSectionBaseAddress = Nothing
-                                 , _riInitialBytes = Nothing
-                                 , _riBlockRecoveryDiagnostics = []
-                                 , _riRedirectionDiagnostics = []
-                                 , _riRecoveredBlocks = Nothing
-                                 , _riInstrumentationInfo = Nothing
-                                 , _riELF = e
-                                 }
+emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
+                                   , _riOverwrittenRegions       = []
+                                   , _riAppendedSegments         = []
+                                   , _riEntryPointAddress        = Nothing
+                                   , _riSectionBaseAddress       = Nothing
+                                   , _riInitialBytes             = Nothing
+                                   , _riBlockRecoveryDiagnostics = []
+                                   , _riRedirectionDiagnostics   = []
+                                   , _riRecoveredBlocks          = Nothing
+                                   , _riInstrumentationInfo      = Nothing
+                                   , _riELF                      = e
+                                   }
 
 riSegmentVirtualAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
 riSegmentVirtualAddress = L.lens _riSegmentVirtualAddress (\ri v -> ri { _riSegmentVirtualAddress = v })
@@ -735,7 +736,7 @@ riInitialBytes = L.lens _riInitialBytes (\ri v -> ri { _riInitialBytes = v })
 riBlockRecoveryDiagnostics :: L.Simple L.Lens (RewriterInfo w) [R.Diagnostic]
 riBlockRecoveryDiagnostics = L.lens _riBlockRecoveryDiagnostics (\ri v -> ri { _riBlockRecoveryDiagnostics = v })
 
-riRedirectionDiagnostics :: L.Simple L.Lens (RewriterInfo w) [PU.Some SFE.Diagnostic]
+riRedirectionDiagnostics :: L.Simple L.Lens (RewriterInfo w) [SFE.Diagnostic]
 riRedirectionDiagnostics = L.lens _riRedirectionDiagnostics (\ri v -> ri { _riRedirectionDiagnostics = v })
 
 riRecoveredBlocks :: L.Simple L.Lens (RewriterInfo w) (Maybe SomeBlocks)

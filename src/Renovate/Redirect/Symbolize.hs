@@ -100,7 +100,7 @@ symbolizeJumps mem symAddrMap (cb, symAddr) = do
       case M.lookup target symAddrMap of
         Just saddr -> return saddr
         Nothing -> do
-          let err :: Diagnostic w
+          let err :: Diagnostic
               err = NoSymbolicAddressForTarget target "symbolizeJumps"
           logDiagnostic err
           throwError err
