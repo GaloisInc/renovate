@@ -17,7 +17,7 @@
 -- It works by redirecting all of the code in the original text
 -- section to rewritten versions in a new section.  It handles
 -- creating the new section and fixing up all of the ELF metadata.
-module Renovate.ELF (
+module Renovate.Config (
   withElfConfig,
   withMemory,
   rewriteElf,
@@ -67,7 +67,7 @@ import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as R
 import qualified Renovate.Redirect as SFE
 import qualified Renovate.Redirect.Monad as SFEM
-import           Renovate.ELF.Internal
+import           Renovate.Config.Internal
 
 import qualified Renovate.Instrument as I
 import           Debug.Trace

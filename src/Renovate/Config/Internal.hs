@@ -1,7 +1,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DataKinds  #-}
 -- | Internal helpers for the ELF rewriting interface
-module Renovate.ELF.Internal (
+module Renovate.Config.Internal (
   RewriterConfig(..)
 , Rewriter(..)
   ) where

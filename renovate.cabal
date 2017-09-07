@@ -26,8 +26,8 @@ library
                        Renovate.BasicBlock
                        Renovate.BasicBlock.Assemble
                        Renovate.BasicBlock.Types
-                       Renovate.ELF
-                       Renovate.ELF.Internal
+                       Renovate.Config
+                       Renovate.Config.Internal
                        Renovate.Instrument
                        Renovate.Instrument.Monad
                        Renovate.ISA

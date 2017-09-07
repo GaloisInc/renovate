@@ -26,7 +26,7 @@ import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.X86 as X86
 import qualified Data.Macaw.X86.ArchTypes as X86
 
-import           Renovate.ELF.Internal ( RewriterConfig(..) )
+import           Renovate.Config.Internal ( RewriterConfig(..) )
 
 import           Renovate.Arch.X86_64.ABI
 import           Renovate.Arch.X86_64.ISA
