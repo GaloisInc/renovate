@@ -22,6 +22,7 @@ module Renovate.ELF (
   withMemory,
   rewriteElf,
   entryPoints,
+  Rewriter(..),
   RewriterConfig(..),
   RewriterInfo(..),
   SomeBlocks(..)
