@@ -132,7 +132,8 @@ data SomeBlocks = forall i a w
 withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
               -- ^ The ELF file to analyze
-              -> Rewriter
+              -> Analysis b
+              -> Rewriter b
               -> (forall i a w arch . (R.ArchBits arch w,
                                        Typeable w,
                                        KnownNat w,
@@ -143,13 +144,13 @@ withElfConfig :: (C.MonadThrow m)
                                    -> MM.Memory w
                                    -> m t)
               -> m t
-withElfConfig e0 i k =
+withElfConfig e0 analysis rewriter k =
   case (e0, withElf e0 E.elfMachine) of
     (E.Elf32 _, mach) ->
       -- No support for 32 bit architectures yet.  Should change with ARM
       C.throwM (UnsupportedArchitecture mach)
     (E.Elf64 e, E.EM_X86_64) ->
-      withMemory e $ k X86_64.config { rcRewriter = iX86_64 i } e
+      withMemory e (k (X86_64.config (aX86_64 analysis) (iX86_64 rewriter)) e)
     (E.Elf64 _, mach) -> C.throwM (UnsupportedArchitecture mach)
 
 -- | Apply a rewriter to an ELF file using the chosen layout strategy.
@@ -673,19 +674,28 @@ instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutA
       let blocks = R.biBlocks blockInfo
       riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
       let cfgs = FR.recoverFunctions isa mem blockInfo
-      case RW.runRewriteM (RA.relFromSegmentOff entryPoint) newGlobalBase cfgs (RE.redirect isa (rcRewriter cfg) mem strat layoutAddr blocks symmap) of
-        ((Left exn2, _newSyms, diags2), _info) -> do
-          riRedirectionDiagnostics L..= diags2
-          C.throwM (RewriterFailure exn2 diags2)
-        ((Right (overwrittenBlocks, instrumentationBlocks), newSyms, diags2), info) -> do
-          riRedirectionDiagnostics L..= diags2
-          riInstrumentationInfo L..= Just info
-          let allBlocks = overwrittenBlocks ++ instrumentationBlocks
-          case cfg of
-            RenovateConfig { rcAssembler = asm } -> do
-              (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks isa textSectionAddr textBytes layoutAddr asm allBlocks
-              let newDataBytes = mkNewDataSection newGlobalBase info
-              return (overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
+      case cfg of
+        -- This pattern match is only here to deal with the existential
+        -- quantification inside of RenovateConfig.
+        RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } ->
+          let analysisResult = analysis mem blockInfo in
+          case RW.runRewriteM (RA.relFromSegmentOff entryPoint)
+                              newGlobalBase
+                              cfgs
+                              (RE.redirect isa (rewriter analysisResult) mem strat layoutAddr blocks symmap)
+          of
+            ((Left exn2, _newSyms, diags2), _info) -> do
+              riRedirectionDiagnostics L..= diags2
+              C.throwM (RewriterFailure exn2 diags2)
+            ((Right (overwrittenBlocks, instrumentationBlocks), newSyms, diags2), info) -> do
+              riRedirectionDiagnostics L..= diags2
+              riInstrumentationInfo L..= Just info
+              let allBlocks = overwrittenBlocks ++ instrumentationBlocks
+              case cfg of
+                RenovateConfig { rcAssembler = asm } -> do
+                  (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks isa textSectionAddr textBytes layoutAddr asm allBlocks
+                  let newDataBytes = mkNewDataSection newGlobalBase info
+                  return (overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
 
 mkNewDataSection :: (MM.MemWidth w) => RA.RelAddress w -> RW.RewriteInfo w -> Maybe B.ByteString
 mkNewDataSection baseAddr info = do

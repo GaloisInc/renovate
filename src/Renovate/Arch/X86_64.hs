@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE Rank2Types       #-}
 -- | The interface for X86_64-specific ISA details.
 --
 -- The x86_64 ISA is currently supported through the flexdis86
@@ -35,6 +36,8 @@ import           Renovate.Arch.X86_64.ABI
 import           Renovate.Arch.X86_64.ISA
 import           Renovate.Arch.X86_64.Internal ( Value, Instruction, TargetAddress, AssemblyFailure(..), DisassemblyFailure(..) )
 import           Renovate.BasicBlock
+import           Renovate.Recovery
+import qualified Renovate.Rewrite as RW
 
 -- | The configuration for an x86_64 rewriter
 --
@@ -45,13 +48,18 @@ import           Renovate.BasicBlock
 --
 -- This configuration is actually specific to Linux due to the system
 -- call personality.
-config :: (MM.MemWidth w) => RenovateConfig Instruction (TargetAddress w) w X86.X86_64
-config = RenovateConfig { rcISA = isa
-                        , rcArchInfo = X86.x86_64_linux_info
-                        , rcAssembler = assemble
-                        , rcDisassembler = disassemble
-                        , rcDisassembler1 = disassemble1
-                        , rcRewriter = instrumentor
-                        }
-  where
-    instrumentor = return . basicBlockInstructions
+config :: (MM.MemWidth w)
+       => (MM.Memory w -> BlockInfo Instruction w -> a)
+       -> (a -> SymbolicBlock Instruction (TargetAddress w) w
+             -> RW.RewriteM Instruction w [TaggedInstruction Instruction (TargetAddress w)])
+       -> RenovateConfig Instruction (TargetAddress w) w X86.X86_64
+config analysis rewriter =
+  RenovateConfig
+    { rcISA           = isa
+    , rcArchInfo      = X86.x86_64_linux_info
+    , rcAssembler     = assemble
+    , rcDisassembler  = disassemble
+    , rcDisassembler1 = disassemble1
+    , rcAnalysis      = analysis
+    , rcRewriter      = rewriter
+    }

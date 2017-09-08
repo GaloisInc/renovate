@@ -18,6 +18,7 @@
 module Renovate
 ( -- * Configuration
   C.Rewriter(..),
+  C.Analysis(..),
   LB.LayoutStrategy(..),
   C.RenovateConfig,
   -- * ELF entry point
@@ -64,7 +65,9 @@ module Renovate
   E.SomeBlocks(..),
   E.RewriterInfo(..),
   D.Diagnostic(..),
-  D.Diagnostics(..)
+  D.Diagnostics(..),
+  -- * Recovery
+  Recovery.BlockInfo(..)
 )
 where
 
@@ -78,3 +81,4 @@ import qualified Renovate.BinaryFormat.ELF as E
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Redirect.LayoutBlocks as LB
 import qualified Renovate.Rewrite as RW
+import qualified Renovate.Recovery as Recovery
