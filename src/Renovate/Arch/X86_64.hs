@@ -14,6 +14,9 @@ module Renovate.Arch.X86_64 (
   assemble,
   disassemble,
   disassemble1,
+  -- * Utilities
+  instrOpcode,
+  instrOperands,
   -- * Types
   Instruction,
   TargetAddress,

@@ -1,6 +1,9 @@
 {-# LANGUAGE FlexibleContexts #-}
 -- | Define the strategy for laying out 'SymbolicBlock's
-module Renovate.Redirect.LayoutBlocks ( layoutBlocks ) where
+module Renovate.Redirect.LayoutBlocks (
+  layoutBlocks,
+  LayoutStrategy(..)
+  ) where
 
 import qualified Data.Traversable as T
 

@@ -16,19 +16,8 @@ extra-source-files:  ChangeLog.md
 cabal-version:       >=1.10
 
 library
-  exposed-modules:
-                       Renovate
-                       Renovate.ABI
-                       Renovate.Address
-                       Renovate.Analysis.FunctionRecovery
+  exposed-modules:     Renovate
                        Renovate.Arch.X86_64
-                       Renovate.Arch.X86_64.ABI
-                       Renovate.BasicBlock
-                       Renovate.BinaryFormat.ELF
-                       Renovate.ISA
-                       Renovate.Instrument
-                       Renovate.Recovery
-                       Renovate.Redirect
   other-modules:
                        Renovate.Arch.X86_64.ISA
                        Renovate.Arch.X86_64.Internal
@@ -46,6 +35,16 @@ library
                        Renovate.Redirect.LayoutBlocks.Types
                        Renovate.Redirect.Monad
                        Renovate.Redirect.Symbolize
+                       Renovate.ABI
+                       Renovate.Address
+                       Renovate.Analysis.FunctionRecovery
+                       Renovate.Arch.X86_64.ABI
+                       Renovate.BasicBlock
+                       Renovate.BinaryFormat.ELF
+                       Renovate.ISA
+                       Renovate.Instrument
+                       Renovate.Recovery
+                       Renovate.Redirect
   -- other-extensions:    
   build-depends:       base >=4.10 && <5,
                        bytestring,
