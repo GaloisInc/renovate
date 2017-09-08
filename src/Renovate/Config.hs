@@ -26,7 +26,7 @@ data RenovateConfig i a w arch =
                  , rcAssembler     :: forall m . (C.MonadThrow m) => i () -> m B.ByteString
                  , rcDisassembler  :: forall m . (C.MonadThrow m) => B.ByteString -> m [i ()]
                  , rcDisassembler1 :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, i ())
-                 , rcInstrumentor  :: B.SymbolicBlock i a w -> RW.RewriteM i w [B.TaggedInstruction i a]
+                 , rcRewriter      :: B.SymbolicBlock i a w -> RW.RewriteM i w [B.TaggedInstruction i a]
                  }
 
 data Rewriter = Rewriter

@@ -149,7 +149,7 @@ withElfConfig e0 i k =
       -- No support for 32 bit architectures yet.  Should change with ARM
       C.throwM (UnsupportedArchitecture mach)
     (E.Elf64 e, E.EM_X86_64) ->
-      withMemory e $ k X86_64.config { rcInstrumentor = iX86_64 i } e
+      withMemory e $ k X86_64.config { rcRewriter = iX86_64 i } e
     (E.Elf64 _, mach) -> C.throwM (UnsupportedArchitecture mach)
 
 rewriteElf :: (ISA.InstructionConstraints i a,
@@ -662,7 +662,7 @@ instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutA
       let blocks = R.biBlocks blockInfo
       riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
       let cfgs = FR.recoverFunctions isa mem blockInfo
-      case RW.runRewriteM (RA.relFromSegmentOff entryPoint) newGlobalBase cfgs (RE.redirect isa (rcInstrumentor cfg) mem strat layoutAddr blocks symmap) of
+      case RW.runRewriteM (RA.relFromSegmentOff entryPoint) newGlobalBase cfgs (RE.redirect isa (rcRewriter cfg) mem strat layoutAddr blocks symmap) of
         ((Left exn2, _newSyms, diags2), _info) -> do
           riRedirectionDiagnostics L..= diags2
           C.throwM (RewriterFailure exn2 diags2)

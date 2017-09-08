@@ -51,7 +51,7 @@ config = RenovateConfig { rcISA = isa
                         , rcAssembler = assemble
                         , rcDisassembler = disassemble
                         , rcDisassembler1 = disassemble1
-                        , rcInstrumentor = instrumentor
+                        , rcRewriter = instrumentor
                         }
   where
     instrumentor = return . basicBlockInstructions
