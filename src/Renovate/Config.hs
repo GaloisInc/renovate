@@ -19,7 +19,11 @@ import qualified Renovate.BasicBlock as B
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Rewrite as RW
 
--- | The configuration required for a run of the ELF rewriter.
+-- | The configuration required for a run of the binary rewriter.
+--
+-- The binary rewriter is agnostic to the container format of the binary (e.g.,
+-- ELF, COFF, Mach-O).  This configuration contains all of the information
+-- necessary to analyze and rewrite a binary.
 data RenovateConfig i a w arch =
   RenovateConfig { rcISA           :: ISA.ISA i a w
                  , rcArchInfo      :: MM.ArchitectureInfo arch
@@ -29,9 +33,14 @@ data RenovateConfig i a w arch =
                  , rcRewriter      :: B.SymbolicBlock i a w -> RW.RewriteM i w [B.TaggedInstruction i a]
                  }
 
+-- | The rewriting action to take
+--
+-- Callers must specify a rewriting action for each platform they wish to
+-- support.  Binary rewriting is architecture-specific.
 data Rewriter = Rewriter
   { iX86_64 :: B.SymbolicBlock X86.Instruction (X86.TargetAddress 64) 64
             -> RW.RewriteM X86.Instruction 64 [B.TaggedInstruction X86.Instruction (X86.TargetAddress 64)]
+    -- ^ A rewriter suitable for the x86_64 architecture
   }
 
 -- | Compose a list of instrumentation functions into a single

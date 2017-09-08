@@ -152,15 +152,26 @@ withElfConfig e0 i k =
       withMemory e $ k X86_64.config { rcRewriter = iX86_64 i } e
     (E.Elf64 _, mach) -> C.throwM (UnsupportedArchitecture mach)
 
+-- | Apply a rewriter to an ELF file using the chosen layout strategy.
+--
+-- The 'RE.LayoutStrategy' determines how rewritten basic blocks will be laid
+-- out in the new binary file.  If the rewriter succeeds, it returns a new ELF
+-- file and some metadata describing the changes made to the file.  Some of the
+-- metadata is provided by rewriter passes in the 'RW.RewriteM' environment.
 rewriteElf :: (ISA.InstructionConstraints i a,
                E.ElfWidthConstraints w,
                KnownNat w,
                Typeable w,
                R.ArchBits arch w)
            => RenovateConfig i a w arch
+           -- ^ The configuration for the rewriter
            -> E.Elf w
+           -- ^ The ELF file to rewrite
            -> MM.Memory w
+           -- ^ A representation of the contents of memory of the ELF file
+           -- (including statically-allocated data)
            -> RE.LayoutStrategy
+           -- ^ The layout strategy for blocks in the new binary
            -> Either C.SomeException (E.Elf w, RewriterInfo w)
 rewriteElf cfg e mem strat =
   P.runCatch $ do

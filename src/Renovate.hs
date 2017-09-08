@@ -1,3 +1,20 @@
+-- | Renovate provides an interface for analyzing and rewriting binaries.
+--
+-- Rewriting actions are specified through the 'C.Rewriter' record; callers must
+-- provide a different rewriting backend for each architecture they need to
+-- support.
+--
+-- The current interface allows for rewriting binaries in ELF format.  In the
+-- future, other backends will be added, along with a binary format agnostic
+-- entry point.
+--
+-- A typical use currently looks like:
+--
+-- > import Renovate
+-- > rewriteMyElf someElf myRewriter = do
+-- >   withElfConfig someElf myRewriter $ \cfg e mem -> do
+-- >     case rewriteElf cfg e mem Compact of
+-- >       Right (newElf, rewriterInfo) -> writeElfAndInfo newElf rewriterInfo
 module Renovate
 ( -- * Configuration
   C.Rewriter(..),

@@ -43,6 +43,8 @@ data RelAddress w = RelAddress { relSegment :: MM.SegmentIndex
                                }
   deriving (Eq, Ord, Show)
 
+-- | Convert an address in @base + offset@ from macaw ('MM.MemSegmentOff') into
+-- our internal representation of addresses
 relFromSegmentOff :: (L.HasCallStack, MM.MemWidth w)
                   => MM.MemSegmentOff w
                   -> RelAddress w
@@ -63,6 +65,8 @@ firstRelAddress segIx base = RelAddress { relSegment = segIx
                                         }
 
 {-# INLINE absoluteAddress #-}
+-- | Convert a 'RelAddress' (which is a segment + offset representation) to an
+-- absolute address.
 absoluteAddress :: (MM.MemWidth w) => RelAddress w -> MM.MemWord w
 absoluteAddress a = relBase a + relOffset a
 
