@@ -29,6 +29,10 @@ module Renovate
   B.ConcreteBlock,
   B.BasicBlock(..),
   B.SymbolicInfo(..),
+  Recovery.BlockInfo(..),
+  B.instructionAddresses,
+  B.concreteBlockSize,
+  B.symbolicBlockSize,
   -- * Instructions
   B.TaggedInstruction,
   B.tagInstruction,
@@ -58,6 +62,8 @@ module Renovate
   -- * ABI
   ABI.ABI(..),
   ISA.ISA(..),
+  ISA.JumpType(..),
+  ISA.JumpCondition(..),
   ISA.TrapPredicate(..),
   -- * Results
   RW.RewriteInfo(..),
@@ -65,9 +71,7 @@ module Renovate
   E.SomeBlocks(..),
   E.RewriterInfo(..),
   D.Diagnostic(..),
-  D.Diagnostics(..),
-  -- * Recovery
-  Recovery.BlockInfo(..)
+  D.Diagnostics(..)
 )
 where
 
