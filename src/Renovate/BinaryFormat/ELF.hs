@@ -105,7 +105,7 @@ data RewriterInfo w =
                , _riEntryPointAddress :: Maybe Word64
                , _riSectionBaseAddress :: Maybe Word64
                , _riInitialBytes :: Maybe B.ByteString
-               , _riBlockRecoveryDiagnostics :: [R.Diagnostic]
+               , _riBlockRecoveryDiagnostics :: [RD.Diagnostic]
                , _riRedirectionDiagnostics :: [RD.Diagnostic]
                , _riRecoveredBlocks :: Maybe SomeBlocks
                , _riInstrumentationInfo :: Maybe (I.InstrumentInfo w)
@@ -685,7 +685,7 @@ mkNewDataSection baseAddr info = do
 
 data ElfRewriteException = RewrittenTextSectionSizeMismatch Int Int
                          | StringTableNotFound
-                         | BlockRecoveryFailure C.SomeException [R.Diagnostic]
+                         | BlockRecoveryFailure C.SomeException [RD.Diagnostic]
                          | RewriterFailure C.SomeException [RD.Diagnostic]
                          | UnsupportedArchitecture E.ElfMachine
                          | MemoryLoadError String
