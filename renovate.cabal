@@ -24,7 +24,7 @@ library
                        Renovate.Arch.X86_64
                        Renovate.Arch.X86_64.ABI
                        Renovate.BasicBlock
-                       Renovate.Config
+                       Renovate.BinaryFormat.ELF
                        Renovate.ISA
                        Renovate.Instrument
                        Renovate.Recovery
@@ -34,7 +34,7 @@ library
                        Renovate.Arch.X86_64.Internal
                        Renovate.BasicBlock.Assemble
                        Renovate.BasicBlock.Types
-                       Renovate.Config.Internal
+                       Renovate.Config
                        Renovate.Diagnostic
                        Renovate.Instrument.Monad
                        Renovate.Recovery.Monad

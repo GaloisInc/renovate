@@ -26,7 +26,7 @@ import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.X86 as X86
 import qualified Data.Macaw.X86.ArchTypes as X86
 
-import           Renovate.Config.Internal ( RewriterConfig(..) )
+import           Renovate.Config ( RenovateConfig(..) )
 
 import           Renovate.Arch.X86_64.ABI
 import           Renovate.Arch.X86_64.ISA
@@ -42,8 +42,8 @@ import           Renovate.BasicBlock
 --
 -- This configuration is actually specific to Linux due to the system
 -- call personality.
-config :: (MM.MemWidth w) => RewriterConfig Instruction (TargetAddress w) w X86.X86_64
-config = RewriterConfig { rcISA = isa
+config :: (MM.MemWidth w) => RenovateConfig Instruction (TargetAddress w) w X86.X86_64
+config = RenovateConfig { rcISA = isa
                         , rcArchInfo = X86.x86_64_linux_info
                         , rcAssembler = assemble
                         , rcDisassembler = disassemble
