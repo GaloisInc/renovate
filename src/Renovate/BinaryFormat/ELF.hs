@@ -60,14 +60,16 @@ import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.Memory.ElfLoader as MM
 import qualified Data.Macaw.Types as MM
 
-import qualified Renovate.Address as SFE
+import qualified Renovate.Address as RA
 import qualified Renovate.Analysis.FunctionRecovery as FR
 import qualified Renovate.Arch.X86_64 as X86_64
-import qualified Renovate.BasicBlock.Assemble as SFE
+import qualified Renovate.BasicBlock as B
+import qualified Renovate.BasicBlock.Assemble as BA
+import qualified Renovate.Diagnostic as RD
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as R
-import qualified Renovate.Redirect as SFE
-import qualified Renovate.Redirect.Monad as SFEM
+import qualified Renovate.Redirect as RE
+import qualified Renovate.Redirect.Monad as RM
 import           Renovate.Config
 
 import qualified Renovate.Instrument as I
@@ -104,7 +106,7 @@ data RewriterInfo w =
                , _riSectionBaseAddress :: Maybe Word64
                , _riInitialBytes :: Maybe B.ByteString
                , _riBlockRecoveryDiagnostics :: [R.Diagnostic]
-               , _riRedirectionDiagnostics :: [SFE.Diagnostic]
+               , _riRedirectionDiagnostics :: [RD.Diagnostic]
                , _riRecoveredBlocks :: Maybe SomeBlocks
                , _riInstrumentationInfo :: Maybe (I.InstrumentInfo w)
                , _riELF :: E.Elf w
@@ -112,7 +114,7 @@ data RewriterInfo w =
 
 data SomeBlocks = forall i a w
                 . (MM.MemWidth w, ISA.InstructionConstraints i a)
-                => SomeBlocks (ISA.ISA i a w) [SFE.ConcreteBlock i w]
+                => SomeBlocks (ISA.ISA i a w) [B.ConcreteBlock i w]
 
 -- | Apply an instrumentation pass to the code in an ELF binary,
 -- rewriting the binary.
@@ -158,7 +160,7 @@ rewriteElf :: (ISA.InstructionConstraints i a,
            => RenovateConfig i a w arch
            -> E.Elf w
            -> MM.Memory w
-           -> SFE.LayoutStrategy
+           -> RE.LayoutStrategy
            -> Either C.SomeException (E.Elf w, RewriterInfo w)
 rewriteElf cfg e mem strat =
   P.runCatch $ do
@@ -236,7 +238,7 @@ doRewrite :: (ISA.InstructionConstraints i a,
               R.ArchBits arch w)
           => RenovateConfig i a w arch
           -> MM.Memory w
-          -> SFE.LayoutStrategy
+          -> RE.LayoutStrategy
           -> ElfRewriter w ()
 doRewrite cfg mem strat = do
   -- We pull some information from the unmodified initial binary: the text
@@ -267,8 +269,8 @@ doRewrite cfg mem strat = do
   -- (instrumentedBytes), which will be placed at the address computed
   -- above.
   let -- FIXME: Find a real segment index here
-      layoutAddr = SFE.firstRelAddress 80 (fromIntegral nextSegmentAddress)
-      dataAddr = SFE.firstRelAddress 81 (fromIntegral newDataSectionBase)
+      layoutAddr = RA.firstRelAddress 80 (fromIntegral nextSegmentAddress)
+      dataAddr = RA.firstRelAddress 81 (fromIntegral newDataSectionBase)
       Just textSectionAddr = MM.resolveAbsoluteAddr mem (fromIntegral (E.elfSectionAddr textSection))
   (overwrittenBytes, instrumentedBytes, mNewData, newSyms) <- instrumentTextSection cfg mem textSectionAddr (E.elfSectionData textSection) entryPoint strat layoutAddr dataAddr symmap
   (extraTextSecIdx, instrumentationSeg) <- withCurrentELF (newInstrumentationSegment nextSegmentAddress instrumentedBytes)
@@ -301,7 +303,7 @@ buildSymbolMap :: Integral (E.ElfWordType w)
                => MM.MemWidth w
                => MM.Memory w
                -> E.Elf w
-               -> ElfRewriter w (SFEM.SymbolMap w)
+               -> ElfRewriter w (RM.SymbolMap w)
 buildSymbolMap mem elf = do
   case filter isSymbolTable (F.toList (E._elfFileData elf)) of
     [E.ElfDataSymtab table] -> do
@@ -311,7 +313,7 @@ buildSymbolMap mem elf = do
     _ -> return mempty
   where
   mkPair e = case MM.resolveAbsoluteAddr mem (fromIntegral (E.steValue e)) of
-    Just addr | E.steType e == E.STT_FUNC -> Just (SFE.relFromSegmentOff addr, E.steName e)
+    Just addr | E.steType e == E.STT_FUNC -> Just (RA.relFromSegmentOff addr, E.steName e)
     _ -> Nothing
 
 isSymbolTable :: E.ElfDataRegion w -> Bool
@@ -321,8 +323,8 @@ isSymbolTable _                   = False
 buildNewSymbolTable :: (E.ElfWidthConstraints w, MM.MemWidth w)
                     => Word16
                     -> E.ElfSectionIndex
-                    -> SFE.RelAddress w
-                    -> SFEM.NewSymbolsMap w
+                    -> RA.RelAddress w
+                    -> RM.NewSymbolsMap w
                     -> E.ElfSymbolTable (E.ElfWordType w)
                     -- ^ The original symbol table
                     -> E.Elf w
@@ -338,7 +340,7 @@ buildNewSymbolTable textSecIdx extraTextSecIdx layoutAddr newSyms baseTable elf
     toMap      t = Map.fromList [ (E.steValue e, e) | e <- V.toList t ]
     newEntries t = V.fromList   [ newFromEntry textSecIdx extraTextSecIdx layoutAddr e ca nm
                                 | (ca, (oa, nm)) <- Map.toList newSyms
-                                , e <- maybeToList $! Map.lookup (fromIntegral (SFE.absoluteAddress oa)) t
+                                , e <- maybeToList $! Map.lookup (fromIntegral (RA.absoluteAddress oa)) t
                                 ]
 
 -- | Get the current symbol table
@@ -350,20 +352,20 @@ newFromEntry :: MM.MemWidth w
              => E.ElfWidthConstraints w
              => Word16
              -> E.ElfSectionIndex
-             -> SFE.RelAddress w
+             -> RA.RelAddress w
              -> E.ElfSymbolTableEntry (E.ElfWordType w)
-             -> SFE.RelAddress w
+             -> RA.RelAddress w
              -> B.ByteString
              -> E.ElfSymbolTableEntry (E.ElfWordType w)
 newFromEntry textSecIdx extraTextSecIdx layoutAddr e addr nm = e
   { E.steName  = "__embrittled_" `B.append` nm
   , E.steValue = fromIntegral absAddr
-  , E.steIndex = if absAddr >= SFE.absoluteAddress layoutAddr
+  , E.steIndex = if absAddr >= RA.absoluteAddress layoutAddr
                  then extraTextSecIdx
                  else E.ElfSectionIndex textSecIdx
   }
   where
-    absAddr = SFE.absoluteAddress addr
+    absAddr = RA.absoluteAddress addr
 
 -- | Create a new data segment containing a single data section, containing the given bytestring
 --
@@ -636,15 +638,15 @@ instrumentTextSection :: forall i a w arch
                       -- ^ The bytes of the text section
                       -> MM.MemSegmentOff w
                       -- ^ The entry point in the text section
-                      -> SFE.LayoutStrategy
+                      -> RE.LayoutStrategy
                       -- ^ The strategy to use for laying out instrumented blocks
-                      -> SFE.RelAddress w
+                      -> RA.RelAddress w
                       -- ^ The address to lay out the instrumented blocks
-                      -> SFE.RelAddress w
+                      -> RA.RelAddress w
                       -- ^ The address to lay out the new data section
-                      -> SFEM.SymbolMap w
+                      -> RM.SymbolMap w
                       -- ^ meta data?
-                      -> ElfRewriter w (B.ByteString, B.ByteString, Maybe B.ByteString, SFEM.NewSymbolsMap w)
+                      -> ElfRewriter w (B.ByteString, B.ByteString, Maybe B.ByteString, RM.NewSymbolsMap w)
 instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutAddr newGlobalBase symmap = do
   traceM ("instrumentTextSection entry point: " ++ show entryPoint)
   riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
@@ -660,7 +662,7 @@ instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutA
       let blocks = R.biBlocks blockInfo
       riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
       let cfgs = FR.recoverFunctions isa mem blockInfo
-      case I.runInstrument (SFE.relFromSegmentOff entryPoint) newGlobalBase cfgs (SFE.redirect isa (rcInstrumentor cfg) mem strat layoutAddr blocks symmap) of
+      case I.runInstrument (RA.relFromSegmentOff entryPoint) newGlobalBase cfgs (RE.redirect isa (rcInstrumentor cfg) mem strat layoutAddr blocks symmap) of
         ((Left exn2, _newSyms, diags2), _info) -> do
           riRedirectionDiagnostics L..= diags2
           C.throwM (RewriterFailure exn2 diags2)
@@ -670,21 +672,21 @@ instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutA
           let allBlocks = overwrittenBlocks ++ instrumentationBlocks
           case cfg of
             RenovateConfig { rcAssembler = asm } -> do
-              (overwrittenBytes, instrumentationBytes) <- SFE.assembleBlocks isa textSectionAddr textBytes layoutAddr asm allBlocks
+              (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks isa textSectionAddr textBytes layoutAddr asm allBlocks
               let newDataBytes = mkNewDataSection newGlobalBase info
               return (overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
 
-mkNewDataSection :: (MM.MemWidth w) => SFE.RelAddress w -> I.InstrumentInfo w -> Maybe B.ByteString
+mkNewDataSection :: (MM.MemWidth w) => RA.RelAddress w -> I.InstrumentInfo w -> Maybe B.ByteString
 mkNewDataSection baseAddr info = do
   guard (bytes > 0)
   return (B.pack (replicate bytes 0))
   where
-    bytes = fromIntegral (I.nextGlobalAddress info `SFE.addressDiff` baseAddr)
+    bytes = fromIntegral (I.nextGlobalAddress info `RA.addressDiff` baseAddr)
 
 data ElfRewriteException = RewrittenTextSectionSizeMismatch Int Int
                          | StringTableNotFound
                          | BlockRecoveryFailure C.SomeException [R.Diagnostic]
-                         | RewriterFailure C.SomeException [SFE.Diagnostic]
+                         | RewriterFailure C.SomeException [RD.Diagnostic]
                          | UnsupportedArchitecture E.ElfMachine
                          | MemoryLoadError String
                          | NoTextSectionFound
@@ -733,10 +735,10 @@ riSectionBaseAddress = L.lens _riSectionBaseAddress (\ri v -> ri { _riSectionBas
 riInitialBytes :: L.Simple L.Lens (RewriterInfo w) (Maybe B.ByteString)
 riInitialBytes = L.lens _riInitialBytes (\ri v -> ri { _riInitialBytes = v })
 
-riBlockRecoveryDiagnostics :: L.Simple L.Lens (RewriterInfo w) [R.Diagnostic]
+riBlockRecoveryDiagnostics :: L.Simple L.Lens (RewriterInfo w) [RD.Diagnostic]
 riBlockRecoveryDiagnostics = L.lens _riBlockRecoveryDiagnostics (\ri v -> ri { _riBlockRecoveryDiagnostics = v })
 
-riRedirectionDiagnostics :: L.Simple L.Lens (RewriterInfo w) [SFE.Diagnostic]
+riRedirectionDiagnostics :: L.Simple L.Lens (RewriterInfo w) [RD.Diagnostic]
 riRedirectionDiagnostics = L.lens _riRedirectionDiagnostics (\ri v -> ri { _riRedirectionDiagnostics = v })
 
 riRecoveredBlocks :: L.Simple L.Lens (RewriterInfo w) (Maybe SomeBlocks)
