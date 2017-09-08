@@ -1,8 +1,8 @@
 module Renovate
 ( -- * Configuration
-  E.Rewriter(..),
+  C.Rewriter(..),
   LB.LayoutStrategy(..),
-  E.RenovateConfig,
+  C.RenovateConfig,
   -- * ELF entry point
   E.withElfConfig,
   E.rewriteElf,
@@ -35,8 +35,8 @@ module Renovate
   I.newGlobalVar,
   I.lookupEntryAddress,
   I.lookupBlockCFG,
-  I.compose,
-  I.identity,
+  C.compose,
+  C.identity,
   -- * ABI
   ABI.ABI(..),
   ISA.ISA(..),
@@ -55,6 +55,7 @@ import qualified Renovate.ABI as ABI
 import qualified Renovate.Address as A
 import qualified Renovate.Analysis.FunctionRecovery as FR
 import qualified Renovate.BasicBlock as B
+import qualified Renovate.Config as C
 import qualified Renovate.Diagnostic as D
 import qualified Renovate.BinaryFormat.ELF as E
 import qualified Renovate.Instrument as I

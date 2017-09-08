@@ -2,8 +2,10 @@
 {-# LANGUAGE DataKinds  #-}
 -- | Internal helpers for the ELF rewriting interface
 module Renovate.Config (
-  RenovateConfig(..)
-, Rewriter(..)
+  RenovateConfig(..),
+  Rewriter(..),
+  compose,
+  identity
   ) where
 
 import qualified Control.Monad.Catch as C
@@ -33,3 +35,23 @@ data Rewriter = Rewriter
             -> I.Instrument X86.Instruction 64 [B.TaggedInstruction X86.Instruction (X86.TargetAddress 64)]
   }
 
+-- | Compose a list of instrumentation functions into a single
+-- function suitable for use as an argument to 'redirect'
+--
+-- The instrumentors are applied in order; that order must be
+-- carefully chosen, as the instrumentors are not isolated from each
+-- other.
+compose :: (Monad m)
+        => [B.SymbolicBlock i a w -> m [B.TaggedInstruction i a]]
+        -> (B.SymbolicBlock i a w -> m [B.TaggedInstruction i a])
+compose funcs = go funcs
+  where
+    go [] b = return $ B.basicBlockInstructions b
+    go (f:fs) b = do
+      is <- f b
+      go fs b { B.basicBlockInstructions = is }
+
+-- | An identity rewriter (i.e., a rewriter that makes no changes, but forces
+-- everything to be redirected).
+identity :: (Monad m) => B.SymbolicBlock i a w -> m [B.TaggedInstruction i a]
+identity sb = return (B.basicBlockInstructions sb)
