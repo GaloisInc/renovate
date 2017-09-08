@@ -25,7 +25,6 @@ library
                        Renovate.BasicBlock.Types
                        Renovate.Config
                        Renovate.Diagnostic
-                       Renovate.Instrument.Monad
                        Renovate.Recovery.Monad
                        Renovate.Redirect.Concretize
                        Renovate.Redirect.Internal
@@ -35,6 +34,7 @@ library
                        Renovate.Redirect.LayoutBlocks.Types
                        Renovate.Redirect.Monad
                        Renovate.Redirect.Symbolize
+                       Renovate.Rewrite
                        Renovate.ABI
                        Renovate.Address
                        Renovate.Analysis.FunctionRecovery
@@ -42,7 +42,6 @@ library
                        Renovate.BasicBlock
                        Renovate.BinaryFormat.ELF
                        Renovate.ISA
-                       Renovate.Instrument
                        Renovate.Recovery
                        Renovate.Redirect
   -- other-extensions:    

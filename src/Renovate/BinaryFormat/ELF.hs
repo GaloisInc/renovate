@@ -65,14 +65,14 @@ import qualified Renovate.Analysis.FunctionRecovery as FR
 import qualified Renovate.Arch.X86_64 as X86_64
 import qualified Renovate.BasicBlock as B
 import qualified Renovate.BasicBlock.Assemble as BA
+import           Renovate.Config
 import qualified Renovate.Diagnostic as RD
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as R
 import qualified Renovate.Redirect as RE
 import qualified Renovate.Redirect.Monad as RM
-import           Renovate.Config
+import qualified Renovate.Rewrite as RW
 
-import qualified Renovate.Instrument as I
 import           Debug.Trace
 debug :: a -> String -> a
 debug = flip trace
@@ -108,7 +108,7 @@ data RewriterInfo w =
                , _riBlockRecoveryDiagnostics :: [RD.Diagnostic]
                , _riRedirectionDiagnostics :: [RD.Diagnostic]
                , _riRecoveredBlocks :: Maybe SomeBlocks
-               , _riInstrumentationInfo :: Maybe (I.InstrumentInfo w)
+               , _riInstrumentationInfo :: Maybe (RW.RewriteInfo w)
                , _riELF :: E.Elf w
                }
 
@@ -662,7 +662,7 @@ instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutA
       let blocks = R.biBlocks blockInfo
       riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
       let cfgs = FR.recoverFunctions isa mem blockInfo
-      case I.runInstrument (RA.relFromSegmentOff entryPoint) newGlobalBase cfgs (RE.redirect isa (rcInstrumentor cfg) mem strat layoutAddr blocks symmap) of
+      case RW.runRewriteM (RA.relFromSegmentOff entryPoint) newGlobalBase cfgs (RE.redirect isa (rcInstrumentor cfg) mem strat layoutAddr blocks symmap) of
         ((Left exn2, _newSyms, diags2), _info) -> do
           riRedirectionDiagnostics L..= diags2
           C.throwM (RewriterFailure exn2 diags2)
@@ -676,12 +676,12 @@ instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutA
               let newDataBytes = mkNewDataSection newGlobalBase info
               return (overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
 
-mkNewDataSection :: (MM.MemWidth w) => RA.RelAddress w -> I.InstrumentInfo w -> Maybe B.ByteString
+mkNewDataSection :: (MM.MemWidth w) => RA.RelAddress w -> RW.RewriteInfo w -> Maybe B.ByteString
 mkNewDataSection baseAddr info = do
   guard (bytes > 0)
   return (B.pack (replicate bytes 0))
   where
-    bytes = fromIntegral (I.nextGlobalAddress info `RA.addressDiff` baseAddr)
+    bytes = fromIntegral (RW.nextGlobalAddress info `RA.addressDiff` baseAddr)
 
 data ElfRewriteException = RewrittenTextSectionSizeMismatch Int Int
                          | StringTableNotFound
@@ -744,5 +744,5 @@ riRedirectionDiagnostics = L.lens _riRedirectionDiagnostics (\ri v -> ri { _riRe
 riRecoveredBlocks :: L.Simple L.Lens (RewriterInfo w) (Maybe SomeBlocks)
 riRecoveredBlocks = L.lens _riRecoveredBlocks (\ri v -> ri { _riRecoveredBlocks = v })
 
-riInstrumentationInfo :: L.Simple L.Lens (RewriterInfo w) (Maybe (I.InstrumentInfo w))
+riInstrumentationInfo :: L.Simple L.Lens (RewriterInfo w) (Maybe (RW.RewriteInfo w))
 riInstrumentationInfo = L.lens _riInstrumentationInfo (\ri v -> ri { _riInstrumentationInfo = v })

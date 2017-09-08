@@ -29,12 +29,12 @@ module Renovate
   FR.Completion(..),
   FR.FunctionCFG(..),
   -- * Rewriting API
-  I.Instrument,
-  I.recordInstrumentation,
-  I.lookupGlobalVar,
-  I.newGlobalVar,
-  I.lookupEntryAddress,
-  I.lookupBlockCFG,
+  RW.RewriteM,
+  RW.recordRewrite,
+  RW.lookupGlobalVar,
+  RW.newGlobalVar,
+  RW.lookupEntryAddress,
+  RW.lookupBlockCFG,
   C.compose,
   C.identity,
   -- * ABI
@@ -42,8 +42,8 @@ module Renovate
   ISA.ISA(..),
   ISA.TrapPredicate(..),
   -- * Results
-  I.InstrumentInfo(..),
-  I.InstrumentationSite(..),
+  RW.RewriteInfo(..),
+  RW.RewriteSite(..),
   E.SomeBlocks(..),
   E.RewriterInfo(..),
   D.Diagnostic(..),
@@ -58,6 +58,6 @@ import qualified Renovate.BasicBlock as B
 import qualified Renovate.Config as C
 import qualified Renovate.Diagnostic as D
 import qualified Renovate.BinaryFormat.ELF as E
-import qualified Renovate.Instrument as I
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Redirect.LayoutBlocks as LB
+import qualified Renovate.Rewrite as RW

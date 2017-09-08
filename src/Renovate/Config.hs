@@ -17,8 +17,7 @@ import qualified Renovate.Arch.X86_64.Internal as X86
 
 import qualified Renovate.BasicBlock as B
 import qualified Renovate.ISA as ISA
-
-import qualified Renovate.Instrument as I
+import qualified Renovate.Rewrite as RW
 
 -- | The configuration required for a run of the ELF rewriter.
 data RenovateConfig i a w arch =
@@ -27,12 +26,12 @@ data RenovateConfig i a w arch =
                  , rcAssembler     :: forall m . (C.MonadThrow m) => i () -> m B.ByteString
                  , rcDisassembler  :: forall m . (C.MonadThrow m) => B.ByteString -> m [i ()]
                  , rcDisassembler1 :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, i ())
-                 , rcInstrumentor  :: B.SymbolicBlock i a w -> I.Instrument i w [B.TaggedInstruction i a]
+                 , rcInstrumentor  :: B.SymbolicBlock i a w -> RW.RewriteM i w [B.TaggedInstruction i a]
                  }
 
 data Rewriter = Rewriter
   { iX86_64 :: B.SymbolicBlock X86.Instruction (X86.TargetAddress 64) 64
-            -> I.Instrument X86.Instruction 64 [B.TaggedInstruction X86.Instruction (X86.TargetAddress 64)]
+            -> RW.RewriteM X86.Instruction 64 [B.TaggedInstruction X86.Instruction (X86.TargetAddress 64)]
   }
 
 -- | Compose a list of instrumentation functions into a single
