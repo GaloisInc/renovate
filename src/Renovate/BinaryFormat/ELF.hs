@@ -21,6 +21,7 @@ module Renovate.BinaryFormat.ELF (
   withElfConfig,
   withMemory,
   rewriteElf,
+  analyzeElf,
   entryPoints,
   riSectionBaseAddress,
   riInitialBytes,
@@ -139,7 +140,7 @@ withElfConfig :: (C.MonadThrow m)
                                        KnownNat w,
                                        E.ElfWidthConstraints w,
                                        ISA.InstructionConstraints i a)
-                                   => RenovateConfig i a w arch
+                                   => RenovateConfig i a w arch b
                                    -> E.Elf w
                                    -> MM.Memory w
                                    -> m t)
@@ -164,7 +165,7 @@ rewriteElf :: (ISA.InstructionConstraints i a,
                KnownNat w,
                Typeable w,
                R.ArchBits arch w)
-           => RenovateConfig i a w arch
+           => RenovateConfig i a w arch b
            -- ^ The configuration for the rewriter
            -> E.Elf w
            -- ^ The ELF file to rewrite
@@ -180,6 +181,26 @@ rewriteElf cfg e mem strat =
     return (_riELF ri, ri)
   where
     act = doRewrite cfg mem strat
+
+analyzeElf :: (ISA.InstructionConstraints i a,
+               E.ElfWidthConstraints w,
+               KnownNat w,
+               Typeable w,
+               R.ArchBits arch w)
+           => RenovateConfig i a w arch b
+           -- ^ The configuration for the analysis
+           -> E.Elf w
+           -- ^ The ELF file to analyze
+           -> MM.Memory w
+           -- ^ A representation of the contents of memory of the ELF file
+           -- (including statically-allocated data)
+           -> Either C.SomeException (b, [RM.Diagnostic])
+analyzeElf cfg e mem =
+  P.runCatch $ do
+    (b, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
+    return (b, _riBlockRecoveryDiagnostics ri)
+  where
+    act = doAnalysis cfg mem
 
 withElf :: E.SomeElf E.Elf -> (forall w . E.Elf w -> a) -> a
 withElf e k =
@@ -248,7 +269,7 @@ doRewrite :: (ISA.InstructionConstraints i a,
               E.ElfWidthConstraints w,
               KnownNat w,
               R.ArchBits arch w)
-          => RenovateConfig i a w arch
+          => RenovateConfig i a w arch b
           -> MM.Memory w
           -> RE.LayoutStrategy
           -> ElfRewriter w ()
@@ -310,6 +331,28 @@ doRewrite cfg mem strat = do
   -- Now overwrite the original code (in the .text segment) with the
   -- content computed by our transformation.
   modifyCurrentELF (overwriteTextSection overwrittenBytes)
+
+-- | The analysis driver
+doAnalysis :: (ISA.InstructionConstraints i a,
+               Typeable w,
+               E.ElfWidthConstraints w,
+               KnownNat w,
+               R.ArchBits arch w)
+           => RenovateConfig i a w arch b
+           -> MM.Memory w
+           -> ElfRewriter w b
+doAnalysis cfg mem = do
+  (entryPoint, _otherEntries) <- withCurrentELF (entryPoints mem)
+
+  -- We need to compute our instrumentation address *after* we have
+  -- removed all of the possibly dynamic sections and ensured that
+  -- everything will line up.
+  nextSegmentAddress <- withCurrentELF (segmentLayoutAddress instrumentationBase)
+  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral nextSegmentAddress :: Word64)
+  riSegmentVirtualAddress L..= Just (fromIntegral nextSegmentAddress)
+
+  analysisResult <- analyzeTextSection cfg mem entryPoint
+  return analysisResult
 
 buildSymbolMap :: Integral (E.ElfWordType w)
                => MM.MemWidth w
@@ -630,7 +673,7 @@ newInstrumentationSegment startAddr bytes e = do
 -- As a side effect of running the instrumentor, we get information
 -- about how much extra space needs to be reserved in a new data
 -- section.  The new data section is rooted at @newGlobalBase@.
-instrumentTextSection :: forall i a w arch
+instrumentTextSection :: forall i a w arch b
                        . (ISA.InstructionConstraints i a,
                           Typeable w,
                           KnownNat w,
@@ -641,7 +684,7 @@ instrumentTextSection :: forall i a w arch
                           MM.HasRepr (MM.ArchReg arch) MM.TypeRepr,
                           Show (MM.ArchReg arch (MM.BVType (MM.ArchAddrWidth arch))),
                           MM.MemWidth w)
-                      => RenovateConfig i a w arch
+                      => RenovateConfig i a w arch b
                       -> MM.Memory w
                       -- ^ The memory space
                       -> MM.MemSegmentOff w
@@ -678,7 +721,7 @@ instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutA
         -- This pattern match is only here to deal with the existential
         -- quantification inside of RenovateConfig.
         RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } ->
-          let analysisResult = analysis mem blockInfo in
+          let analysisResult = analysis isa mem blockInfo in
           case RW.runRewriteM (RA.relFromSegmentOff entryPoint)
                               newGlobalBase
                               cfgs
@@ -696,6 +739,39 @@ instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutA
                   (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks isa textSectionAddr textBytes layoutAddr asm allBlocks
                   let newDataBytes = mkNewDataSection newGlobalBase info
                   return (overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
+
+analyzeTextSection :: forall i a w arch b
+                    . (ISA.InstructionConstraints i a,
+                       Typeable w,
+                       KnownNat w,
+                       w ~ MM.RegAddrWidth (MM.ArchReg arch),
+                       MM.PrettyF (MM.ArchStmt arch),
+                       MM.ArchConstraints arch,
+                       MM.RegisterInfo (MM.ArchReg arch),
+                       MM.HasRepr (MM.ArchReg arch) MM.TypeRepr,
+                       Show (MM.ArchReg arch (MM.BVType (MM.ArchAddrWidth arch))),
+                       MM.MemWidth w)
+                   => RenovateConfig i a w arch b
+                   -> MM.Memory w
+                   -- ^ The memory space
+                   -> MM.MemSegmentOff w
+                   -- ^ The entry point in the text section
+                   -> ElfRewriter w b
+analyzeTextSection cfg mem entryPoint = do
+  traceM ("analyzeTextSection entry point: " ++ show entryPoint)
+  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
+  let isa      = rcISA cfg
+      archInfo = rcArchInfo cfg
+  case R.recoverBlocks isa (rcDisassembler1 cfg) archInfo mem (entryPoint NEL.:| []) of
+    (Left exn1, diags1) -> do
+      riBlockRecoveryDiagnostics L..= diags1
+      C.throwM (BlockRecoveryFailure exn1 diags1)
+    (Right blockInfo, diags1) -> do
+      traceM "Recovered blocks with macaw"
+      riBlockRecoveryDiagnostics L..= diags1
+      let blocks = R.biBlocks blockInfo
+      riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
+      return $! (rcAnalysis cfg) isa mem blockInfo
 
 mkNewDataSection :: (MM.MemWidth w) => RA.RelAddress w -> RW.RewriteInfo w -> Maybe B.ByteString
 mkNewDataSection baseAddr info = do

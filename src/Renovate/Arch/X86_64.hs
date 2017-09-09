@@ -36,6 +36,7 @@ import           Renovate.Arch.X86_64.ABI
 import           Renovate.Arch.X86_64.ISA
 import           Renovate.Arch.X86_64.Internal ( Value, Instruction, TargetAddress, AssemblyFailure(..), DisassemblyFailure(..) )
 import           Renovate.BasicBlock
+import           Renovate.ISA
 import           Renovate.Recovery
 import qualified Renovate.Rewrite as RW
 
@@ -49,10 +50,10 @@ import qualified Renovate.Rewrite as RW
 -- This configuration is actually specific to Linux due to the system
 -- call personality.
 config :: (MM.MemWidth w)
-       => (MM.Memory w -> BlockInfo Instruction w -> a)
+       => (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w -> a)
        -> (a -> SymbolicBlock Instruction (TargetAddress w) w
              -> RW.RewriteM Instruction w [TaggedInstruction Instruction (TargetAddress w)])
-       -> RenovateConfig Instruction (TargetAddress w) w X86.X86_64
+       -> RenovateConfig Instruction (TargetAddress w) w X86.X86_64 a
 config analysis rewriter =
   RenovateConfig
     { rcISA           = isa

@@ -1,0 +1,8 @@
+ExpectedResult { expectedBlocks = [
+  ExpectedBlock { addr = 0x2b1
+                , byteCount = 20
+                , insnCount = 5
+                }
+  ],
+  ignoreBlocks = [709]
+}

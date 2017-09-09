@@ -63,3 +63,23 @@ library
   hs-source-dirs:      src
   default-language:    Haskell2010
   ghc-options: -Wall -fno-ignore-asserts
+
+test-suite renovate-tests
+  type: exitcode-stdio-1.0
+  default-language: Haskell2010
+  ghc-options: -Wall
+  main-is: Main.hs
+  other-modules: X64
+  hs-source-dirs: tests
+  build-depends: base,
+                 macaw,
+                 macaw-x86,
+                 bytestring,
+                 containers,
+                 tasty >= 0.10 && < 0.12,
+                 filemanip >= 0.3.6 && < 0.4,
+                 elf-edit,
+                 filepath,
+                 tasty-hunit,
+                 renovate
+                 -- tasty-quickcheck

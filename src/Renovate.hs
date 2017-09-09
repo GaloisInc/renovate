@@ -20,10 +20,11 @@ module Renovate
   C.Rewriter(..),
   C.Analysis(..),
   LB.LayoutStrategy(..),
-  C.RenovateConfig,
+  C.RenovateConfig(..),
   -- * ELF entry point
   E.withElfConfig,
   E.rewriteElf,
+  E.analyzeElf,
   -- * Basic Blocks
   B.SymbolicBlock,
   B.ConcreteBlock,
@@ -71,7 +72,10 @@ module Renovate
   E.SomeBlocks(..),
   E.RewriterInfo(..),
   D.Diagnostic(..),
-  D.Diagnostics(..)
+  D.Diagnostics(..),
+  -- * Constraints
+  Recovery.ArchBits,
+  ISA.InstructionConstraints
 )
 where
 

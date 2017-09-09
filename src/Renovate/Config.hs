@@ -28,14 +28,13 @@ import qualified Renovate.Recovery as R
 -- The binary rewriter is agnostic to the container format of the binary (e.g.,
 -- ELF, COFF, Mach-O).  This configuration contains all of the information
 -- necessary to analyze and rewrite a binary.
-data RenovateConfig i a w arch =
-  forall b .
+data RenovateConfig i a w arch b =
   RenovateConfig { rcISA           :: ISA.ISA i a w
                  , rcArchInfo      :: MM.ArchitectureInfo arch
                  , rcAssembler     :: forall m . (C.MonadThrow m) => i () -> m B.ByteString
                  , rcDisassembler  :: forall m . (C.MonadThrow m) => B.ByteString -> m [i ()]
                  , rcDisassembler1 :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, i ())
-                 , rcAnalysis      :: MM.Memory w -> R.BlockInfo i w -> b
+                 , rcAnalysis      :: ISA.ISA i a w -> MM.Memory w -> R.BlockInfo i w -> b
                  , rcRewriter      :: b -> B.SymbolicBlock i a w -> RW.RewriteM i w [B.TaggedInstruction i a]
                  }
 
@@ -51,7 +50,7 @@ data Rewriter a = Rewriter
   }
 
 data Analysis a = Analysis
-  { aX86_64 :: MM.Memory 64 -> R.BlockInfo X86.Instruction 64 -> a
+  { aX86_64 :: ISA.ISA X86.Instruction (X86.TargetAddress 64) 64 -> MM.Memory 64 -> R.BlockInfo X86.Instruction 64 -> a
   }
 
 -- | Compose a list of instrumentation functions into a single
