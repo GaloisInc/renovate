@@ -4,6 +4,7 @@ module Renovate.Redirect.LayoutBlocks.Compact (
 
 import qualified GHC.Err.Located as L
 
+import           Data.Ord ( Down(..) )
 import           Control.Exception ( assert )
 import qualified Data.Foldable as F
 import qualified Data.Heap as H
@@ -24,7 +25,7 @@ import           Renovate.Redirect.Monad
 -- the heap is based on the size of the chunk of memory at each address.  The
 -- sizes are stored as negative values so that taking the minimum element of the
 -- heap yields the region with the largest amount of space left.
-type AddressHeap w = H.Heap (H.Entry Int (RelAddress w))
+type AddressHeap w = H.Heap (H.Entry (Down Int) (RelAddress w))
 
 -- | Compute a concrete address for each 'SymbolicBlock'.
 --
@@ -63,8 +64,7 @@ compactLayout mem startAddr blocks = do
   -- That is critical.
   T.traverse (assignConcreteAddress symBlockAddrs) blocks'
   where
-    -- We negate the size so that the largest (in magnitude) values come first
-    bySize isa = negate . symbolicBlockSize isa startAddr
+    bySize isa = Down . symbolicBlockSize isa startAddr
 
 -- | Look up the concrete address assigned to each symbolic block and tag it
 -- onto the tuple to create a suitable return value.
@@ -108,9 +108,9 @@ allocateBlockAddress :: (MM.MemWidth w)
 allocateBlockAddress isa (newTextAddr, h, m) sb =
   case H.viewMin h of
     Nothing -> allocateNewTextAddr
-    Just (H.Entry negSize addr, h')
-      | negate negSize < fromIntegral sbSize -> allocateNewTextAddr
-      | otherwise -> allocateFromHeap (negate negSize) addr h'
+    Just (H.Entry (Down size) addr, h')
+      | size < fromIntegral sbSize -> allocateNewTextAddr
+      | otherwise -> allocateFromHeap size addr h'
   where
     sbSize = symbolicBlockSize isa newTextAddr sb
 
@@ -125,7 +125,7 @@ allocateBlockAddress isa (newTextAddr, h, m) sb =
         case allocSize' of
           0 -> (newTextAddr, h', M.insert (basicBlockAddress sb) addr m)
           _ ->
-            let h'' = H.insert (H.Entry (negate allocSize') addr') h'
+            let h'' = H.insert (H.Entry (Down allocSize') addr') h'
             in (newTextAddr, h'', M.insert (basicBlockAddress sb) addr m)
 
 
@@ -219,7 +219,7 @@ addOriginalBlock :: (MM.MemWidth w)
                  -> AddressHeap w
 addOriginalBlock isa jumpSize h cb
   | bsize > jumpSize =
-    H.insert (H.Entry (negate spaceSize) addr) h
+    H.insert (H.Entry (Down spaceSize) addr) h
   | otherwise = h
   where
     bsize = concreteBlockSize isa cb
