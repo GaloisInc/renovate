@@ -20,6 +20,7 @@ module Renovate
   C.Rewriter(..),
   C.Analysis(..),
   LB.LayoutStrategy(..),
+  LB.CompactOrdering(..),
   C.RenovateConfig(..),
   -- * ELF entry point
   E.withElfConfig,

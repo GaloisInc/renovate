@@ -4,6 +4,7 @@ module Renovate.Redirect.LayoutBlocks.Types (
   RandomSeed
   ) where
 
+import qualified Data.Vector.Unboxed as V
 import           Data.Word ( Word32 )
 
 -- | A type for selecting the strategy for laying out basic blocks in rewritten
@@ -23,7 +24,7 @@ data LayoutStrategy = Parallel
                      -- Also takes an ordering, sorted or randomized.
                     deriving (Eq, Ord, Read, Show)
 
-type RandomSeed = [Word32]
+type RandomSeed = V.Vector Word32
 
 data CompactOrdering
   = SortedOrder            -- ^ Sort by block size

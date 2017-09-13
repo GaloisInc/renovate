@@ -2,7 +2,8 @@
 -- | Define the strategy for laying out 'SymbolicBlock's
 module Renovate.Redirect.LayoutBlocks (
   layoutBlocks,
-  LayoutStrategy(..)
+  LayoutStrategy(..),
+  CompactOrdering(..)
   ) where
 
 import qualified Data.Traversable as T
@@ -14,7 +15,8 @@ import           Renovate.BasicBlock
 import           Renovate.Redirect.Monad
 import           Renovate.Redirect.LayoutBlocks.Compact ( compactLayout )
 import           Renovate.Redirect.LayoutBlocks.Parallel ( parallelLayout )
-import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..) )
+import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
+                                                      , CompactOrdering(..) )
 
 -- | Compute a concrete address for each 'SymbolicBlock'.
 --
