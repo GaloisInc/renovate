@@ -30,4 +30,4 @@ layoutBlocks :: (Monad m, T.Traversable t, Show (i a), MM.MemWidth w)
 layoutBlocks strat mem startAddr blocks =
   case strat of
     Parallel -> parallelLayout startAddr blocks
-    Compact -> compactLayout mem startAddr blocks
+    Compact ordering -> compactLayout mem startAddr ordering blocks

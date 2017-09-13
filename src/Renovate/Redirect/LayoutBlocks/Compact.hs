@@ -5,7 +5,11 @@ module Renovate.Redirect.LayoutBlocks.Compact (
 import qualified GHC.Err.Located as L
 
 import           Data.Ord ( Down(..) )
+import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as MV
 import           Control.Exception ( assert )
+import           Control.Monad.ST
+import           Control.Monad.State.Strict
 import qualified Data.Foldable as F
 import qualified Data.Heap as H
 import qualified Data.List as L
@@ -14,12 +18,16 @@ import qualified Data.Traversable as T
 import           Data.Word ( Word64 )
 import           Text.Printf ( printf )
 
+import qualified System.Random.MWC as MWC
+
 import qualified Data.Macaw.Memory as MM
 
 import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
 import           Renovate.Redirect.Monad
+
+import           Renovate.Redirect.LayoutBlocks.Types
 
 -- | The address heap associates chunks of memory to addresses.  The ordering of
 -- the heap is based on the size of the chunk of memory at each address.  The
@@ -35,9 +43,10 @@ compactLayout :: (Monad m, T.Traversable t, Show (i a), MM.MemWidth w)
               => MM.Memory w
               -> RelAddress w
               -- ^ Address to begin block layout of instrumented blocks
+              -> CompactOrdering
               -> t (ConcreteBlock i w, SymbolicBlock i a w)
               -> RewriterT i a w m (t (ConcreteBlock i w, SymbolicBlock i a w, RelAddress w))
-compactLayout mem startAddr blocks = do
+compactLayout mem startAddr ordering blocks = do
   h0 <- buildAddressHeap startAddr (fmap fst blocks)
 
   -- Augment all symbolic blocks such that fallthrough behavior is explicitly
@@ -47,9 +56,15 @@ compactLayout mem startAddr blocks = do
   -- behavior of blocks ending in conditional jumps (or non-jumps).
   blocks' <- reifyFallthroughSuccessors mem blocks
 
-  -- Sort all of the instrumented blocks by size
+  -- Either, a) Sort all of the instrumented blocks by size
+  --         b) Randomize the order of the blocks.
+  -- The (a) will give a more optimal answer, but (b) will provide some
+  -- synthetic diversity at the cost of optimality.
   isa <- askISA
-  let blocksBySize = L.sortOn (bySize isa) (F.toList (fmap snd blocks'))
+  let blocksBySize =
+        case ordering of
+        SortedOrder -> L.sortOn (bySize isa) (F.toList (fmap snd blocks'))
+        RandomOrder seed -> randomOrder seed (F.toList (snd <$> blocks'))
 
   -- Allocate an address for each block (falling back to startAddr if the heap
   -- can't provide a large enough space).
@@ -226,6 +241,32 @@ addOriginalBlock isa jumpSize h cb
     spaceSize :: Int
     spaceSize = fromIntegral (bsize - jumpSize)
     addr = basicBlockAddress cb `addressAddOffset` fromIntegral jumpSize
+
+data S i a w s = S
+  { sGen   :: MWC.GenST s
+  , sIndex :: Int
+  , sVec   :: MV.STVector s (SymbolicBlock i a w)
+  }
+
+randomOrder :: RandomSeed -> [SymbolicBlock i a w] -> [SymbolicBlock i a w]
+randomOrder seed initial = runST $ do
+  gen <- MWC.initialize (V.singleton seed)
+  vec <- V.thaw (V.fromList initial)
+  finalState <- execStateT go S { sGen = gen, sIndex = 0, sVec = vec}
+  finalVec <- V.freeze $! sVec finalState
+  return (V.toList finalVec)
+  where
+  -- This looks like a bit of a mess, but it's actually just the fisher-yates
+  -- inplace shuffle.
+  go :: StateT (S i a w s) (ST s) ()
+  go = do
+    S { sGen = g, sIndex = i, sVec = vec } <- get
+    if (i >= MV.length vec - 2)
+      then return ()
+      else do
+        j <- lift $ MWC.uniformR (i,MV.length vec-1) g
+        MV.swap vec i j
+        put (S { sGen = g, sIndex = i+1, sVec = vec })
 
 {- Note [Design]
 
