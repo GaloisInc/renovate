@@ -9,7 +9,6 @@ import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
 import           Control.Exception ( assert )
 import           Control.Monad.ST
-import           Control.Monad.State.Strict
 import qualified Data.Foldable as F
 import qualified Data.Heap as H
 import qualified Data.List as L
@@ -242,31 +241,22 @@ addOriginalBlock isa jumpSize h cb
     spaceSize = fromIntegral (bsize - jumpSize)
     addr = basicBlockAddress cb `addressAddOffset` fromIntegral jumpSize
 
-data S i a w s = S
-  { sGen   :: MWC.GenST s
-  , sIndex :: Int
-  , sVec   :: MV.STVector s (SymbolicBlock i a w)
-  }
-
 randomOrder :: RandomSeed -> [SymbolicBlock i a w] -> [SymbolicBlock i a w]
 randomOrder seed initial = runST $ do
-  gen <- MWC.initialize (V.singleton seed)
-  vec <- V.thaw (V.fromList initial)
-  finalState <- execStateT go S { sGen = gen, sIndex = 0, sVec = vec}
-  finalVec <- V.freeze $! sVec finalState
+  gen      <- MWC.initialize (V.singleton seed)
+  vec      <- V.thaw (V.fromList initial)
+  finalVec <- go gen 0 vec >>= V.freeze
   return (V.toList finalVec)
   where
   -- This looks like a bit of a mess, but it's actually just the fisher-yates
   -- inplace shuffle.
-  go :: StateT (S i a w s) (ST s) ()
-  go = do
-    S { sGen = g, sIndex = i, sVec = vec } <- get
-    if (i >= MV.length vec - 2)
-      then return ()
-      else do
-        j <- lift $ MWC.uniformR (i,MV.length vec-1) g
-        MV.swap vec i j
-        put (S { sGen = g, sIndex = i+1, sVec = vec })
+  go :: MWC.GenST s -> Int -> MV.STVector s (SymbolicBlock i a w) -> ST s (MV.STVector s (SymbolicBlock i a w))
+  go g i vec
+    | i >= MV.length vec - 2 = return vec
+    | otherwise = do
+      j <- MWC.uniformR (i,MV.length vec-1) g
+      MV.swap vec i j
+      go g (i+1) vec
 
 {- Note [Design]
 
