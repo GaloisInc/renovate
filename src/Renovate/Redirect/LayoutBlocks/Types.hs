@@ -23,7 +23,7 @@ data LayoutStrategy = Parallel
                      -- Also takes an ordering, sorted or randomized.
                     deriving (Eq, Ord, Read, Show)
 
-type RandomSeed = Word32
+type RandomSeed = [Word32]
 
 data CompactOrdering
   = SortedOrder            -- ^ Sort by block size

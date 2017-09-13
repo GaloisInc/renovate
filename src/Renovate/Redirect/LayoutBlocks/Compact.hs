@@ -243,7 +243,7 @@ addOriginalBlock isa jumpSize h cb
 
 randomOrder :: RandomSeed -> [SymbolicBlock i a w] -> [SymbolicBlock i a w]
 randomOrder seed initial = runST $ do
-  gen      <- MWC.initialize (V.singleton seed)
+  gen      <- MWC.initialize (V.fromList seed)
   vec      <- V.thaw (V.fromList initial)
   finalVec <- go gen 0 vec >>= V.freeze
   return (V.toList finalVec)
