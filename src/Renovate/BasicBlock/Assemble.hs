@@ -228,7 +228,7 @@ lookupOverlappingBlocks b = do
                   -- it back and return
                   St.modify' $ \s -> s { asBlocks = b' : asBlocks s }
                   return []
-              | basicBlockAddress b' < nextAllowableAddress ->
+              | basicBlockAddress b' < nextAllowableAddress -> do
                   -- We check this case second in case the block is shorter than
                   -- a redirection jump; in that case, the next block will
                   -- appear to be overlapping when really there is no

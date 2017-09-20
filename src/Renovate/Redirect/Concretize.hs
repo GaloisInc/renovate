@@ -23,6 +23,7 @@ import           Renovate.Redirect.LayoutBlocks ( layoutBlocks )
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutPair(..)
                                                       , SymbolicPair
                                                       , AddressAssignedPair
+                                                      , ConcretePair
                                                       , Status(..)
                                                       , LayoutStrategy )
 import           Renovate.Redirect.Monad
@@ -50,7 +51,7 @@ concretize :: (Monad m, T.Traversable t, InstructionConstraints i a, KnownNat w,
            -> RelAddress w
            -- ^ The start address of the concretized (instrumented) blocks
            -> t (SymbolicPair i a w)
-           -> RewriterT i a w m (t (ConcreteBlock i w, ConcreteBlock i w))
+           -> RewriterT i a w m (t (ConcretePair i w))
 concretize strat mem startAddr blocks = do
   -- First, build up a mapping of symbolic address to new concrete
   -- address
@@ -108,14 +109,15 @@ concretizeJumps :: (Monad m, InstructionConstraints i a, KnownNat w, MM.MemWidth
                 => ISA i a w
                 -> M.Map SymbolicAddress (RelAddress w)
                 -> AddressAssignedPair i a w
-                -> RewriterT i a w m (ConcreteBlock i w, ConcreteBlock i w)
+                -> RewriterT i a w m (ConcretePair i w)
 concretizeJumps isa concreteAddressMap (LayoutPair cb (AddressAssignedBlock sb baddr) Modified) = do
   let insnAddrs = instructionAddresses' isa (isaConcretizeAddresses isa baddr . projectInstruction) baddr (basicBlockInstructions sb)
   concretizedInstrs <- T.traverse (mapJumpAddress concreteAddressMap) insnAddrs
-  return (cb, sb { basicBlockAddress = baddr
-                 , basicBlockInstructions = concat concretizedInstrs
-                 })
-concretizeJumps _isa _concreteAddressMap (LayoutPair cb _ Unmodified) = return (cb, cb)
+  let sb' = sb { basicBlockAddress = baddr
+               , basicBlockInstructions = concat concretizedInstrs
+               }
+  return (LayoutPair cb sb' Modified)
+concretizeJumps _isa _concreteAddressMap (LayoutPair cb _ Unmodified) = return (LayoutPair cb cb Unmodified)
 
 -- | We need the address of the instruction, so we need to pre-compute
 -- all instruction addresses above.

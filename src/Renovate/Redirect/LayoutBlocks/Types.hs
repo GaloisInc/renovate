@@ -6,6 +6,7 @@ module Renovate.Redirect.LayoutBlocks.Types (
   LayoutPair(..),
   SymbolicPair,
   AddressAssignedPair,
+  ConcretePair,
   Status(..),
   RandomSeed
   ) where
@@ -56,3 +57,4 @@ data Status
 
 type SymbolicPair         i a w = LayoutPair (SymbolicBlock        i a w) i w
 type AddressAssignedPair  i a w = LayoutPair (AddressAssignedBlock i a w) i w
+type ConcretePair         i w   = LayoutPair (ConcreteBlock i w) i w

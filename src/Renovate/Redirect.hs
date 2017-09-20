@@ -17,6 +17,7 @@ import GHC.TypeLits ( KnownNat )
 import Control.Arrow ( (***) )
 import qualified Control.Monad.Catch as E
 import Control.Monad.Trans ( lift )
+import           Data.Maybe ( catMaybes )
 import qualified Data.Foldable as F
 import qualified Data.List as L
 import Data.Ord ( comparing )
@@ -75,7 +76,10 @@ redirect isa instrumentor mem strat layoutAddr blocks symmap = runRewriterT isa 
   concretizedBlocks <- concretize strat mem layoutAddr transformedBlocks
   redirectedBlocks <- redirectOriginalBlocks concretizedBlocks
   let sorter = L.sortBy (comparing basicBlockAddress)
-  return $ (sorter *** sorter) (unzip (F.toList redirectedBlocks))
+  return $ (sorter *** sorter . catMaybes) (unzip (map toPair (F.toList redirectedBlocks)))
+  where
+  toPair (LayoutPair cb sb Modified)   = (cb, Just sb)
+  toPair (LayoutPair cb _  Unmodified) = (cb, Nothing)
 
 {- Note [Redirection]
 
