@@ -8,6 +8,7 @@ module Renovate.BasicBlock (
   BasicBlock(..),
   ConcreteBlock,
   SymbolicBlock,
+  AddressAssignedBlock(..),
   SymbolicInfo(..),
   concreteBlockSize,
   symbolicBlockSize,

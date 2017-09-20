@@ -30,7 +30,6 @@ library
                        Renovate.Redirect.Internal
                        Renovate.Redirect.LayoutBlocks
                        Renovate.Redirect.LayoutBlocks.Compact
-                       Renovate.Redirect.LayoutBlocks.Parallel
                        Renovate.Redirect.LayoutBlocks.Types
                        Renovate.Redirect.Monad
                        Renovate.Redirect.Symbolize

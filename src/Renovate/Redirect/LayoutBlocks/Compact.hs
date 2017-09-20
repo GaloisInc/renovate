@@ -42,11 +42,16 @@ compactLayout :: (Monad m, T.Traversable t, Show (i a), MM.MemWidth w)
               => MM.Memory w
               -> RelAddress w
               -- ^ Address to begin block layout of instrumented blocks
-              -> CompactOrdering
-              -> t (ConcreteBlock i w, SymbolicBlock i a w)
-              -> RewriterT i a w m (t (ConcreteBlock i w, SymbolicBlock i a w, RelAddress w))
-compactLayout mem startAddr ordering blocks = do
-  h0 <- buildAddressHeap startAddr (fmap fst blocks)
+              -> LayoutStrategy
+              -> t (SymbolicPair i a w)
+              -> RewriterT i a w m (t (AddressAssignedPair i a w))
+compactLayout mem startAddr strat blocks = do
+  h0 <- if strat == Parallel -- the parallel strategy is now a special case of
+                             -- compact. In particular, we avoid allocating
+                             -- the heap and we avoid sorting the input
+                             -- blocklist.
+           then return mempty
+           else buildAddressHeap startAddr (fmap lpOrig blocks)
 
   -- Augment all symbolic blocks such that fallthrough behavior is explicitly
   -- represented with symbolic unconditional jumps.
@@ -57,17 +62,21 @@ compactLayout mem startAddr ordering blocks = do
 
   -- Either, a) Sort all of the instrumented blocks by size
   --         b) Randomize the order of the blocks.
+  --         c) Use the input order exactly
   -- The (a) will give a more optimal answer, but (b) will provide some
-  -- synthetic diversity at the cost of optimality.
+  -- synthetic diversity at the cost of optimality. (c) is for treating
+  -- the parallel layout as a special case of compact.
   isa <- askISA
-  let blocksBySize =
-        case ordering of
-        SortedOrder -> L.sortOn (bySize isa) (F.toList (fmap snd blocks'))
-        RandomOrder seed -> randomOrder seed (F.toList (snd <$> blocks'))
+  let sortedBlocks =
+        let newBlocks = F.toList (lpNew <$> blocks') in
+        case strat of
+        Compact SortedOrder        -> L.sortOn    (bySize isa) newBlocks
+        Compact (RandomOrder seed) -> randomOrder seed         newBlocks
+        Parallel                   -> newBlocks
 
   -- Allocate an address for each block (falling back to startAddr if the heap
   -- can't provide a large enough space).
-  symBlockAddrs <- allocateSymbolicBlockAddresses startAddr h0 blocksBySize
+  symBlockAddrs <- allocateSymbolicBlockAddresses startAddr h0 sortedBlocks
 
   -- Traverse the original container and update it with the addresses allocated
   -- to each symbolic block.  This will have an irrefutable pattern match that
@@ -87,12 +96,16 @@ compactLayout mem startAddr ordering blocks = do
 -- point.
 assignConcreteAddress :: (Monad m)
                       => M.Map (SymbolicInfo w) (RelAddress w)
-                      -> (ConcreteBlock i w, SymbolicBlock i a w)
-                      -> RewriterT i a w m (ConcreteBlock i w, SymbolicBlock i a w, RelAddress w)
-assignConcreteAddress assignedAddrs (cb, sb) = do
+                      -> SymbolicPair i a w
+                      -> RewriterT i a w m (AddressAssignedPair i a w)
+assignConcreteAddress assignedAddrs (LayoutPair cb sb Modified) = do
   case M.lookup (basicBlockAddress sb) assignedAddrs of
-    Nothing -> L.error $ printf "Expected an assigned address for symbolic block %d (derived from concrete block %d)" (show (basicBlockAddress sb)) (show (basicBlockAddress cb))
-    Just addr -> return (cb, sb, addr)
+    Nothing -> L.error $ printf "Expected an assigned address for symbolic block %d (derived from concrete block %d)"
+                                (show (basicBlockAddress sb))
+                                (show (basicBlockAddress cb))
+    Just addr -> return (LayoutPair cb (AddressAssignedBlock sb addr) Modified)
+assignConcreteAddress _ (LayoutPair cb sb Unmodified) =
+  return (LayoutPair cb (AddressAssignedBlock sb (basicBlockAddress cb)) Unmodified)
 
 allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth w)
                                => RelAddress w
@@ -152,11 +165,11 @@ allocateBlockAddress isa (newTextAddr, h, m) sb =
 -- A block has fallthrough behavior if it does not end in an unconditional jump.
 reifyFallthroughSuccessors :: (Traversable t, Monad m, MM.MemWidth w)
                            => MM.Memory w
-                           -> t (ConcreteBlock i w, SymbolicBlock i a w)
-                           -> RewriterT i a w m (t (ConcreteBlock i w, SymbolicBlock i a w))
+                           -> t (SymbolicPair i a w)
+                           -> RewriterT i a w m (t (SymbolicPair i a w))
 reifyFallthroughSuccessors mem blocks = T.traverse (addExplicitFallthrough mem symSuccIdx) blocks
   where
-    blist0 = F.toList (fmap snd blocks)
+    blist0 = F.toList (fmap lpNew blocks)
     symSuccs | length blist0 > 1 = zip blist0 (tail blist0)
              | otherwise = []
     -- An index mapping the symbolic address of a symbolic basic block to the
@@ -165,44 +178,57 @@ reifyFallthroughSuccessors mem blocks = T.traverse (addExplicitFallthrough mem s
     indexSymbolicSuccessors m (symBlock, symSucc) =
       M.insert (basicBlockAddress symBlock) (basicBlockAddress symSucc) m
 
+type SuccessorMap w = M.Map (SymbolicInfo w) (SymbolicInfo w)
+
 addExplicitFallthrough :: (Monad m, MM.MemWidth w)
                        => MM.Memory w
-                       -> M.Map (SymbolicInfo w) (SymbolicInfo w)
-                       -> (ConcreteBlock i w, SymbolicBlock i a w)
-                       -> RewriterT i a w m (ConcreteBlock i w, SymbolicBlock i a w)
-addExplicitFallthrough mem symSucIdx pair@(cb, sb) = do
+                       -> SuccessorMap w
+                       -> SymbolicPair i a w
+                       -> RewriterT i a w m (SymbolicPair i a w)
+addExplicitFallthrough mem symSucIdx pair@(LayoutPair cb sb Modified) = do
   isa <- askISA
   -- We pass in a fake relative address since we don't need the resolution of
   -- relative jumps.  We just need the type of jump.
   --
   -- If the block ends in an unconditional jump, just return it unmodified.
   -- Otherwise, append an absolute jump to the correct location.
+  let newPair = LayoutPair cb (appendUnconditionalJump isa symSucIdx cb sb) Modified
   case isaJumpType isa lastInsn mem fakeAddress of
-    Return                         -> return pair
-    IndirectJump Unconditional     -> return pair
-    AbsoluteJump Unconditional _   -> return pair
-    RelativeJump Unconditional _ _ -> return pair
-    IndirectCall                   -> return (cb, appendUnconditionalJump isa symSucIdx cb sb)
-    DirectCall {}                  -> return (cb, appendUnconditionalJump isa symSucIdx cb sb)
-    NoJump                         -> return (cb, appendUnconditionalJump isa symSucIdx cb sb)
-    IndirectJump Conditional       -> return (cb, appendUnconditionalJump isa symSucIdx cb sb)
-    AbsoluteJump Conditional _     -> return (cb, appendUnconditionalJump isa symSucIdx cb sb)
-    RelativeJump Conditional _ _   -> return (cb, appendUnconditionalJump isa symSucIdx cb sb)
+    br | isUnconditional br -> return pair
+       | otherwise          -> return newPair
   where
+    -- We explicitly match on all constructor patterns so that if/when new ones
+    -- are added this will break instead of having some default case that does
+    -- (potentially) the wrong thing on the new cases.
+    isUnconditional (Return                        ) = True
+    isUnconditional (IndirectJump Unconditional    ) = True
+    isUnconditional (AbsoluteJump Unconditional _  ) = True
+    isUnconditional (RelativeJump Unconditional _ _) = True
+    isUnconditional (IndirectCall                  ) = False
+    isUnconditional (DirectCall {}                 ) = False
+    isUnconditional (NoJump                        ) = False
+    isUnconditional (IndirectJump Conditional      ) = False
+    isUnconditional (AbsoluteJump Conditional _    ) = False
+    isUnconditional (RelativeJump Conditional _ _  ) = False
     fakeAddress = firstRelAddress 0 0
     lastInsn
-      | null (basicBlockInstructions sb) = L.error (printf "Empty block for symbolic block %s (derived from block %s)" (show (basicBlockAddress sb)) (show (basicBlockAddress cb)))
+      | null (basicBlockInstructions sb) = L.error (printf "Empty block for symbolic block %s (derived from block %s)"
+                                                           (show (basicBlockAddress sb))
+                                                           (show (basicBlockAddress cb)))
       | otherwise = projectInstruction $ last (basicBlockInstructions sb)
+addExplicitFallthrough _mem _symSucIdx pair@(LayoutPair _cb _sb Unmodified) = return pair
 
 appendUnconditionalJump :: (MM.MemWidth w)
                         => ISA i a w
-                        -> M.Map (SymbolicInfo w) (SymbolicInfo w)
+                        -> SuccessorMap w
                         -> ConcreteBlock i w
                         -> SymbolicBlock i a w
                         -> SymbolicBlock i a w
 appendUnconditionalJump isa symSucIdx cb sb =
   case M.lookup (basicBlockAddress sb) symSucIdx of
-    Nothing -> L.error (printf "Expected a successor block for symbolic block %s (derived from block %s)" (show (basicBlockAddress sb)) (show (basicBlockAddress cb)))
+    Nothing -> L.error (printf "Expected a successor block for symbolic block %s (derived from block %s)"
+                               (show (basicBlockAddress sb))
+                               (show (basicBlockAddress cb)))
     Just symSucc ->
       let insns = isaMakeSymbolicJump isa (symbolicAddress symSucc)
       in sb { basicBlockInstructions = basicBlockInstructions sb ++ insns }

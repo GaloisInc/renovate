@@ -7,7 +7,8 @@ module Renovate.Config (
   Rewriter(..),
   Analysis(..),
   compose,
-  identity
+  identity,
+  nop
   ) where
 
 import qualified Control.Monad.Catch as C
@@ -35,7 +36,7 @@ data RenovateConfig i a w arch b =
                  , rcDisassembler  :: forall m . (C.MonadThrow m) => B.ByteString -> m [i ()]
                  , rcDisassembler1 :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, i ())
                  , rcAnalysis      :: ISA.ISA i a w -> MM.Memory w -> R.BlockInfo i w -> b
-                 , rcRewriter      :: b -> B.SymbolicBlock i a w -> RW.RewriteM i w [B.TaggedInstruction i a]
+                 , rcRewriter      :: b -> B.SymbolicBlock i a w -> RW.RewriteM i w (Maybe [B.TaggedInstruction i a])
                  }
 
 -- | The rewriting action to take
@@ -45,7 +46,8 @@ data RenovateConfig i a w arch b =
 data Rewriter a = Rewriter
   { iX86_64 :: a
             -> B.SymbolicBlock X86.Instruction (X86.TargetAddress 64) 64
-            -> RW.RewriteM X86.Instruction 64 [B.TaggedInstruction X86.Instruction (X86.TargetAddress 64)]
+            -> RW.RewriteM X86.Instruction 64
+                 (Maybe [B.TaggedInstruction X86.Instruction (X86.TargetAddress 64)])
     -- ^ A rewriter suitable for the x86_64 architecture
   }
 
@@ -60,16 +62,21 @@ data Analysis a = Analysis
 -- carefully chosen, as the instrumentors are not isolated from each
 -- other.
 compose :: (Monad m)
-        => [B.SymbolicBlock i a w -> m [B.TaggedInstruction i a]]
-        -> (B.SymbolicBlock i a w -> m [B.TaggedInstruction i a])
+        => [B.SymbolicBlock i a w -> m (Maybe [B.TaggedInstruction i a])]
+        -> (B.SymbolicBlock i a w -> m (Maybe [B.TaggedInstruction i a]))
 compose funcs = go funcs
   where
-    go [] b = return $ B.basicBlockInstructions b
+    go [] b = return $! Just (B.basicBlockInstructions b)
     go (f:fs) b = do
-      is <- f b
-      go fs b { B.basicBlockInstructions = is }
+      mb_is <- f b
+      case mb_is of
+        Just is -> go fs b { B.basicBlockInstructions = is }
+        Nothing -> go fs b
 
 -- | An identity rewriter (i.e., a rewriter that makes no changes, but forces
 -- everything to be redirected).
-identity :: (Monad m) => b -> B.SymbolicBlock i a w -> m [B.TaggedInstruction i a]
-identity _ sb = return (B.basicBlockInstructions sb)
+identity :: (Monad m) => b -> B.SymbolicBlock i a w -> m (Maybe [B.TaggedInstruction i a])
+identity _ sb = return $! Just (B.basicBlockInstructions sb)
+
+nop :: Monad m => b -> B.SymbolicBlock i a w -> m (Maybe [B.TaggedInstruction i a])
+nop _ _ = return Nothing

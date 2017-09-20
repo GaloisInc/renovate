@@ -61,6 +61,7 @@ module Renovate
   RW.lookupBlockCFG,
   C.compose,
   C.identity,
+  C.nop,
   -- * ABI
   ABI.ABI(..),
   ISA.ISA(..),

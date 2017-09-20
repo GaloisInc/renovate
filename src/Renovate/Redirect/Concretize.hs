@@ -20,7 +20,11 @@ import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
 import           Renovate.Redirect.LayoutBlocks ( layoutBlocks )
-import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy )
+import           Renovate.Redirect.LayoutBlocks.Types ( LayoutPair(..)
+                                                      , SymbolicPair
+                                                      , AddressAssignedPair
+                                                      , Status(..)
+                                                      , LayoutStrategy )
 import           Renovate.Redirect.Monad
 
 -- | Take the rewritten symbolic blocks and assign them concrete
@@ -45,7 +49,7 @@ concretize :: (Monad m, T.Traversable t, InstructionConstraints i a, KnownNat w,
            -> MM.Memory w
            -> RelAddress w
            -- ^ The start address of the concretized (instrumented) blocks
-           -> t (ConcreteBlock i w, SymbolicBlock i a w)
+           -> t (SymbolicPair i a w)
            -> RewriterT i a w m (t (ConcreteBlock i w, ConcreteBlock i w))
 concretize strat mem startAddr blocks = do
   -- First, build up a mapping of symbolic address to new concrete
@@ -54,12 +58,12 @@ concretize strat mem startAddr blocks = do
   symmap <- askSymbolMap
   concreteAddresses <- layoutBlocks strat mem startAddr blocks
   let concreteAddressMap = M.fromList [ (symbolicAddress (basicBlockAddress sb), ca)
-                                      | (_, sb, ca) <- F.toList concreteAddresses
+                                      | LayoutPair _ (AddressAssignedBlock sb ca) _ <- F.toList concreteAddresses
                                       ]
       -- Make note of symbolic names for each embrittled function. We can
       -- use this to make new symtab entries for them.
       brittleMap = M.fromList [ (ca, (basicBlockAddress oa, nm))
-                              | (oa, _sb, ca) <- F.toList concreteAddresses
+                              | LayoutPair oa (AddressAssignedBlock _sb ca) _ <- F.toList concreteAddresses
                               , nm <- maybeToList $ Map.lookup (basicBlockAddress oa) symmap
                               ]
   -- TODO: JED: Should this be a put or an append?
@@ -103,14 +107,15 @@ these could be sentinels that require translation back to IP relative
 concretizeJumps :: (Monad m, InstructionConstraints i a, KnownNat w, MM.MemWidth w, Typeable w)
                 => ISA i a w
                 -> M.Map SymbolicAddress (RelAddress w)
-                -> (ConcreteBlock i w, SymbolicBlock i a w, RelAddress w)
+                -> AddressAssignedPair i a w
                 -> RewriterT i a w m (ConcreteBlock i w, ConcreteBlock i w)
-concretizeJumps isa concreteAddressMap (cb, sb, baddr) = do
+concretizeJumps isa concreteAddressMap (LayoutPair cb (AddressAssignedBlock sb baddr) Modified) = do
   let insnAddrs = instructionAddresses' isa (isaConcretizeAddresses isa baddr . projectInstruction) baddr (basicBlockInstructions sb)
   concretizedInstrs <- T.traverse (mapJumpAddress concreteAddressMap) insnAddrs
   return (cb, sb { basicBlockAddress = baddr
                  , basicBlockInstructions = concat concretizedInstrs
                  })
+concretizeJumps _isa _concreteAddressMap (LayoutPair cb _ Unmodified) = return (cb, cb)
 
 -- | We need the address of the instruction, so we need to pre-compute
 -- all instruction addresses above.

@@ -73,10 +73,9 @@ mkTest fp = T.testCase fp $ withELF elfFilename testRewrite
     testRewrite elf = do
       Just expected <- readMaybe <$> readFile (fp <.> "expected")
       R.withElfConfig (E.Elf64 elf) R.Analysis { R.aX86_64 = analysis expected }
-                                    R.Rewriter { R.iX86_64 = identityTransform }
+                                    R.Rewriter { R.iX86_64 = R.identity }
                                     testBlockRecovery
 
-    identityTransform _bi b = return (R.basicBlockInstructions b)
     elfFilename = replaceExtension fp "exe"
 
 -- testNullRewriter :: RewriterConfig X86_64.Instruction (X86_64.TargetAddress 64) 64 X86.X86_64

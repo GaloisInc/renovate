@@ -11,12 +11,12 @@ import qualified Data.Traversable as T
 import qualified Data.Macaw.Memory as MM
 
 import           Renovate.Address
-import           Renovate.BasicBlock
 import           Renovate.Redirect.Monad
 import           Renovate.Redirect.LayoutBlocks.Compact ( compactLayout )
-import           Renovate.Redirect.LayoutBlocks.Parallel ( parallelLayout )
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
-                                                      , CompactOrdering(..) )
+                                                      , CompactOrdering(..)
+                                                      , SymbolicPair
+                                                      , AddressAssignedPair )
 
 -- | Compute a concrete address for each 'SymbolicBlock'.
 --
@@ -27,9 +27,7 @@ layoutBlocks :: (Monad m, T.Traversable t, Show (i a), MM.MemWidth w)
              -> MM.Memory w
              -> RelAddress w
              -- ^ Address to begin block layout of instrumented blocks
-             -> t (ConcreteBlock i w, SymbolicBlock i a w)
-             -> RewriterT i a w m (t (ConcreteBlock i w, SymbolicBlock i a w, RelAddress w))
+             -> t (SymbolicPair i a w)
+             -> RewriterT i a w m (t (AddressAssignedPair i a w))
 layoutBlocks strat mem startAddr blocks =
-  case strat of
-    Parallel -> parallelLayout startAddr blocks
-    Compact ordering -> compactLayout mem startAddr ordering blocks
+  compactLayout mem startAddr strat blocks

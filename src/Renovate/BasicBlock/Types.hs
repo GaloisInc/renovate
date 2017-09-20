@@ -3,6 +3,7 @@ module Renovate.BasicBlock.Types (
   ConcreteBlock,
   SymbolicBlock,
   SymbolicInfo(..),
+  AddressAssignedBlock(..),
   TaggedInstruction,
   tag,
   tagInstruction,
@@ -80,6 +81,14 @@ tag i msa = Tag (i, msa)
 -- Their jumps are annotated with symbolic address targets as well,
 -- which refer to other 'SymbolicBlock's.
 type SymbolicBlock i a w = BasicBlock (SymbolicInfo w) (TaggedInstruction i) a
+
+-- | Some algorithms (such as layout) will need to assigned an address
+-- to symbolic blocks and then make the blocks concrete. This type
+-- bundles up a symbolic block and concrete address for that purpose.
+data AddressAssignedBlock i a w = AddressAssignedBlock
+  { lbBlock :: SymbolicBlock i a w -- ^ The symbolic block
+  , lbAt    :: RelAddress w        -- ^ The concrete address for this block
+  }
 
 -- | Address information for a symbolic block.
 --

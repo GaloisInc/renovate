@@ -52,7 +52,7 @@ import qualified Renovate.Rewrite as RW
 config :: (MM.MemWidth w)
        => (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w -> a)
        -> (a -> SymbolicBlock Instruction (TargetAddress w) w
-             -> RW.RewriteM Instruction w [TaggedInstruction Instruction (TargetAddress w)])
+             -> RW.RewriteM Instruction w (Maybe [TaggedInstruction Instruction (TargetAddress w)]))
        -> RenovateConfig Instruction (TargetAddress w) w X86.X86_64 a
 config analysis rewriter =
   RenovateConfig
