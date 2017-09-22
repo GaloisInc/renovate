@@ -50,7 +50,7 @@ import qualified Renovate.Rewrite as RW
 -- This configuration is actually specific to Linux due to the system
 -- call personality.
 config :: (MM.MemWidth w)
-       => (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w -> a)
+       => (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w X86.X86_64 -> a)
        -> (a -> SymbolicBlock Instruction (TargetAddress w) w
              -> RW.RewriteM Instruction w (Maybe [TaggedInstruction Instruction (TargetAddress w)]))
        -> RenovateConfig Instruction (TargetAddress w) w X86.X86_64 a

@@ -42,9 +42,12 @@ type ArchBits arch w = (w ~ MC.RegAddrWidth (MC.ArchReg arch),
                   Show (MC.ArchReg arch (MC.BVType (MC.ArchAddrWidth arch))))
 
 -- | Information on recovered basic blocks
-data BlockInfo i w = BlockInfo { biBlocks :: [ConcreteBlock i w]
-                               , biFunctionEntries :: [RelAddress w]
-                               }
+data BlockInfo i w arch = BlockInfo
+  { biBlocks           :: [ConcreteBlock i w]
+  , biFunctionEntries  :: [RelAddress w]
+  , biFunctionBlocks   :: M.Map (RelAddress w) [ConcreteBlock i w]
+  , biDiscoveryFunInfo :: M.Map (RelAddress w) (PU.Some (MC.DiscoveryFunInfo arch))
+  }
 
 recoverBlocks :: (ArchBits arch w)
               => ISA i a w
@@ -56,7 +59,7 @@ recoverBlocks :: (ArchBits arch w)
               -> MC.Memory w
               -> NEL.NonEmpty (MC.MemSegmentOff w)
               -- ^ A list of entry points in the memory space
-              -> (Either E.SomeException (BlockInfo i w), [Diagnostic])
+              -> (Either E.SomeException (BlockInfo i w arch), [Diagnostic])
 recoverBlocks isa dis1 archInfo mem entries = runRecovery isa dis1 mem $ do
    let di = MC.cfgFromAddrs archInfo mem MC.emptySymbolAddrMap (F.toList entries) []
        absoluteBlockStarts = S.fromList [ entry
@@ -66,13 +69,18 @@ recoverBlocks isa dis1 archInfo mem entries = runRecovery isa dis1 mem $ do
        funcEntries = [ MC.discoveredFunAddr dfi
                      | PU.Some dfi <- MC.exploredFunctions di
                      ]
+       infos = M.mapKeys relFromSegmentOff (di L.^. MC.funInfo)
    -- traceM ("unexplored functions: " ++ show (di L.^. MC.unexploredFunctions))
    -- traceM ("explored functions: " ++ show [pretty i | PU.Some i <- MC.exploredFunctions di])
    -- traceM ("Discovered block starts: " ++ show absoluteBlockStarts)
    blocks <- mapM (buildBlock isa dis1 mem (S.map relFromSegmentOff absoluteBlockStarts))
                   (F.toList absoluteBlockStarts)
-   return BlockInfo { biBlocks = blocks
-                    , biFunctionEntries = map relFromSegmentOff funcEntries
+   let funcBlocks        = foldr insertBlocks M.empty blocks
+       insertBlocks cb m = M.adjust (cb:) (basicBlockAddress cb) m
+   return BlockInfo { biBlocks           = blocks
+                    , biFunctionEntries  = map relFromSegmentOff funcEntries
+                    , biFunctionBlocks   = funcBlocks
+                    , biDiscoveryFunInfo = infos
                     }
 
 -- | Build our representation of a basic block from a provided block
