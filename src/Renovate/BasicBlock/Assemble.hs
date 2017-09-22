@@ -9,7 +9,10 @@
 {-# LANGUAGE UndecidableInstances #-}
 -- | Convert collections of basic blocks (specifically 'ConcreteBlock's) to
 -- contiguous regions of bytes.
-module Renovate.BasicBlock.Assemble ( assembleBlocks ) where
+module Renovate.BasicBlock.Assemble
+( assembleBlocks,
+  BlockAssemblyException(..)
+) where
 
 import           Control.Applicative
 import           Control.Exception ( assert )
@@ -32,15 +35,40 @@ import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
 
+import qualified Data.Text.Prettyprint.Doc as PD
+
 data BlockAssemblyException where
   -- A discontiguous block was starting with the given concrete block
-  DiscontiguousBlocks :: forall i w . (Show (i ()), Typeable (i ()), MM.MemWidth w) => ConcreteBlock i w -> BlockAssemblyException
-  UnexpectedMemoryContents :: forall w . (MM.MemWidth w) => MM.MemSegmentOff w -> BlockAssemblyException
-  AssemblyError :: C.SomeException -> BlockAssemblyException
-  BlockOverlappingRedirection :: forall i w . (Show (i ()), Typeable (i ()), MM.MemWidth w) => ConcreteBlock i w -> BlockAssemblyException
-  OverlayBlockNotContained :: forall i w . (Show (i ()), Typeable (i ()), MM.MemWidth w) => ConcreteBlock i w -> BlockAssemblyException
+  DiscontiguousBlocks         :: forall i w
+                               . (PD.Pretty (i ()), Show (i ()), Typeable (i ()), MM.MemWidth w)
+                              => ConcreteBlock i w -> BlockAssemblyException
+
+  UnexpectedMemoryContents    :: forall w
+                               . (MM.MemWidth w)
+                              => MM.MemSegmentOff w -> BlockAssemblyException
+  AssemblyError               :: C.SomeException -> BlockAssemblyException
+
+  BlockOverlappingRedirection :: forall i w
+                               . (PD.Pretty (i ()), Show (i ()), Typeable (i ()), MM.MemWidth w)
+                              => ConcreteBlock i w -> BlockAssemblyException
+
+  OverlayBlockNotContained    :: forall i w
+                               . (PD.Pretty (i ()), Show (i ()), Typeable (i ()), MM.MemWidth w)
+                              => ConcreteBlock i w -> BlockAssemblyException
 
 deriving instance Show BlockAssemblyException
+
+instance PD.Pretty BlockAssemblyException where
+  pretty (DiscontiguousBlocks cb) =
+    PD.pretty "DiscontiguousBlocks:" PD.<+> PD.pretty cb
+  pretty (UnexpectedMemoryContents seg) =
+    PD.pretty "UnexpectedMemoryContents:" PD.<+> PD.pretty (show seg)
+  pretty (AssemblyError e) = PD.pretty $ "AssemblyError: " ++ show e
+  pretty (BlockOverlappingRedirection cb) =
+    PD.pretty "BlockOverlappingRedirection:" PD.<+> PD.pretty cb
+  pretty (OverlayBlockNotContained cb) =
+    PD.pretty "OverlayBlockNotContained:" PD.<+> PD.pretty cb
+
 instance C.Exception BlockAssemblyException
 
 -- | Given a list of basic blocks and the original text section, create two new

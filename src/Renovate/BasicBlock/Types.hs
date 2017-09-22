@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Renovate.BasicBlock.Types (
   BasicBlock(..),
   ConcreteBlock,
@@ -15,6 +16,8 @@ module Renovate.BasicBlock.Types (
 import Data.Maybe ( isNothing )
 import Renovate.Address
 
+import qualified Data.Text.Prettyprint.Doc as PD
+
 -- | A basic block is a list of instructions (whose sizes and specific
 -- information we can find from the ISA).  Basic blocks also have a
 -- starting address, which is polymorphic.
@@ -28,6 +31,9 @@ data BasicBlock addr i a =
              }
   deriving (Eq, Show)
 
+instance (PD.Pretty addr, PD.Pretty (i a)) => PD.Pretty (BasicBlock addr i a) where
+  pretty (BasicBlock insns addr) =
+    PD.pretty addr PD.<> ":" PD.<+> PD.align (PD.vsep (map PD.pretty insns))
 
 -- | The type of concrete 'BasicBlock's that have been assigned real
 -- addresses.

@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
 -- | This module defines opaque concrete and symbolic address types.
 module Renovate.Address (
 --  Address(..),
@@ -16,8 +17,11 @@ import qualified GHC.Err.Located as L
 import           Data.Int ( Int64 )
 import           Data.Maybe ( fromMaybe )
 import           Data.Word ( Word64 )
+import qualified Numeric as N
 
 import qualified Data.Macaw.Memory as MM
+
+import qualified Data.Text.Prettyprint.Doc as PD
 
 
 -- | Symbolic addresses that can be referenced abstractly and
@@ -25,6 +29,9 @@ import qualified Data.Macaw.Memory as MM
 -- laid out.
 newtype SymbolicAddress = SymbolicAddress Word64
                         deriving (Eq, Ord, Show)
+
+instance PD.Pretty SymbolicAddress where
+  pretty (SymbolicAddress a) = "0x" PD.<> PD.pretty (N.showHex a "")
 
 -- | Addresses relative to some base segment index
 --
@@ -42,6 +49,9 @@ data RelAddress w = RelAddress { relSegment :: MM.SegmentIndex
                                , relOffset :: MM.MemWord w
                                }
   deriving (Eq, Ord, Show)
+
+instance (MM.MemWidth w) => PD.Pretty (RelAddress w) where
+  pretty (RelAddress _seg base off) = "0x" PD.<> PD.pretty (N.showHex (base + off) "")
 
 -- | Convert an address in @base + offset@ from macaw ('MM.MemSegmentOff') into
 -- our internal representation of addresses

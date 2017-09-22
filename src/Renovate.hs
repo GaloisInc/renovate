@@ -77,7 +77,9 @@ module Renovate
   D.Diagnostics(..),
   -- * Constraints
   Recovery.ArchBits,
-  ISA.InstructionConstraints
+  ISA.InstructionConstraints,
+  -- * Exceptions
+  A.BlockAssemblyException(..)
 )
 where
 
@@ -92,3 +94,4 @@ import qualified Renovate.ISA as ISA
 import qualified Renovate.Redirect.LayoutBlocks as LB
 import qualified Renovate.Rewrite as RW
 import qualified Renovate.Recovery as Recovery
+import qualified Renovate.BasicBlock.Assemble as A

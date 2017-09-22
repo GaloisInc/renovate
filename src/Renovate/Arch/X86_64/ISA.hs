@@ -14,9 +14,9 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy.Builder as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Functor.Identity as I
+import qualified Data.Text.Prettyprint.Doc as PD
 import Data.Int ( Int32, Int64 )
 import Data.Word ( Word8, Word64 )
-import qualified Text.PrettyPrint.ANSI.Leijen as PP
 import qualified Flexdis86 as D
 
 import qualified Data.Macaw.Memory as MM
@@ -74,7 +74,7 @@ isa =
       , isaSymbolizeAddresses = x64SymbolizeAddresses
       , isaConcretizeAddresses = x64ConcretizeAddresses
       , isaMakeSymbolicJump = x64MakeSymbolicJump
-      , isaPrettyInstruction = prettyPrint
+      , isaPrettyInstruction = show . PD.pretty
       }
 
 -- | Classify different kinds of jump instructions.
@@ -316,13 +316,6 @@ absToRip iStartAddr i a ref =
     _ -> Nothing
   where
     iEndAddr = iStartAddr `addressAddOffset` fromIntegral (x64Size i)
-
--- Note that the base is incorrect, so the display won't be perfect.
--- We can't really get the address here, so we'll have to come up with
--- something else longer term.
-prettyPrint :: Instruction a -> String
-prettyPrint i = PP.displayS (PP.renderCompact (D.ppInstruction 0 (toFlexInst i))) ""
-
 
 -- ipDisplacement :: Word64 -> D.Displacement -> D.Displacement
 -- ipDisplacement iEndAddr disp =

@@ -30,6 +30,8 @@ import Data.Typeable ( Typeable )
 import Data.Word ( Word8 )
 
 import qualified Flexdis86 as D
+import qualified Data.Text.Prettyprint.Doc as PD
+import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 import Renovate.Address
 
@@ -52,6 +54,15 @@ data AnnotatedOperand a = AnnotatedOperand { aoOperand :: (D.Value, D.OperandTyp
 -- annotation on each operand of type @a@.
 newtype Instruction a = XI { unXI :: D.InstructionInstanceF (AnnotatedOperand a) }
                          deriving (Functor, Show)
+
+instance PD.Pretty (Instruction a) where
+  pretty = PD.pretty . prettyPrint
+
+-- Note that the base is incorrect, so the display won't be perfect.
+-- We can't really get the address here, so we'll have to come up with
+-- something else longer term.
+prettyPrint :: Instruction a -> String
+prettyPrint i = PP.displayS (PP.renderCompact (D.ppInstruction 0 (toFlexInst i))) ""
 
 -- | The types of failures that can occur during disassembly of x86_64
 -- instructions.

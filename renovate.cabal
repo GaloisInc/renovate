@@ -54,6 +54,8 @@ library
                        vector >= 0.10 && < 0.13,
                        lens >= 4 && < 5,
                        located-base >= 0.1 && < 0.2,
+                       prettyprinter,
+                       -- just used to interface with flexdis
                        ansi-wl-pprint,
                        parameterized-utils,
                        macaw,
