@@ -44,7 +44,7 @@ data RenovateConfig i a w arch b =
                  , rcAssembler     :: forall m . (C.MonadThrow m) => i () -> m B.ByteString
                  , rcDisassembler  :: forall m . (C.MonadThrow m) => B.ByteString -> m [i ()]
                  , rcDisassembler1 :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, i ())
-                 , rcAnalysis      :: ISA.ISA i a w -> MM.Memory w -> R.BlockInfo i w -> b
+                 , rcAnalysis      :: ISA.ISA i a w -> MM.Memory w -> R.BlockInfo i w arch -> b
                  , rcRewriter      :: b -> B.SymbolicBlock i a w -> RW.RewriteM i w (Maybe [B.TaggedInstruction i a])
                  }
 

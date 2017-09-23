@@ -62,7 +62,7 @@ data FunctionCFG i w = FunctionCFG { cfgEntry :: RelAddress w
 recoverFunctions :: (MM.MemWidth w)
                  => ISA i a w
                  -> MM.Memory w
-                 -> BlockInfo i w
+                 -> BlockInfo i w arch
                  -> [FunctionCFG i w]
 recoverFunctions isa mem blockInfo = runM isa mem blockInfo $ do
   F.foldlM buildCFG [] (biFunctionEntries blockInfo)
@@ -224,7 +224,7 @@ resetState = do
   RWS.put emptyFunctionState
   return s
 
-runM :: ISA i a w -> MM.Memory w -> BlockInfo i w -> M i a w t -> t
+runM :: ISA i a w -> MM.Memory w -> BlockInfo i w arch -> M i a w t -> t
 runM isa mem blockInfo act = fst $ RWS.evalRWS (unM act) env emptyFunctionState
   where
     env = CFGEnv { envBlocks = F.foldl' addBlock M.empty (biBlocks blockInfo)
