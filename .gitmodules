@@ -16,3 +16,6 @@
 [submodule "deps/macaw"]
 	path = deps/macaw
 	url = git@gitlab-ext.galois.com:macaw/macaw.git
+[submodule "deps/dismantle"]
+	path = deps/dismantle
+	url = git@github.com:travitch/dismantle.git
