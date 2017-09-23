@@ -19,6 +19,7 @@ library
   exposed-modules:     Renovate
                        Renovate.Arch.X86_64
   other-modules:
+                       Renovate.Arch
                        Renovate.Arch.X86_64.ISA
                        Renovate.Arch.X86_64.Internal
                        Renovate.BasicBlock.Assemble

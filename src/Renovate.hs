@@ -17,8 +17,8 @@
 -- >       Right (newElf, rewriterInfo) -> writeElfAndInfo newElf rewriterInfo
 module Renovate
 ( -- * Configuration
-  C.Rewriter(..),
-  C.Analysis(..),
+  Arch.Architecture(..),
+  C.SomeConfig(..),
   LB.LayoutStrategy(..),
   LB.CompactOrdering(..),
   C.RenovateConfig(..),
@@ -84,6 +84,7 @@ module Renovate
 where
 
 import qualified Renovate.ABI as ABI
+import qualified Renovate.Arch as Arch
 import qualified Renovate.Address as A
 import qualified Renovate.Analysis.FunctionRecovery as FR
 import qualified Renovate.BasicBlock as B

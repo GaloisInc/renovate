@@ -1,28 +1,37 @@
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DataKinds  #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
 -- | Internal helpers for the ELF rewriting interface
 module Renovate.Config (
   RenovateConfig(..),
-  Rewriter(..),
-  Analysis(..),
+  SomeConfig(..),
   compose,
   identity,
   nop
   ) where
 
+import           GHC.TypeLits ( KnownNat )
+
 import qualified Control.Monad.Catch as C
 import qualified Data.ByteString as B
+import           Data.Typeable ( Typeable )
 
+import qualified Data.Parameterized.NatRepr as NR
 import qualified Data.Macaw.Architecture.Info as MM
 import qualified Data.Macaw.Memory as MM
-
-import qualified Renovate.Arch.X86_64.Internal as X86
 
 import qualified Renovate.BasicBlock as B
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Rewrite as RW
 import qualified Renovate.Recovery as R
+
+data SomeConfig b = forall i a w arch
+                  . (ISA.InstructionConstraints i a,
+                     R.ArchBits arch w,
+                     KnownNat w, Typeable w)
+                  => SomeConfig (NR.NatRepr w) (RenovateConfig i a w arch b)
 
 -- | The configuration required for a run of the binary rewriter.
 --
@@ -38,22 +47,6 @@ data RenovateConfig i a w arch b =
                  , rcAnalysis      :: ISA.ISA i a w -> MM.Memory w -> R.BlockInfo i w -> b
                  , rcRewriter      :: b -> B.SymbolicBlock i a w -> RW.RewriteM i w (Maybe [B.TaggedInstruction i a])
                  }
-
--- | The rewriting action to take
---
--- Callers must specify a rewriting action for each platform they wish to
--- support.  Binary rewriting is architecture-specific.
-data Rewriter a = Rewriter
-  { iX86_64 :: a
-            -> B.SymbolicBlock X86.Instruction (X86.TargetAddress 64) 64
-            -> RW.RewriteM X86.Instruction 64
-                 (Maybe [B.TaggedInstruction X86.Instruction (X86.TargetAddress 64)])
-    -- ^ A rewriter suitable for the x86_64 architecture
-  }
-
-data Analysis a = Analysis
-  { aX86_64 :: ISA.ISA X86.Instruction (X86.TargetAddress 64) 64 -> MM.Memory 64 -> R.BlockInfo X86.Instruction 64 -> a
-  }
 
 -- | Compose a list of instrumentation functions into a single
 -- function suitable for use as an argument to 'redirect'
