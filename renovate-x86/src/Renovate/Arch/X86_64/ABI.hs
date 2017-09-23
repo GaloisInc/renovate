@@ -14,8 +14,7 @@ import Data.Word ( Word32 )
 
 import qualified Data.Macaw.Memory as MM
 
-import Renovate.ABI
-import Renovate.Address
+import Renovate
 import Renovate.Arch.X86_64.Internal
 
 import qualified Flexdis86 as D

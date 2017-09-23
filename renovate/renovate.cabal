@@ -17,11 +17,8 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Renovate
-                       Renovate.Arch.X86_64
   other-modules:
                        Renovate.Arch
-                       Renovate.Arch.X86_64.ISA
-                       Renovate.Arch.X86_64.Internal
                        Renovate.BasicBlock.Assemble
                        Renovate.BasicBlock.Types
                        Renovate.Config
@@ -38,7 +35,6 @@ library
                        Renovate.ABI
                        Renovate.Address
                        Renovate.Analysis.FunctionRecovery
-                       Renovate.Arch.X86_64.ABI
                        Renovate.BasicBlock
                        Renovate.BinaryFormat.ELF
                        Renovate.ISA
@@ -56,33 +52,10 @@ library
                        lens >= 4 && < 5,
                        located-base >= 0.1 && < 0.2,
                        prettyprinter,
-                       -- just used to interface with flexdis
-                       ansi-wl-pprint,
                        parameterized-utils,
                        macaw,
-                       macaw-x86,
-                       elf-edit >= 0.28,
-                       flexdis86
+                       elf-edit >= 0.28
+
   hs-source-dirs:      src
   default-language:    Haskell2010
   ghc-options: -Wall -fno-ignore-asserts
-
-test-suite renovate-tests
-  type: exitcode-stdio-1.0
-  default-language: Haskell2010
-  ghc-options: -Wall
-  main-is: Main.hs
-  other-modules: X64
-  hs-source-dirs: tests
-  build-depends: base,
-                 macaw,
-                 macaw-x86,
-                 bytestring,
-                 containers,
-                 tasty >= 0.10 && < 0.12,
-                 filemanip >= 0.3.6 && < 0.4,
-                 elf-edit,
-                 filepath,
-                 tasty-hunit,
-                 renovate
-                 -- tasty-quickcheck

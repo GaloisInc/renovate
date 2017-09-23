@@ -30,15 +30,10 @@ import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.X86 as X86
 import qualified Data.Macaw.X86.ArchTypes as X86
 
-import           Renovate.Config ( RenovateConfig(..) )
-
+import           Renovate
 import           Renovate.Arch.X86_64.ABI
 import           Renovate.Arch.X86_64.ISA
 import           Renovate.Arch.X86_64.Internal ( Value, Instruction, TargetAddress, AssemblyFailure(..), DisassemblyFailure(..) )
-import           Renovate.BasicBlock
-import           Renovate.ISA
-import           Renovate.Recovery
-import qualified Renovate.Rewrite as RW
 
 -- | The configuration for an x86_64 rewriter
 --
@@ -52,7 +47,7 @@ import qualified Renovate.Rewrite as RW
 config :: (MM.MemWidth w)
        => (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w -> a)
        -> (a -> SymbolicBlock Instruction (TargetAddress w) w
-             -> RW.RewriteM Instruction w (Maybe [TaggedInstruction Instruction (TargetAddress w)]))
+             -> RewriteM Instruction w (Maybe [TaggedInstruction Instruction (TargetAddress w)]))
        -> RenovateConfig Instruction (TargetAddress w) w X86.X86_64 a
 config analysis rewriter =
   RenovateConfig

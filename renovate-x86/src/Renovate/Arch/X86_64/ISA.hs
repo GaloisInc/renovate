@@ -21,10 +21,7 @@ import qualified Flexdis86 as D
 
 import qualified Data.Macaw.Memory as MM
 
-import Renovate.Address
-import Renovate.BasicBlock.Types
-import Renovate.ISA
-
+import Renovate
 import Renovate.Arch.X86_64.Internal
 
 -- | Assemble an instruction into a 'B.ByteString'

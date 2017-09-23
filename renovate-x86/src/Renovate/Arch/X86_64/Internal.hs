@@ -33,7 +33,7 @@ import qualified Flexdis86 as D
 import qualified Data.Text.Prettyprint.Doc as PD
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
-import Renovate.Address
+import Renovate
 
 -- | The type of operands to x86_64 instructions
 type Value = D.Value
