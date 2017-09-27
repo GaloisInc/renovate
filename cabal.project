@@ -1,8 +1,10 @@
-packages: ../elf-edit
-          ../flexdis86
-          ../galois-dwarf/
-
-          ../macaw/
-          ../macaw-x86/
-          ../parameterized-utils/
-          ./
+packages: deps/elf-edit/
+          deps/flexdis86/
+          deps/dwarf/
+          deps/macaw/
+          deps/macaw-x86/
+          deps/parameterized-utils/
+          deps/dismantle/dismantle-tablegen/
+          deps/dismantle/dismantle-ppc/
+          renovate/
+          renovate-x86/

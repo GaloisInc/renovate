@@ -16,10 +16,11 @@ import qualified Test.Tasty as T
 import qualified Test.Tasty.HUnit as T
 import Text.Read ( readMaybe )
 
+import qualified Data.Parameterized.NatRepr as NR
 import qualified Data.Macaw.Memory as MM
 
 import qualified Renovate as R
-import qualified Renovate.Arch.X86_64 as R
+import qualified Renovate.Arch.X86_64 as R64
 
 import qualified Data.ElfEdit as E
 
@@ -72,23 +73,17 @@ mkTest fp = T.testCase fp $ withELF elfFilename testRewrite
     testRewrite :: E.Elf 64 -> IO ()
     testRewrite elf = do
       Just expected <- readMaybe <$> readFile (fp <.> "expected")
-      R.withElfConfig (E.Elf64 elf) R.Analysis { R.aX86_64 = analysis expected }
-                                    R.Rewriter { R.iX86_64 = R.identity }
-                                    testBlockRecovery
+      let cfg = [(R.X86_64, R.SomeConfig NR.knownNat (R64.config (analysis expected) R.identity))]
+      R.withElfConfig (E.Elf64 elf) cfg testBlockRecovery
 
     elfFilename = replaceExtension fp "exe"
 
--- testNullRewriter :: RewriterConfig X86_64.Instruction (X86_64.TargetAddress 64) 64 X86.X86_64
---                  -> E.Elf Word64
---                  -> MM.Memory 64
---                  -> T.Assertion
--- testNullRewriter
-analysis :: ExpectedResult -> R.ISA R.Instruction (R.TargetAddress 64) 64 -> MM.Memory 64 -> R.BlockInfo R.Instruction 64 -> (Bool,[String])
+analysis :: ExpectedResult -> R.ISA R64.Instruction (R64.TargetAddress 64) 64 -> MM.Memory 64 -> R.BlockInfo R64.Instruction 64 -> (Bool,[String])
 analysis expected isa _mem blocks =
   foldr go (True,[]) (R.biBlocks blocks)
   where
-    go :: R.ConcreteBlock R.Instruction 64 -> (Bool,[String]) -> (Bool,[String])
-    go b (bacc,sacc) = 
+    go :: R.ConcreteBlock R64.Instruction 64 -> (Bool,[String]) -> (Bool,[String])
+    go b (bacc,sacc) =
       let actual = ExpectedBlock { addr = fromIntegral (R.absoluteAddress (R.basicBlockAddress b))
                                  , byteCount = R.concreteBlockSize isa b
                                  , insnCount = length (R.basicBlockInstructions b)

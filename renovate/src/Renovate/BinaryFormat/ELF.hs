@@ -6,6 +6,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE OverloadedStrings #-}
 -- | An interface for manipulating ELF files
@@ -25,7 +26,6 @@ module Renovate.BinaryFormat.ELF (
   entryPoints,
   riSectionBaseAddress,
   riInitialBytes,
-  Rewriter(..),
   RenovateConfig(..),
   RewriterInfo(..),
   SomeBlocks(..)
@@ -60,10 +60,12 @@ import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.Memory.ElfLoader as MM
 import qualified Data.Macaw.Types as MM
+import qualified Data.Parameterized.Classes as PC
+import qualified Data.Parameterized.NatRepr as NR
 
 import qualified Renovate.Address as RA
 import qualified Renovate.Analysis.FunctionRecovery as FR
-import qualified Renovate.Arch.X86_64 as X86_64
+import qualified Renovate.Arch as Arch
 import qualified Renovate.BasicBlock as B
 import qualified Renovate.BasicBlock.Assemble as BA
 import           Renovate.Config
@@ -133,8 +135,7 @@ data SomeBlocks = forall i a w
 withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
               -- ^ The ELF file to analyze
-              -> Analysis b
-              -> Rewriter b
+              -> [(Arch.Architecture, SomeConfig b)]
               -> (forall i a w arch . (R.ArchBits arch w,
                                        Typeable w,
                                        KnownNat w,
@@ -145,13 +146,18 @@ withElfConfig :: (C.MonadThrow m)
                                    -> MM.Memory w
                                    -> m t)
               -> m t
-withElfConfig e0 analysis rewriter k =
+withElfConfig e0 configs k =
   case (e0, withElf e0 E.elfMachine) of
     (E.Elf32 _, mach) ->
       -- No support for 32 bit architectures yet.  Should change with ARM
       C.throwM (UnsupportedArchitecture mach)
     (E.Elf64 e, E.EM_X86_64) ->
-      withMemory e (k (X86_64.config (aX86_64 analysis) (iX86_64 rewriter)) e)
+      case lookup Arch.X86_64 configs of
+        Nothing -> C.throwM (UnsupportedArchitecture E.EM_X86_64)
+        Just (SomeConfig nr cfg)
+          | Just PC.Refl <- PC.testEquality nr (NR.knownNat @64) ->
+              withMemory e (k cfg e)
+          | otherwise -> error ("Invalid NatRepr for X86_64: " ++ show nr)
     (E.Elf64 _, mach) -> C.throwM (UnsupportedArchitecture mach)
 
 -- | Apply a rewriter to an ELF file using the chosen layout strategy.
