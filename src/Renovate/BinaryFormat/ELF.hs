@@ -736,7 +736,7 @@ instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutA
               let allBlocks = overwrittenBlocks ++ instrumentationBlocks
               case cfg of
                 RenovateConfig { rcAssembler = asm } -> do
-                  (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks isa textSectionAddr textBytes layoutAddr asm allBlocks
+                  (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionAddr textBytes layoutAddr asm allBlocks
                   let newDataBytes = mkNewDataSection newGlobalBase info
                   return (overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
 

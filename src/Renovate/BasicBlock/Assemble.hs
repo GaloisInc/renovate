@@ -16,7 +16,8 @@ module Renovate.BasicBlock.Assemble
 
 import           Control.Applicative
 import           Control.Exception ( assert )
-import           Control.Monad ( unless )
+import qualified Control.Lens as L
+import           Control.Monad ( when, unless )
 import qualified Control.Monad.Catch as C
 import qualified Control.Monad.State.Strict as St
 import qualified Data.ByteString as B
@@ -37,6 +38,8 @@ import           Renovate.ISA
 
 import qualified Data.Text.Prettyprint.Doc as PD
 
+-- import Debug.Trace
+
 data BlockAssemblyException where
   -- A discontiguous block was starting with the given concrete block
   DiscontiguousBlocks         :: forall i w
@@ -46,6 +49,7 @@ data BlockAssemblyException where
   UnexpectedMemoryContents    :: forall w
                                . (MM.MemWidth w)
                               => MM.MemSegmentOff w -> BlockAssemblyException
+
   AssemblyError               :: C.SomeException -> BlockAssemblyException
 
   BlockOverlappingRedirection :: forall i w
@@ -80,7 +84,8 @@ instance C.Exception BlockAssemblyException
 -- This function assumes that the extra contiguous blocks are at higher
 -- addresses than the original text section.
 assembleBlocks :: (C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
-               => ISA i a w
+               => MM.Memory w
+               -> ISA i a w
                -> MM.MemSegmentOff w
                -- ^ The address of the start of the text section
                -> B.ByteString
@@ -91,34 +96,60 @@ assembleBlocks :: (C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
                -- ^ A function to assemble a single instruction to bytes
                -> [ConcreteBlock i w]
                -> m (B.ByteString, B.ByteString)
-assembleBlocks isa textSecStart origTextBytes extraAddr assemble blocks = do
+assembleBlocks mem isa textSecStart origTextBytes extraAddr assemble blocks = do
   s1 <- St.execStateT (unA assembleDriver) s0
   return (fromBuilder (asTextSection s1), fromBuilder (asExtraText s1))
   where
     absStartAddr = relFromSegmentOff textSecStart
-    s0 = AssembleState { asTextStart = absStartAddr
-                       , asTextAddr = absStartAddr
-                       , asTextSection = mempty
-                       , asOrigTextBytes = origTextBytes
-                       , asExtraStart = extraAddr
-                       , asExtraAddr = extraAddr
-                       , asExtraText = mempty
-                       , asAssemble = assemble
-                       , asBlocks = L.sortOn basicBlockAddress blocks
-                       , asISA = isa
+    s0 = AssembleState { asTextStart        = absStartAddr
+                       , asTextAddr         = absStartAddr
+                       , asTextSection      = mempty
+                       , asOrigTextBytes    = origTextBytes
+                       , asExtraStart       = extraAddr
+                       , asExtraAddr        = extraAddr
+                       , asExtraText        = mempty
+                       , asAssemble         = assemble
+                       , _asOrigBlocks      = L.sortOn basicBlockAddress origBlocks
+                       , _asAllocatedBlocks = L.sortOn basicBlockAddress allocatedBlocks
+                       , asISA              = isa
                        }
+    -- Split the inputs block list into 2 lists. One for blocks that fit in the
+    -- original address space and one for the newly allocated blocks.
+    (origBlocks, allocatedBlocks) = foldr go ([],[]) blocks
+    go b (origAcc, allocatedAcc) = case MM.resolveAbsoluteAddr mem (absoluteAddress (basicBlockAddress b)) of
+      Nothing -> (origAcc, b:allocatedAcc)
+      Just _  -> (b:origAcc, allocatedAcc)
 
+-- | Process all the input blocks. First, look at each block that will be in the
+-- original address space of the binary. Then look at each block that will be
+-- newly allocated.
 assembleDriver :: (C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w) => Assembler i a w m ()
 assembleDriver = do
-  mb <- takeNextBlock
+  mb <- takeNextOrigBlock
   case mb of
-    Nothing -> return ()
     Just b -> do
-      extraStart <- St.gets asExtraStart
-      case basicBlockAddress b < extraStart of
-        True -> assembleAsText b
-        False -> assembleAsExtra b
+      assembleAsTextOrExtra b
+      isLast <- isLastOrigBlock
+      -- If this is the last block in the original address space but does not
+      -- fill out the address space then we need to use the rest of the
+      -- original byte sequence to pad out the original address space.
+      when isLast padLastBlock
       assembleDriver
+    Nothing -> do
+      mb' <- takeNextAllocatedBlock
+      case mb' of
+        Nothing -> return ()
+        Just b  -> do
+          assembleAsTextOrExtra b
+          assembleDriver
+  where
+  assembleAsTextOrExtra :: (C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
+                        => ConcreteBlock i w -> Assembler i a w m ()
+  assembleAsTextOrExtra b = do
+    extraStart <- St.gets asExtraStart
+    case basicBlockAddress b < extraStart of
+      True  -> assembleAsText b
+      False -> assembleAsExtra b
 
 -- | Code in the extra section never overlaps, so we can just perform some basic
 -- consistency check sand then append it.
@@ -245,7 +276,7 @@ lookupOverlappingBlocks b = do
   where
     go :: ISA i a w -> RelAddress w -> RelAddress w -> Assembler i a w m [ConcreteBlock i w]
     go isa blockEnd nextAllowableAddress = do
-      mb' <- takeNextBlock
+      mb' <- takeNextOrigBlock
       case mb' of
         Nothing -> return []
         Just b' -> do
@@ -254,7 +285,7 @@ lookupOverlappingBlocks b = do
             _ | basicBlockAddress b' >= blockEnd -> do
                   -- If the next block comes after the current block, just put
                   -- it back and return
-                  St.modify' $ \s -> s { asBlocks = b' : asBlocks s }
+                  asOrigBlocks L.%= (b':)
                   return []
               | basicBlockAddress b' < nextAllowableAddress -> do
                   -- We check this case second in case the block is shorter than
@@ -292,6 +323,25 @@ padToBlockStart b = do
                            , asTextSection = asTextSection s <> B.byteString gapBytes
                            }
 
+-- | Looks for a gap after the current block (assumes, current block is last of
+-- the blocks for the original address space) and fills that gap with the bytes
+-- from the original program text.
+padLastBlock :: (Monad m, MM.MemWidth w) => Assembler i a w m ()
+padLastBlock = do
+  origTextBytes <- St.gets asOrigTextBytes
+  nextAddr      <- St.gets asTextAddr
+  textStart     <- St.gets asTextStart
+  let idx          = fromIntegral (nextAddr `addressDiff` textStart)
+      leftOversLen = B.length origTextBytes - idx
+      leftOvers    = B.take leftOversLen (B.drop idx origTextBytes)
+  -- traceM $ "padLastBlock = " ++ show (B.length origTextBytes - idx)
+  if leftOversLen > 0
+     then do
+       St.modify' $ \s -> s { asTextAddr    = asTextAddr s `addressAddOffset` fromIntegral leftOversLen
+                            , asTextSection = asTextSection s <> B.byteString leftOvers
+                            }
+     else return ()
+
 assembleBlock :: (C.MonadThrow m) => ConcreteBlock i w -> Assembler i a w m (B.ByteString)
 assembleBlock b = do
   assembler <- St.gets asAssemble
@@ -299,14 +349,33 @@ assembleBlock b = do
     Left err -> C.throwM (AssemblyError err)
     Right strs -> return (mconcat strs)
 
-takeNextBlock :: (Monad m) => Assembler i a w m (Maybe (ConcreteBlock i w))
-takeNextBlock = do
-  bs <- St.gets asBlocks
+-- | Helper function for taking the next block.
+takeNextBlockWith :: (Monad m) => L.Lens' (AssembleState i a w) [ConcreteBlock i w]
+                  -> Assembler i a w m (Maybe (ConcreteBlock i w))
+takeNextBlockWith f = do
+  bs <- L.use f
   case bs of
     [] -> return Nothing
     (b:rest) -> do
-      St.modify' $ \s -> s { asBlocks = rest }
-      return (Just b)
+      f L..= rest
+      return $! Just b
+
+-- | Grabs the next block from the orginal block set (original in the sense that
+-- these blocks have addresses in the original address space).
+takeNextOrigBlock :: (Monad m) => Assembler i a w m (Maybe (ConcreteBlock i w))
+takeNextOrigBlock = takeNextBlockWith asOrigBlocks
+
+-- | Grabs the next block from the allocated block set (allocated in the sense that
+-- these blocks DO NOT have addresses in the original address space).
+takeNextAllocatedBlock :: (Monad m) => Assembler i a w m (Maybe (ConcreteBlock i w))
+takeNextAllocatedBlock = takeNextBlockWith asAllocatedBlocks
+
+-- | Checks if the the orginal block list is exhausted.
+-- Note: This will return true when the current block is from the allocated set.
+isLastOrigBlock :: (Monad m) => Assembler i a w m Bool
+isLastOrigBlock = do
+  bs <- L.use asOrigBlocks
+  return $! null bs
 
 newtype Assembler i a w m a' = Assembler { unA :: St.StateT (AssembleState i a w) m a' }
                           deriving ( Functor,
@@ -334,13 +403,26 @@ data AssembleState i a w =
                 -- expected to be contiguous.
                 , asAssemble :: i () -> Either C.SomeException B.ByteString
                 -- ^ The assembler to turn instructions into bytes
-                , asBlocks :: [ConcreteBlock i w]
-                -- ^ The blocks remaining to process; these must be ordered by address
+                , _asOrigBlocks :: [ConcreteBlock i w]
+                -- ^ The blocks remaining to process. These must be ordered by
+                -- address and will go into the original address space of the
+                -- binary.
+                , _asAllocatedBlocks :: [ConcreteBlock i w]
+                -- ^ The blocks remaining to process. These must be ordered by
+                -- address but their addresses are outside the range of the
+                -- original binary and must be allocated in a new part of the
+                -- elf file.
                 , asOrigTextBytes :: B.ByteString
                 -- ^ The original bytes of the text section, used to extract
                 -- bits that are not covered by basic blocks
                 , asISA :: ISA i a w
                 }
+
+asOrigBlocks :: L.Lens' (AssembleState i a w) [ConcreteBlock i w]
+asOrigBlocks = L.lens _asOrigBlocks (\as bs -> as { _asOrigBlocks = bs })
+
+asAllocatedBlocks :: L.Lens' (AssembleState i a w) [ConcreteBlock i w]
+asAllocatedBlocks = L.lens _asAllocatedBlocks (\as bs -> as { _asAllocatedBlocks = bs })
 
 fromBuilder :: B.Builder -> B.ByteString
 fromBuilder = L.toStrict . B.toLazyByteString
