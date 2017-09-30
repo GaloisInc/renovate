@@ -327,6 +327,9 @@ doRewrite cfg mem strat = do
       dataSegAddr <- withCurrentELF (segmentLayoutAddress newDataSectionBase)
       newDataSeg <- withCurrentELF (newDataSegment dataSegAddr newData)
       modifyCurrentELF (appendSegment newDataSeg)
+  baseAddr            <- withCurrentELF findBaseAddr
+  newProgramHeaderSeg <- withCurrentELF (newProgramHeaderSegment baseAddr)
+  modifyCurrentELF (appendSegment newProgramHeaderSeg)
   case mBaseSymtab of
     Nothing -> return ()
     Just baseSymtab -> do
@@ -432,7 +435,6 @@ newFromEntry textSecIdx extraTextSecIdx layoutAddr e addr nm = e
 --
 -- It will be placed at the given start address.
 newDataSegment :: (Num (E.ElfWordType w), Show (E.ElfWordType w), Integral (E.ElfWordType w), Bits (E.ElfWordType w))
-               => Bits (E.ElfWordType w)
                => E.ElfWordType w
                -> B.ByteString
                -> E.Elf w
@@ -460,6 +462,47 @@ newDataSegment startAddr bytes e = do
                        , E.elfSegmentData = Seq.singleton (E.ElfDataSection sec)
                        }
   return seg
+
+-- | We store the program headers in there own segment so that the C runtime can
+-- look at them during libc init. Some padding is needed to get the alignment to
+-- work out. The address needs to be the start address for the elf. This can
+-- usually be calculated with `findBaseAddr`.
+newProgramHeaderSegment :: (Num (E.ElfWordType w), Show (E.ElfWordType w), Integral (E.ElfWordType w), Bits (E.ElfWordType w))
+                        => E.ElfWordType w
+                        -> E.Elf w
+                        -> ElfRewriter w (E.ElfSegment w)
+newProgramHeaderSegment baseAddr e = do
+  let layout        = E.elfLayout e
+      sz            = E.elfLayoutSize layout
+      alignedOffset = fixAlignment sz (fromIntegral pageAlignment)
+  let seg = E.ElfSegment
+            { E.elfSegmentType     = E.PT_LOAD
+            , E.elfSegmentFlags    = E.pf_r
+            , E.elfSegmentIndex    = nextSegmentIndex e
+            , E.elfSegmentVirtAddr = baseAddr + alignedOffset
+            , E.elfSegmentPhysAddr = baseAddr + alignedOffset
+            , E.elfSegmentAlign    = fromIntegral pageAlignment
+            , E.elfSegmentMemSize  = E.ElfRelativeSize 0
+            , E.elfSegmentData     = E.ElfDataSegmentHeaders Seq.<| Seq.empty
+            }
+  return seg
+
+-- | Finds the lowest address mentioned in a "LOAD"able elf segment. We treat
+-- this as the base address that the elf file will be loaded at.
+--
+-- Note: This assumes there is at least one PT_LOAD segment, which should
+-- normally be the case.
+findBaseAddr :: forall w
+              . (Num (E.ElfWordType w), Show (E.ElfWordType w), Integral (E.ElfWordType w), Bits (E.ElfWordType w))
+             => E.Elf w
+             -> ElfRewriter w (E.ElfWordType w)
+findBaseAddr e = do
+  let segs :: [ E.ElfDataRegion w ]
+      segs = e L.^. E.elfFileData . L.to F.toList
+      addrs = [ E.elfSegmentVirtAddr s
+              | E.ElfDataSegment s <- segs
+              , E.elfSegmentType s == E.PT_LOAD ]
+  return $! minimum addrs
 
 -- | Replace all of the dynamically-sized data regions in the ELF file with padding.
 --
@@ -532,7 +575,6 @@ appendHeaders elf = do
   let elfData = [ E.ElfDataSectionHeaders
                 , E.ElfDataSectionNameTable shstrtabidx
                 , E.ElfDataStrtab strtabidx
-                , E.ElfDataSegmentHeaders
                 ]
   return ((), elf L.& E.elfFileData L.%~ (`mappend` Seq.fromList elfData))
 
