@@ -29,7 +29,14 @@ import qualified Data.Text.Prettyprint.Doc as PD
 -- 'Typeable'.  They are combined for convenience and to reduce noise
 -- in type signatures, since those constraints are not very
 -- interesting.
-type InstructionConstraints i a = (PD.Pretty (i ()), PD.Pretty (i a), Show (i a), Show (i ()), Typeable (i a), Typeable (i ()))
+type InstructionConstraints i a =
+  ( PD.Pretty (i ())
+  , PD.Pretty (i a)
+  , Show (i a)
+  , Show (i ())
+  , Typeable (i a)
+  , Typeable (i ())
+  )
 
 -- | The variety of a jump: either conditional or unconditional.  This
 -- is used as a tag for 'JumpType's.  One day, we could model the type

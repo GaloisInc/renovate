@@ -38,7 +38,7 @@ type AddressHeap w = H.Heap (H.Entry (Down Int) (RelAddress w))
 --
 -- Right now, we use an inefficient encoding of jumps.  We could do
 -- better later on.
-compactLayout :: (Monad m, T.Traversable t, Show (i a), MM.MemWidth w)
+compactLayout :: (Monad m, T.Traversable t, InstructionConstraints i a, MM.MemWidth w)
               => MM.Memory w
               -> RelAddress w
               -- ^ Address to begin block layout of instrumented blocks

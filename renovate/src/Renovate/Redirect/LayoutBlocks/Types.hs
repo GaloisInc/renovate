@@ -1,5 +1,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 module Renovate.Redirect.LayoutBlocks.Types (
   LayoutStrategy(..),
   CompactOrdering(..),
@@ -14,6 +16,8 @@ module Renovate.Redirect.LayoutBlocks.Types (
 import qualified Data.Vector.Unboxed as V
 import           Data.Word ( Word32 )
 import           Renovate.BasicBlock
+import qualified Data.Macaw.Memory as MM
+import qualified Data.Text.Prettyprint.Doc as PD
 
 -- | A type for selecting the strategy for laying out basic blocks in rewritten
 -- binaries.
@@ -51,9 +55,49 @@ data LayoutPair block i w = LayoutPair
   , lpStatus :: Status            -- ^ allows us to track if the instrumentor changed the block.
   }
 
+instance ( MM.MemWidth w
+         , PD.Pretty (i a)
+         , PD.Pretty (i ())
+         ) => PD.Pretty (SymbolicPair i a w) where
+  pretty (LayoutPair o n _) = ppBlocks projectInstruction o n
+
+instance ( MM.MemWidth w
+         , PD.Pretty (i ())
+         ) => PD.Pretty (ConcretePair i w) where
+  pretty (LayoutPair o n _) = ppBlocks id o n
+
+ppBlocks :: ( PD.Pretty (i1 a1)
+            , PD.Pretty (i1 a2)
+            , PD.Pretty addr1
+            ) => (i2 b -> i1 a2) -> BasicBlock addr1 i1 a1 -> BasicBlock addr2 i2 b -> PD.Doc ann
+ppBlocks f o n = PD.vcat $ [ PD.pretty (basicBlockAddress o) PD.<> PD.pretty ":" ] ++
+                           ppInsnLists origInsns newInsns
+  where
+  origInsns = basicBlockInstructions o
+  newInsns  = f <$> basicBlockInstructions n
+
+-- | This lays out the instruction lists side by side with a divider (eg., |)
+-- between the columns. The instruction sequences do not need to be the same
+-- length.
+ppInsnLists :: ( PD.Pretty (i a)
+               , PD.Pretty (i b)
+               ) => [i a] -> [i b] -> [PD.Doc ann]
+ppInsnLists xs ys = case (xs, ys) of
+  (o:os    , n:ns)     ->
+    let curLen = length (show (PD.pretty o)) in
+    (PD.pretty o PD.<+> PD.indent (maxLen - curLen + spacing) (divider PD.<+> PD.pretty n)) : ppInsnLists os ns
+  (os@(_:_), [])       -> map PD.pretty os
+  ([]      , ns@(_:_)) -> (PD.indent (maxLen + spacing + 1)) <$> map (\x -> divider PD.<+> PD.pretty x) ns
+  ([], [])             -> [PD.emptyDoc]
+  where
+  divider = PD.pretty "|"
+  maxLen  = maximum (map (length . show . PD.pretty) xs)
+  spacing = 0
+
 data Status
   = Modified
   | Unmodified
+  deriving (Show)
 
 type SymbolicPair         i a w = LayoutPair (SymbolicBlock        i a w) i w
 type AddressAssignedPair  i a w = LayoutPair (AddressAssignedBlock i a w) i w

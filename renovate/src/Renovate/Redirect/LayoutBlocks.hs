@@ -17,12 +17,13 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , CompactOrdering(..)
                                                       , SymbolicPair
                                                       , AddressAssignedPair )
+import           Renovate.ISA
 
 -- | Compute a concrete address for each 'SymbolicBlock'.
 --
 -- Right now, we use an inefficient encoding of jumps.  We could do
 -- better later on.
-layoutBlocks :: (Monad m, T.Traversable t, Show (i a), MM.MemWidth w)
+layoutBlocks :: (Monad m, T.Traversable t, InstructionConstraints i a, MM.MemWidth w)
              => LayoutStrategy
              -> MM.Memory w
              -> RelAddress w

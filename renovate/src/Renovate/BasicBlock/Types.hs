@@ -58,6 +58,9 @@ type ConcreteBlock i w = BasicBlock (RelAddress w) i ()
 -- annotations, and we'll need a helper to collect those.
 newtype TaggedInstruction i a = Tag { unTag :: (i a, Maybe SymbolicAddress) }
 
+instance PD.Pretty (i a) => PD.Pretty (TaggedInstruction i a) where
+  pretty (Tag (i, _)) = PD.pretty i
+
 -- | Annotate an instruction with a symbolic target.
 --
 -- We use this if the instruction is a jump and we will need to
@@ -106,4 +109,7 @@ data SymbolicInfo w = SymbolicInfo { symbolicAddress :: SymbolicAddress
                                    , concreteAddress :: RelAddress w
                                    }
                     deriving (Eq, Ord, Show)
+
+instance PD.Pretty (SymbolicInfo w) where
+  pretty si = PD.pretty (symbolicAddress si)
 
