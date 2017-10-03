@@ -82,17 +82,22 @@ ppBlocks f o n = PD.vcat $ [ PD.pretty (basicBlockAddress o) PD.<> PD.pretty ":"
 ppInsnLists :: ( PD.Pretty (i a)
                , PD.Pretty (i b)
                ) => [i a] -> [i b] -> [PD.Doc ann]
-ppInsnLists xs ys = case (xs, ys) of
-  (o:os    , n:ns)     ->
-    let curLen = length (show (PD.pretty o)) in
-    (PD.pretty o PD.<+> PD.indent (maxLen - curLen + spacing) (divider PD.<+> PD.pretty n)) : ppInsnLists os ns
-  (os@(_:_), [])       -> map PD.pretty os
-  ([]      , ns@(_:_)) -> (PD.indent (maxLen + spacing + 1)) <$> map (\x -> divider PD.<+> PD.pretty x) ns
-  ([], [])             -> [PD.emptyDoc]
+ppInsnLists xs ys = go (xs, ys)
+
   where
-  divider = PD.pretty "|"
-  maxLen  = maximum (map (length . show . PD.pretty) xs)
-  spacing = 0
+  divider           = PD.pretty "|"
+  maxLen            = maxOrDefault 0 (map (length . show . PD.pretty) xs)
+  spacing           = 0
+  maxOrDefault d [] = d
+  maxOrDefault _ zs = maximum zs
+  go (o:os    , n:ns)     =
+       (PD.pretty o PD.<+> PD.indent (maxLen - curLen + spacing) (divider PD.<+> PD.pretty n)) : go (os, ns)
+       where
+       curLen = length (show (PD.pretty o))
+  go (os@(_:_), [])       = map PD.pretty os
+  go ([]      , ns@(_:_)) = (PD.indent (maxLen + spacing + 1)) <$> map (\x -> divider PD.<+> PD.pretty x) ns
+  go ([]      , [])       = [PD.emptyDoc]
+
 
 data Status
   = Modified
