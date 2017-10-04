@@ -169,23 +169,26 @@ x64ModifyJumpTarget (XI ii) srcAddr targetAddr
     L.error ("BUG! The 'jmp' instruction size is not as expected! " ++
              "Expected " ++ show jmpInstrSizeGuess ++ " but got " ++
              show jmpInstrSize)
-  | 'j' : _ <- D.iiOp ii = Just [jmpInstr]
-  | 'c' : 'a' : 'l' : 'l' : _ <- D.iiOp ii = Just [jmpInstr]
+  | 'j' : _ <- D.iiOp ii = Just [extendDirectJump]
+  | 'c' : 'a' : 'l' : 'l' : _ <- D.iiOp ii = Just [extendDirectJump]
   | otherwise = Nothing
-  where
-    jmpOffset :: Integer
-    jmpOffset = fromIntegral $ (targetAddr `addressDiff` srcAddr) - fromIntegral jmpInstrSizeGuess
-    i32Max :: Integer
-    i32Max = fromIntegral (maxBound :: Int32)
+  where jmpOffset :: Integer
+        jmpOffset = fromIntegral $ (targetAddr `addressDiff` srcAddr) - fromIntegral jmpInstrSizeGuess
+        i32Max :: Integer
+        i32Max = fromIntegral (maxBound :: Int32)
 
-    -- Make a dummy instruction of the correct type to get a size
-    -- guess.  This should never fail the size check.  We have to
-    -- generate an instruction and check its size because some jumps
-    -- could be 5 bytes, while others could be 6.
-    dummyJumpInstr = makeInstr (D.iiOp ii) [D.JumpOffset D.ZSize 0]
-    jmpInstrSizeGuess = x64Size dummyJumpInstr
-    jmpInstr = makeInstr (D.iiOp ii) [D.JumpOffset D.ZSize (fromIntegral jmpOffset)]
-    jmpInstrSize = fromIntegral $ x64Size jmpInstr
+        -- Make a dummy instruction of the correct type to get a size
+        -- guess.  This should never fail the size check.  We have to
+        -- generate an instruction and check its size because some jumps
+        -- could be 5 bytes, while others could be 6.
+        dummyJumpInstr = makeInstr (D.iiOp ii) [D.JumpOffset D.ZSize 0]
+        jmpInstrSizeGuess = x64Size dummyJumpInstr
+        jmpInstr = makeInstr (D.iiOp ii) [D.JumpOffset D.ZSize (fromIntegral jmpOffset)]
+        jmpInstrSize = fromIntegral $ x64Size jmpInstr
+
+        extendDirectJump = case aoOperand <$> D.iiArgs ii of
+          [(D.JumpOffset _ _, _)] -> jmpInstr
+          _ -> XI ii
 
 -- | Make @n@ bytes of @int 3@ instructions.  If executed, these
 -- generate an interrupt that drops the application into a debugger
