@@ -100,7 +100,7 @@ assembleBlocks mem isa textSecStart origTextBytes extraAddr assemble blocks = do
   s1 <- St.execStateT (unA assembleDriver) s0
   return (fromBuilder (asTextSection s1), fromBuilder (asExtraText s1))
   where
-    absStartAddr = relFromSegmentOff textSecStart
+    absStartAddr = relFromSegmentOff mem textSecStart
     s0 = AssembleState { asTextStart        = absStartAddr
                        , asTextAddr         = absStartAddr
                        , asTextSection      = mempty

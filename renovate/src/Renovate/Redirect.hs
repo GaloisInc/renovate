@@ -7,7 +7,7 @@ module Renovate.Redirect (
   ConcreteBlock,
   SymbolicBlock,
   BasicBlock(..),
-  RelAddress(..),
+  RelAddress,
   SymbolicAddress,
   TaggedInstruction
   ) where

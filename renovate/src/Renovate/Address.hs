@@ -4,7 +4,7 @@
 module Renovate.Address (
 --  Address(..),
   SymbolicAddress(..),
-  RelAddress(..),
+  RelAddress,
   relFromSegmentOff,
   firstRelAddress,
   absoluteAddress,
@@ -53,19 +53,39 @@ data RelAddress w = RelAddress { relSegment :: MM.SegmentIndex
 instance (MM.MemWidth w) => PD.Pretty (RelAddress w) where
   pretty (RelAddress _seg base off) = "0x" PD.<> PD.pretty (N.showHex (base + off) "")
 
--- | Convert an address in @base + offset@ from macaw ('MM.MemSegmentOff') into
+-- | Constructs a canonical RelAddress from a MemSegmentOff.
+-- it needs the Memory argument for the canonicalization. We look through
+-- the set of available segments to find the closest one and construct
+-- the address relative to it.
+-- Finally, convert an address in @base + offset@ from macaw ('MM.MemSegmentOff') into
 -- our internal representation of addresses
 relFromSegmentOff :: (L.HasCallStack, MM.MemWidth w)
-                  => MM.MemSegmentOff w
-                  -> RelAddress w
-relFromSegmentOff so = case MM.viewSegmentOff so of
-  (seg,off) -> RelAddress { relSegment = MM.segmentIndex seg
-                          , relBase    = fromMaybe err $ MM.segmentBase seg
-                          , relOffset  = off
-                          }
+             => MM.Memory w
+             -> MM.MemSegmentOff w
+             -> RelAddress w
+relFromSegmentOff mem so = case foldr findClosest firstSeg segBaseIdxs of
+  s -> RelAddress
+     { relSegment = MM.segmentIndex s
+     , relBase    = fromMaybe err $ MM.segmentBase s
+     , relOffset  = off - (fromMaybe err (MM.segmentBase s) - fromMaybe err (MM.segmentBase seg))
+     }
   where
-    err = L.error "relFromSegmentOff: MemSegmentOff swith no base address cannot be converted to RelAddresses"
-
+  firstSeg = case segBaseIdxs of
+             []    -> error "mkRelAddress: No segments"
+             (f:_) -> f
+  (seg,off)    = MM.viewSegmentOff so
+  base         = fromMaybe err $ MM.segmentBase seg
+  addr         = base + off
+  segBaseIdxs  = MM.memSegments mem
+  err          = L.error "mkRelAddress: MemSegmentOffs with no base address cannot be converted to RelAddresses"
+  -- The logic here is:
+  -- if the base we're considering is less than the absolute address of
+  -- the MemSegmentOff (so), but greater than our current closest base
+  -- then update to use the segment. Otherwise, keep the one we have.
+  findClosest s acc | Just b1 <- MM.segmentBase s
+                    , Just b2 <- MM.segmentBase acc
+                    , b1 < addr && b1 > b2 = s
+                    | otherwise            = acc
 
 -- | Construct the first 'RelAddress' from a given base and segment
 firstRelAddress :: (MM.MemWidth w) => MM.SegmentIndex -> MM.MemWord w -> RelAddress w

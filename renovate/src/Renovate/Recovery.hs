@@ -69,16 +69,16 @@ recoverBlocks isa dis1 archInfo mem entries = runRecovery isa dis1 mem $ do
        funcEntries = [ MC.discoveredFunAddr dfi
                      | PU.Some dfi <- MC.exploredFunctions di
                      ]
-       infos = M.mapKeys relFromSegmentOff (di L.^. MC.funInfo)
+       infos = M.mapKeys (relFromSegmentOff mem) (di L.^. MC.funInfo)
    -- traceM ("unexplored functions: " ++ show (di L.^. MC.unexploredFunctions))
    -- traceM ("explored functions: " ++ show [pretty i | PU.Some i <- MC.exploredFunctions di])
    -- traceM ("Discovered block starts: " ++ show absoluteBlockStarts)
-   blocks <- mapM (buildBlock isa dis1 mem (S.map relFromSegmentOff absoluteBlockStarts))
+   blocks <- mapM (buildBlock isa dis1 mem (S.map (relFromSegmentOff mem) absoluteBlockStarts))
                   (F.toList absoluteBlockStarts)
    let funcBlocks        = foldr insertBlocks M.empty blocks
        insertBlocks cb m = M.adjust (cb:) (basicBlockAddress cb) m
    return BlockInfo { biBlocks           = blocks
-                    , biFunctionEntries  = map relFromSegmentOff funcEntries
+                    , biFunctionEntries  = map (relFromSegmentOff mem) funcEntries
                     , biFunctionBlocks   = funcBlocks
                     , biDiscoveryFunInfo = infos
                     }
@@ -107,7 +107,7 @@ buildBlock isa dis1 mem absStarts segAddr = do
     Right [MC.ByteRegion bs] -> go blockAbsAddr bs []
     _ -> C.throwM (NoByteRegionAtAddress (MC.relativeSegmentAddr segAddr))
   where
-    blockAbsAddr = relFromSegmentOff segAddr
+    blockAbsAddr = relFromSegmentOff mem segAddr
     go insnAddr bs insns = do
       case dis1 bs of
         -- Actually, we should probably never hit this case.  We

@@ -377,7 +377,7 @@ buildSymbolMap mem elf = do
     _ -> return mempty
   where
   mkPair e = case MM.resolveAbsoluteAddr mem (fromIntegral (E.steValue e)) of
-    Just addr | E.steType e == E.STT_FUNC -> Just (RA.relFromSegmentOff addr, E.steName e)
+    Just addr | E.steType e == E.STT_FUNC -> Just (RA.relFromSegmentOff mem addr, E.steName e)
     _ -> Nothing
 
 isSymbolTable :: E.ElfDataRegion w -> Bool
@@ -770,7 +770,7 @@ instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutA
         -- quantification inside of RenovateConfig.
         RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } ->
           let analysisResult = analysis isa mem blockInfo in
-          case RW.runRewriteM (RA.relFromSegmentOff entryPoint)
+          case RW.runRewriteM (RA.relFromSegmentOff mem entryPoint)
                               newGlobalBase
                               cfgs
                               (RE.redirect isa (rewriter analysisResult) mem strat layoutAddr blocks symmap)
