@@ -78,7 +78,7 @@ mkTest fp = T.testCase fp $ withELF elfFilename testRewrite
 
     elfFilename = replaceExtension fp "exe"
 
-analysis :: ExpectedResult -> R.ISA R64.Instruction (R64.TargetAddress 64) 64 -> MM.Memory 64 -> R.BlockInfo R64.Instruction 64 -> (Bool,[String])
+analysis :: ExpectedResult -> R.ISA R64.Instruction (R64.TargetAddress 64) 64 -> MM.Memory 64 -> R.BlockInfo R64.Instruction 64 arch -> (Bool,[String])
 analysis expected isa _mem blocks =
   foldr go (True,[]) (R.biBlocks blocks)
   where
