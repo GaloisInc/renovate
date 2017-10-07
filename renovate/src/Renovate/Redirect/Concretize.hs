@@ -46,17 +46,16 @@ import           Renovate.Redirect.Monad
 -- invariant.
 concretize :: (Monad m, T.Traversable t, InstructionConstraints i a, KnownNat w, MM.MemWidth w, Typeable w)
            => LayoutStrategy
-           -> MM.Memory w
            -> RelAddress w
            -- ^ The start address of the concretized (instrumented) blocks
            -> t (SymbolicPair i a w)
            -> RewriterT i a w m (t (ConcretePair i w))
-concretize strat mem startAddr blocks = do
+concretize strat startAddr blocks = do
   -- First, build up a mapping of symbolic address to new concrete
   -- address
   isa <- askISA
   symmap <- askSymbolMap
-  concreteAddresses <- layoutBlocks strat mem startAddr blocks
+  concreteAddresses <- layoutBlocks strat startAddr blocks
   let concreteAddressMap = M.fromList [ (symbolicAddress (basicBlockAddress sb), ca)
                                       | LayoutPair _ (AddressAssignedBlock sb ca) _ <- F.toList concreteAddresses
                                       ]
@@ -110,7 +109,8 @@ concretizeJumps :: (Monad m, InstructionConstraints i a, KnownNat w, MM.MemWidth
                 -> AddressAssignedPair i a w
                 -> RewriterT i a w m (ConcretePair i w)
 concretizeJumps isa concreteAddressMap (LayoutPair cb (AddressAssignedBlock sb baddr) Modified) = do
-  let insnAddrs = instructionAddresses' isa (isaConcretizeAddresses isa baddr . projectInstruction) baddr (basicBlockInstructions sb)
+  mem <- askMem
+  let insnAddrs = instructionAddresses' isa mem (isaConcretizeAddresses isa mem baddr . projectInstruction) baddr (basicBlockInstructions sb)
   concretizedInstrs <- T.traverse (mapJumpAddress concreteAddressMap) insnAddrs
   let sb' = sb { basicBlockAddress = baddr
                , basicBlockInstructions = concat concretizedInstrs
@@ -132,10 +132,11 @@ mapJumpAddress :: forall m i a w
                -> RewriterT i a w m [i ()]
 mapJumpAddress concreteAddressMap (tagged, insnAddr) = do
   isa <- askISA
+  mem <- askMem
   case symbolicTarget tagged of
     Just symAddr
       | Just concAddr <- M.lookup symAddr concreteAddressMap ->
-        case isaModifyJumpTarget isa (isaConcretizeAddresses isa insnAddr i) insnAddr concAddr of
+        case isaModifyJumpTarget isa (isaConcretizeAddresses isa mem insnAddr i) insnAddr concAddr of
           Nothing -> do
             let err :: Diagnostic
                 err = InstructionIsNotJump (show i)
@@ -147,7 +148,7 @@ mapJumpAddress concreteAddressMap (tagged, insnAddr) = do
               err = NoConcreteAddressForSymbolicTarget symAddr "concretizeJumps"
           logDiagnostic err
           throwError err
-    Nothing -> return [isaConcretizeAddresses isa insnAddr i]
+    Nothing -> return [isaConcretizeAddresses isa mem insnAddr i]
   where
     i = projectInstruction tagged
 

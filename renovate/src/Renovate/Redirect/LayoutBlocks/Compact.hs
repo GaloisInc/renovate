@@ -28,6 +28,9 @@ import           Renovate.Redirect.Monad
 
 import           Renovate.Redirect.LayoutBlocks.Types
 
+-- import Debug.Trace
+-- import qualified Data.Text.Prettyprint.Doc as PD
+
 -- | The address heap associates chunks of memory to addresses.  The ordering of
 -- the heap is based on the size of the chunk of memory at each address.  The
 -- sizes are stored as negative values so that taking the minimum element of the
@@ -39,13 +42,12 @@ type AddressHeap w = H.Heap (H.Entry (Down Int) (RelAddress w))
 -- Right now, we use an inefficient encoding of jumps.  We could do
 -- better later on.
 compactLayout :: (Monad m, T.Traversable t, InstructionConstraints i a, MM.MemWidth w)
-              => MM.Memory w
-              -> RelAddress w
+              => RelAddress w
               -- ^ Address to begin block layout of instrumented blocks
               -> LayoutStrategy
               -> t (SymbolicPair i a w)
               -> RewriterT i a w m (t (AddressAssignedPair i a w))
-compactLayout mem startAddr strat blocks = do
+compactLayout startAddr strat blocks = do
   h0 <- if strat == Parallel -- the parallel strategy is now a special case of
                              -- compact. In particular, we avoid allocating
                              -- the heap and we avoid sorting the input
@@ -58,7 +60,10 @@ compactLayout mem startAddr strat blocks = do
   --
   -- We need this so that we can re-arrange them and preserve the fallthrough
   -- behavior of blocks ending in conditional jumps (or non-jumps).
+  -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . lpOrig) (F.toList blocks)))))
+  mem     <- askMem
   blocks' <- reifyFallthroughSuccessors mem blocks
+  -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . lpOrig) (F.toList blocks')))))
 
   -- Either, a) Sort all of the instrumented blocks by size
   --         b) Randomize the order of the blocks.
@@ -70,8 +75,8 @@ compactLayout mem startAddr strat blocks = do
   let sortedBlocks =
         let newBlocks = F.toList (lpNew <$> blocks') in
         case strat of
-        Compact SortedOrder        -> L.sortOn    (bySize isa) newBlocks
-        Compact (RandomOrder seed) -> randomOrder seed         newBlocks
+        Compact SortedOrder        -> L.sortOn    (bySize isa mem) newBlocks
+        Compact (RandomOrder seed) -> randomOrder seed             newBlocks
         Parallel                   -> newBlocks
 
   -- Allocate an address for each block (falling back to startAddr if the heap
@@ -87,7 +92,7 @@ compactLayout mem startAddr strat blocks = do
   -- That is critical.
   T.traverse (assignConcreteAddress symBlockAddrs) blocks'
   where
-    bySize isa = Down . symbolicBlockSize isa startAddr
+    bySize isa mem = Down . symbolicBlockSize isa mem startAddr
 
 -- | Look up the concrete address assigned to each symbolic block and tag it
 -- onto the tuple to create a suitable return value.
@@ -114,7 +119,8 @@ allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth w)
                                -> RewriterT i a w m (M.Map (SymbolicInfo w) (RelAddress w))
 allocateSymbolicBlockAddresses startAddr h0 blocksBySize = do
   isa <- askISA
-  let (_, _, m) = F.foldl' (allocateBlockAddress isa) (startAddr, h0, M.empty) blocksBySize
+  mem <- askMem
+  let (_, _, m) = F.foldl' (allocateBlockAddress isa mem) (startAddr, h0, M.empty) blocksBySize
   return m
 
 -- | Allocate an address for the given symbolic block.
@@ -129,25 +135,28 @@ allocateSymbolicBlockAddresses startAddr h0 blocksBySize = do
 -- size of the block to be correct).
 allocateBlockAddress :: (MM.MemWidth w)
                      => ISA i a w
+                     -> MM.Memory w
                      -> (RelAddress w, AddressHeap w, M.Map (SymbolicInfo w) (RelAddress w))
                      -> SymbolicBlock i a w
                      -> (RelAddress w, AddressHeap w, M.Map (SymbolicInfo w) (RelAddress w))
-allocateBlockAddress isa (newTextAddr, h, m) sb =
+allocateBlockAddress isa mem (newTextAddr, h, m) sb =
   case H.viewMin h of
     Nothing -> allocateNewTextAddr
     Just (H.Entry (Down size) addr, h')
       | size < fromIntegral sbSize -> allocateNewTextAddr
       | otherwise -> allocateFromHeap size addr h'
   where
-    sbSize = symbolicBlockSize isa newTextAddr sb
+    addOff = addressAddOffset mem
+
+    sbSize = symbolicBlockSize isa mem newTextAddr sb
 
     allocateNewTextAddr =
-      let nextBlockStart = newTextAddr `addressAddOffset` fromIntegral sbSize
+      let nextBlockStart = newTextAddr `addOff` fromIntegral sbSize
       in (nextBlockStart, h, M.insert (basicBlockAddress sb) newTextAddr m)
 
     allocateFromHeap allocSize addr h' =
       assert (allocSize >= fromIntegral sbSize) $ do
-        let addr' = addr `addressAddOffset` fromIntegral sbSize
+        let addr' = addr `addOff` fromIntegral sbSize
             allocSize' = allocSize - fromIntegral sbSize
         case allocSize' of
           0 -> (newTextAddr, h', M.insert (basicBlockAddress sb) addr m)
@@ -240,9 +249,10 @@ buildAddressHeap :: (MM.MemWidth w, Foldable t, Monad m)
                  -> RewriterT i a w m (AddressHeap w)
 buildAddressHeap startAddr blocks = do
   isa <- askISA
+  mem <- askMem
   let dummyJump = isaMakeRelativeJumpTo  isa startAddr startAddr
       jumpSize = fromIntegral $ sum (map (isaInstructionSize isa) dummyJump)
-  return $ F.foldl' (addOriginalBlock isa jumpSize) H.empty blocks
+  return $ F.foldl' (addOriginalBlock isa mem jumpSize) H.empty blocks
 
 -- | Add the available space in a 'ConcreteBlock' to the heap
 --
@@ -253,19 +263,21 @@ buildAddressHeap startAddr blocks = do
 -- extracting the minimum value yields the largest block possible.
 addOriginalBlock :: (MM.MemWidth w)
                  => ISA i a w
+                 -> MM.Memory w
                  -> Word64
                  -> AddressHeap w
                  -> ConcreteBlock i w
                  -> AddressHeap w
-addOriginalBlock isa jumpSize h cb
+addOriginalBlock isa mem jumpSize h cb
   | bsize > jumpSize =
     H.insert (H.Entry (Down spaceSize) addr) h
   | otherwise = h
   where
-    bsize = concreteBlockSize isa cb
+    bsize     = concreteBlockSize isa cb
     spaceSize :: Int
     spaceSize = fromIntegral (bsize - jumpSize)
-    addr = basicBlockAddress cb `addressAddOffset` fromIntegral jumpSize
+    addOff    = addressAddOffset mem
+    addr      = basicBlockAddress cb `addOff` fromIntegral jumpSize
 
 randomOrder :: RandomSeed -> [SymbolicBlock i a w] -> [SymbolicBlock i a w]
 randomOrder seed initial = runST $ do

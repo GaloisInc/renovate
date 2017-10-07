@@ -40,9 +40,9 @@ import           Renovate.ISA
 -- We cannot simply make a @Map a Address@ because two identical
 -- instructions could easily occur within the same 'BasicBlock', to
 -- say nothing of the entire program.
-instructionAddresses :: (MC.MemWidth w) => ISA i a w -> ConcreteBlock i w -> [(i (), RelAddress w)]
-instructionAddresses isa bb =
-  instructionAddresses' isa id (basicBlockAddress bb) (basicBlockInstructions bb)
+instructionAddresses :: (MC.MemWidth w) => ISA i a w -> MC.Memory w -> ConcreteBlock i w -> [(i (), RelAddress w)]
+instructionAddresses isa mem bb =
+  instructionAddresses' isa mem id (basicBlockAddress bb) (basicBlockInstructions bb)
 
 -- | Compute the addresses of each instruction in a list, given a
 -- concrete start address.
@@ -52,15 +52,17 @@ instructionAddresses isa bb =
 -- 'concretize').
 instructionAddresses' :: (MC.MemWidth w)
                       => ISA i a w
+                      -> MC.Memory w
                       -> (x -> i ())
                       -> RelAddress w
                       -> [x]
                       -> [(x, RelAddress w)]
-instructionAddresses' isa accessor startAddr insns =
+instructionAddresses' isa mem accessor startAddr insns =
   snd $ T.mapAccumL computeAddress startAddr insns
   where
+    addressAddOffset' = addressAddOffset mem
     computeAddress addr instr =
-      let absAddr = addr `addressAddOffset` fromIntegral (isaInstructionSize isa (accessor instr))
+      let absAddr = addr `addressAddOffset'` fromIntegral (isaInstructionSize isa (accessor instr))
       in (absAddr, (instr, addr))
 
 -- | Compute the size of a list of instructions, in bytes.
@@ -84,17 +86,18 @@ concreteBlockSize isa = instructionStreamSize isa . basicBlockInstructions
 -- destinations.
 symbolicBlockSize :: (L.HasCallStack, MC.MemWidth w)
                   => ISA i a w
+                  -> MC.Memory w
                   -> RelAddress w
                   -> SymbolicBlock i a w
                   -> Word64
-symbolicBlockSize isa addr sb = basicInstSize + fromIntegral jumpSizes
+symbolicBlockSize isa mem addr sb = basicInstSize + fromIntegral jumpSizes
   where
-    jumpSizes = sum $ map (computeRewrittenJumpSize isa addr . projectInstruction) jumpsToRewrite
-    basicInstSize = sum (map (fromIntegral . isaInstructionSize isa . isaConcretizeAddresses isa addr . projectInstruction) standardInstructions)
+    jumpSizes = sum $ map (computeRewrittenJumpSize isa mem addr . projectInstruction) jumpsToRewrite
+    basicInstSize = sum (map (fromIntegral . isaInstructionSize isa . isaConcretizeAddresses isa mem addr . projectInstruction) standardInstructions)
     (standardInstructions, jumpsToRewrite) = L.partition hasNoSymbolicTarget (basicBlockInstructions sb)
 
-computeRewrittenJumpSize :: (L.HasCallStack) => ISA i a w -> RelAddress w -> i a -> Int
-computeRewrittenJumpSize isa addr jmp =
-  case isaModifyJumpTarget isa (isaConcretizeAddresses isa addr jmp) addr addr of
+computeRewrittenJumpSize :: (L.HasCallStack) => ISA i a w -> MC.Memory w -> RelAddress w -> i a -> Int
+computeRewrittenJumpSize isa mem addr jmp =
+  case isaModifyJumpTarget isa (isaConcretizeAddresses isa mem addr jmp) addr addr of
     Nothing -> L.error ("computeRewrittenJumpSize: Not a jump: " ++ isaPrettyInstruction isa jmp)
     Just ji -> sum (map (fromIntegral . isaInstructionSize isa) ji)

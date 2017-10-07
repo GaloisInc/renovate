@@ -90,13 +90,13 @@ data JumpType w = RelativeJump JumpCondition (RelAddress w) (MM.MemWord w)
 data ISA (i :: * -> *) a w =
   ISA { isaInstructionSize :: forall t . i t -> Word8
         -- ^ Compute the size of an instruction in bytes
-      , isaSymbolizeAddresses :: RelAddress w -> i () -> i a
+      , isaSymbolizeAddresses :: MM.Memory w -> RelAddress w -> i () -> i a
         -- ^ Abstract instructions and annotate them. The contract is
         -- that this function can change the opcode, but the selected
         -- instruction must never change sizes. That is, for all
         -- concrete addresses, the chosen instruction must have the
         -- same size.
-      , isaConcretizeAddresses :: RelAddress w -> i a -> i ()
+      , isaConcretizeAddresses :: MM.Memory w -> RelAddress w -> i a -> i ()
         -- ^ Remove the annotation, with possible post-processing.
       , isaJumpType :: forall t . i t -> MM.Memory w -> RelAddress w -> JumpType w
         -- ^ Test if an instruction is a jump; if it is, return some

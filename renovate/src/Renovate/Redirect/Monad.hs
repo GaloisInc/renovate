@@ -24,6 +24,7 @@ module Renovate.Redirect.Monad (
   logDiagnostic,
   nextSymbolicAddress,
   askISA,
+  askMem,
   askSymbolMap,
   putNewSymbolsMap,
   getNewSymbolsMap,
@@ -44,6 +45,8 @@ import           Data.Word ( Word64 )
 
 import           Prelude
 
+import qualified Data.Macaw.Memory as MM
+
 import           Renovate.Address
 import           Renovate.ISA
 import           Renovate.Diagnostic
@@ -61,6 +64,7 @@ type NewSymbolsMap w = Map (RelAddress w) (RelAddress w, B.ByteString)
 
 data RewriterEnv i t w = RewriterEnv
   { reISA       :: !(ISA i t w)
+  , reMem       :: !(MM.Memory w)
   , reSymbolMap :: !(SymbolMap w)
   }
 
@@ -108,16 +112,16 @@ initialState =  RewriterState
   }
 
 -- | A wrapper around 'runReaderT' with 'I.Identity' as the base 'Monad'
-runRewriter :: ISA i t w -> SymbolMap w -> Rewriter i t w a -> (Either E.SomeException a, NewSymbolsMap w, [Diagnostic])
-runRewriter isa symmap a = I.runIdentity (runRewriterT isa symmap a)
+runRewriter :: ISA i t w -> MM.Memory w -> SymbolMap w -> Rewriter i t w a -> (Either E.SomeException a, NewSymbolsMap w, [Diagnostic])
+runRewriter isa mem symmap a = I.runIdentity (runRewriterT isa mem symmap a)
 
 -- | Run a 'RewriterT' computation.
 --
 -- It returns *all* diagnostics that occur before an exception is
 -- thrown.
-runRewriterT :: (Monad m) => ISA i t w -> SymbolMap w -> RewriterT i t w m a -> m (Either E.SomeException a, NewSymbolsMap w, [Diagnostic])
-runRewriterT isa symmap a = do
-  (a', s, w) <- RWS.runRWST (ET.runExceptT (unRewriterT a)) (RewriterEnv isa symmap) initialState
+runRewriterT :: (Monad m) => ISA i t w -> MM.Memory w -> SymbolMap w -> RewriterT i t w m a -> m (Either E.SomeException a, NewSymbolsMap w, [Diagnostic])
+runRewriterT isa mem symmap a = do
+  (a', s, w) <- RWS.runRWST (ET.runExceptT (unRewriterT a)) (RewriterEnv isa mem symmap) initialState
   return $! (a', rwsNewSymbolsMap s, F.toList (diagnosticMessages w))
 
 -- | Log a diagnostic in the 'RewriterT' monad
@@ -138,6 +142,9 @@ nextSymbolicAddress = do
 -- | Read the 'ISA' from the 'RewriterT' environment
 askISA :: (Monad m) => RewriterT i t w m (ISA i t w)
 askISA = reISA <$> RWS.ask
+
+askMem :: (Monad m) => RewriterT i t w m (MM.Memory w)
+askMem = reMem <$> RWS.ask
 
 askSymbolMap :: Monad m => RewriterT i t w m (SymbolMap w)
 askSymbolMap = reSymbolMap <$> RWS.ask

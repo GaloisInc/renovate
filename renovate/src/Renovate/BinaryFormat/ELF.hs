@@ -310,8 +310,15 @@ doRewrite cfg mem strat = do
   let -- FIXME: Find a real segment index here
       layoutAddr = RA.firstRelAddress 80 (fromIntegral nextSegmentAddress)
       dataAddr = RA.firstRelAddress 81 (fromIntegral newDataSectionBase)
-      Just textSectionAddr = MM.resolveAbsoluteAddr mem (fromIntegral (E.elfSectionAddr textSection))
-  (overwrittenBytes, instrumentedBytes, mNewData, newSyms) <- instrumentTextSection cfg mem textSectionAddr (E.elfSectionData textSection) entryPoint strat layoutAddr dataAddr symmap
+      Just textSectionStartAddr = MM.resolveAbsoluteAddr mem (fromIntegral (E.elfSectionAddr textSection))
+      Just textSectionEndAddr   = MM.incSegmentOff textSectionStartAddr (fromIntegral ((E.elfSectionSize textSection)))
+
+  ( overwrittenBytes
+    , instrumentedBytes
+    , mNewData
+    , newSyms ) <- instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr
+                                       (E.elfSectionData textSection) entryPoint strat layoutAddr dataAddr symmap
+
   (extraTextSecIdx, instrumentationSeg) <- withCurrentELF (newInstrumentationSegment nextSegmentAddress instrumentedBytes)
 
   -- Now go through and append our new segments.  The first contains our
@@ -737,6 +744,8 @@ instrumentTextSection :: forall i a w arch b
                       -- ^ The memory space
                       -> MM.MemSegmentOff w
                       -- ^ The address of the start of the text section
+                      -> MM.MemSegmentOff w
+                      -- ^ The address of the end of the text section
                       -> B.ByteString
                       -- ^ The bytes of the text section
                       -> MM.MemSegmentOff w
@@ -750,7 +759,7 @@ instrumentTextSection :: forall i a w arch b
                       -> RM.SymbolMap w
                       -- ^ meta data?
                       -> ElfRewriter w (B.ByteString, B.ByteString, Maybe B.ByteString, RM.NewSymbolsMap w)
-instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutAddr newGlobalBase symmap = do
+instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes entryPoint strat layoutAddr newGlobalBase symmap = do
   traceM ("instrumentTextSection entry point: " ++ show entryPoint)
   riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
   let isa = rcISA cfg
@@ -770,10 +779,11 @@ instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutA
         -- quantification inside of RenovateConfig.
         RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } ->
           let analysisResult = analysis isa mem blockInfo in
-          case RW.runRewriteM (RA.relFromSegmentOff mem entryPoint)
+          case RW.runRewriteM mem
+                              (RA.relFromSegmentOff mem entryPoint)
                               newGlobalBase
                               cfgs
-                              (RE.redirect isa (rewriter analysisResult) mem strat layoutAddr blocks symmap)
+                              (RE.redirect isa textStart textEnd (rewriter analysisResult) mem strat layoutAddr blocks symmap)
           of
             ((Left exn2, _newSyms, diags2), _info) -> do
               riRedirectionDiagnostics L..= diags2
@@ -784,9 +794,12 @@ instrumentTextSection cfg mem textSectionAddr textBytes entryPoint strat layoutA
               let allBlocks = overwrittenBlocks ++ instrumentationBlocks
               case cfg of
                 RenovateConfig { rcAssembler = asm } -> do
-                  (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionAddr textBytes layoutAddr asm allBlocks
+                  (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks
                   let newDataBytes = mkNewDataSection newGlobalBase info
                   return (overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
+      where
+      textStart  = RA.relFromSegmentOff mem textSectionStartAddr
+      textEnd    = RA.relFromSegmentOff mem textSectionEndAddr
 
 analyzeTextSection :: forall i a w arch b
                     . (ISA.InstructionConstraints i a,

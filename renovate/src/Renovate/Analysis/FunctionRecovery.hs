@@ -123,7 +123,8 @@ processWorklist = do
       Just b <- M.lookup addr <$> RWS.asks envBlocks
       isa <- RWS.asks envISA
       mem <- RWS.asks envMem
-      case instructionAddresses isa b of
+      let addOff = addressAddOffset mem
+      case instructionAddresses isa mem b of
         [] -> L.error "Empty basic block"
         insns -> do
           let (lastInsn, insnAddr) = last insns
@@ -134,10 +135,10 @@ processWorklist = do
               addCFGEdge addr successor
             Return -> addReturnBlock addr
             RelativeJump Unconditional jaddr off -> do
-              let target = jaddr `addressAddOffset` off
+              let target = jaddr `addOff` off
               addCFGEdge addr target
             RelativeJump Conditional jaddr off -> do
-              let target = jaddr `addressAddOffset` off
+              let target = jaddr `addOff` off
               successor <- nextBlockAddress b
               addCFGEdge addr target
               addCFGEdge addr successor
@@ -163,8 +164,10 @@ processWorklist = do
 nextBlockAddress :: (MM.MemWidth w) => ConcreteBlock i w -> M i a w (RelAddress w)
 nextBlockAddress b = do
   isa <- RWS.asks envISA
-  let sz = concreteBlockSize isa b
-  return (basicBlockAddress b `addressAddOffset` fromIntegral sz)
+  mem <- RWS.asks envMem
+  let sz     = concreteBlockSize isa b
+      addOff = addressAddOffset mem
+  return (basicBlockAddress b `addOff` fromIntegral sz)
 
 markFunctionIncomplete :: M i a w ()
 markFunctionIncomplete = do

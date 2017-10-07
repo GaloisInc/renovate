@@ -11,6 +11,7 @@ module Renovate.Recovery (
   Diagnostic(..)
   ) where
 
+import qualified GHC.Err.Located as L
 import qualified Control.Exception as E
 import qualified Control.Lens as L
 import qualified Control.Monad.Catch as C
@@ -89,7 +90,7 @@ recoverBlocks isa dis1 archInfo mem entries = runRecovery isa dis1 mem $ do
 -- The block starts are obtained from Macaw.  We disassemble from the
 -- start address until we hit a terminator instruction or the start of
 -- another basic block.
-buildBlock :: (MC.MemWidth w)
+buildBlock :: (L.HasCallStack, MC.MemWidth w)
            => ISA i a w
            -> (B.ByteString -> Maybe (Int, i ()))
            -- ^ The function to pull a single instruction off of the
@@ -107,6 +108,7 @@ buildBlock isa dis1 mem absStarts segAddr = do
     Right [MC.ByteRegion bs] -> go blockAbsAddr bs []
     _ -> C.throwM (NoByteRegionAtAddress (MC.relativeSegmentAddr segAddr))
   where
+    addOff       = addressAddOffset  mem
     blockAbsAddr = relFromSegmentOff mem segAddr
     go insnAddr bs insns = do
       case dis1 bs of
@@ -120,14 +122,14 @@ buildBlock isa dis1 mem absStarts segAddr = do
           -- The next instruction we would decode starts another
           -- block, OR the instruction we just decoded is a
           -- terminator, so end the block and stop decoding
-          | S.member (insnAddr `addressAddOffset` fromIntegral bytesRead) absStarts ||
+          | S.member (insnAddr `addOff` fromIntegral bytesRead) absStarts ||
             isaJumpType isa i mem insnAddr /= NoJump -> do
-            return BasicBlock { basicBlockAddress = blockAbsAddr
-                              , basicBlockInstructions =  reverse (i : insns)
+            return BasicBlock { basicBlockAddress      = blockAbsAddr
+                              , basicBlockInstructions = reverse (i : insns)
                               }
 
           -- Otherwise, we just keep decoding
-          | otherwise -> go (insnAddr `addressAddOffset` fromIntegral bytesRead) (B.drop bytesRead bs) (i : insns)
+          | otherwise -> go (insnAddr `addOff` fromIntegral bytesRead) (B.drop bytesRead bs) (i : insns)
 
 
 {- Note [Unaligned Instructions]

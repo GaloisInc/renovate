@@ -51,6 +51,7 @@ data RewriteEnv i w =
              -- ^ A map of block addresses to the CFG that contains them (if
              -- any)
              , envEntryAddress :: A.RelAddress w
+             , envMemory :: MM.Memory w
              }
 
 -- | A monadic environment for binary rewriting
@@ -63,7 +64,8 @@ newtype RewriteM i w a = RewriteM { unRewriteM :: RWS.RWS (RewriteEnv i w) () (R
 
 -- | Run rewriting computation and return its value, along with metadata about
 -- transformations applied.
-runRewriteM :: A.RelAddress w
+runRewriteM :: MM.Memory w
+            -> A.RelAddress w
             -- ^ The address of the entry point of the program
             -> A.RelAddress w
             -- ^ The address to start allocating new global variables at
@@ -72,7 +74,7 @@ runRewriteM :: A.RelAddress w
             -> RewriteM i w a
             -- ^ The rewriting action to run
             -> (a, RewriteInfo w)
-runRewriteM entryAddr newGlobalBase cfgs i = (res, st)
+runRewriteM mem entryAddr newGlobalBase cfgs i = (res, st)
   where
     (res, st, _) = RWS.runRWS (unRewriteM i) env emptyInfo
     emptyInfo = RewriteInfo { infoSites = []
@@ -82,6 +84,7 @@ runRewriteM entryAddr newGlobalBase cfgs i = (res, st)
     env = RewriteEnv { envCFGs = F.foldl' addCFG M.empty cfgs
                      , envBlockCFGIndex = F.foldl' indexCFGBlocks M.empty cfgs
                      , envEntryAddress = entryAddr
+                     , envMemory = mem
                      }
     addCFG m c = M.insert (FR.cfgEntry c) c m
     indexCFGBlocks m c = F.foldl' (indexCFGBlock c) m (FR.cfgBlocks c)
@@ -119,7 +122,9 @@ lookupEntryAddress = RWS.asks envEntryAddress
 newGlobalVar :: (MM.MemWidth w) => String -> Word32 -> RewriteM i w (A.RelAddress w)
 newGlobalVar name size = do
   addr <- RWS.gets nextGlobalAddress
-  RWS.modify' $ \s -> s { nextGlobalAddress = addr `A.addressAddOffset` fromIntegral size
+  mem  <- RWS.asks envMemory
+  let addOff = A.addressAddOffset mem
+  RWS.modify' $ \s -> s { nextGlobalAddress = addr `addOff` fromIntegral size
                         , newGlobals = M.insert name addr (newGlobals s)
                         }
   return addr

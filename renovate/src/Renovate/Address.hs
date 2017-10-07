@@ -13,6 +13,7 @@ module Renovate.Address (
   ) where
 
 import qualified GHC.Err.Located as L
+import           Control.Exception (assert)
 
 import           Data.Int ( Int64 )
 import           Data.Maybe ( fromMaybe )
@@ -64,11 +65,19 @@ relFromSegmentOff :: (L.HasCallStack, MM.MemWidth w)
              -> MM.MemSegmentOff w
              -> RelAddress w
 relFromSegmentOff mem so = case foldr findClosest firstSeg segBaseIdxs of
-  s -> RelAddress
-     { relSegment = MM.segmentIndex s
-     , relBase    = fromMaybe err $ MM.segmentBase s
-     , relOffset  = off - (fromMaybe err (MM.segmentBase s) - fromMaybe err (MM.segmentBase seg))
-     }
+  s -> let a  = RelAddress
+                { relSegment = MM.segmentIndex s
+                , relBase    = fromMaybe err $ MM.segmentBase s
+                , relOffset  = off - (fromMaybe err (MM.segmentBase s) - fromMaybe err (MM.segmentBase seg))
+                }
+           -- A fake RelAddress for the assert
+           a' = RelAddress
+                { relSegment = 0
+                , relBase    = base
+                , relOffset  = off
+                }
+       -- Make sure we haven't munged the absolute address
+       in assert (absoluteAddress a == absoluteAddress a') a
   where
   firstSeg = case segBaseIdxs of
              []    -> error "mkRelAddress: No segments"
@@ -82,10 +91,12 @@ relFromSegmentOff mem so = case foldr findClosest firstSeg segBaseIdxs of
   -- if the base we're considering is less than the absolute address of
   -- the MemSegmentOff (so), but greater than our current closest base
   -- then update to use the segment. Otherwise, keep the one we have.
-  findClosest s acc | Just b1 <- MM.segmentBase s
-                    , Just b2 <- MM.segmentBase acc
-                    , b1 < addr && b1 > b2 = s
-                    | otherwise            = acc
+  findClosest s acc | Just bs   <- MM.segmentBase s
+                    , Just bacc <- MM.segmentBase acc
+                    , bs <= addr && bs `isCloserThan` bacc = s
+                    | otherwise                            = acc
+    where
+    x `isCloserThan` y = abs (addr - x) < abs (addr - y)
 
 -- | Construct the first 'RelAddress' from a given base and segment
 firstRelAddress :: (MM.MemWidth w) => MM.SegmentIndex -> MM.MemWord w -> RelAddress w
@@ -104,10 +115,31 @@ absoluteAddress a = relBase a + relOffset a
 --
 -- It will throw an error if the address underflows and ends up before
 -- the base of the segment containing the address.
-addressAddOffset :: (L.HasCallStack, MM.MemWidth w) => RelAddress w -> MM.MemWord w -> RelAddress w
-addressAddOffset a offset
-  | offset < 0 && offset > relOffset a = L.error "Address arithmetic underflow"
-  | otherwise = a { relOffset = relOffset a + offset }
+addressAddOffset :: (L.HasCallStack, MM.MemWidth w) => MM.Memory w -> RelAddress w -> MM.MemWord w -> RelAddress w
+addressAddOffset mem a offset =
+  case MM.lookupSegment mem (relSegment a) of
+    -- We don't have a segment for this address, so this is likely
+    -- an address into the newly allocated blocks. Just update the offset.
+    Nothing       -> a { relOffset = relOffset a + offset }
+    -- Try to keep the address canonicalized
+    Just firstSeg -> case foldr findClosest firstSeg segBaseIdxs of
+      s -> let base = fromMaybe (relBase a) (MM.segmentBase s)
+               off  = addr - base
+               a'   = RelAddress
+                      { relSegment = MM.segmentIndex s
+                      , relBase    = base
+                      , relOffset  = off
+                      }
+           in assert (absoluteAddress a + offset == absoluteAddress a') a'
+  where
+  addr         = absoluteAddress a + offset
+  segBaseIdxs  = MM.memSegments mem
+  findClosest s acc | Just bs   <- MM.segmentBase s
+                    , Just bacc <- MM.segmentBase acc
+                    , bs <= addr && bs `isCloserThan` bacc = s
+                    | otherwise                            = acc
+    where
+    x `isCloserThan` y = abs (addr - x) < abs (addr - y)
 
 -- | Compute the difference between two addresses
 addressDiff :: (L.HasCallStack, MM.MemWidth w) => RelAddress w -> RelAddress w -> Int64

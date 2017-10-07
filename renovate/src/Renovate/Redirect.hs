@@ -39,6 +39,9 @@ import Renovate.Redirect.Symbolize
 import Renovate.Redirect.Internal
 import Renovate.Redirect.Monad
 
+-- import qualified Data.Text.Prettyprint.Doc as PD
+-- import Debug.Trace
+
 -- | Given a list of basic blocks with instructions of type @i@ with
 -- annotation @a@ (which is fixed by the 'ISA' choice), rewrite the
 -- blocks to redirect execution to alternate blocks that have been
@@ -55,6 +58,10 @@ import Renovate.Redirect.Monad
 redirect :: (Monad m, InstructionConstraints i a, KnownNat w, MM.MemWidth w, Typeable w)
          => ISA i a w
          -- ^ Information about the ISA in use
+         -> RelAddress w
+         -- ^ start of text section
+         -> RelAddress w
+         -- ^ end of text section
          -> (SymbolicBlock i a w -> m (Maybe [TaggedInstruction i a]))
          -- ^ Instrumentor
          -> MM.Memory w
@@ -66,14 +73,20 @@ redirect :: (Monad m, InstructionConstraints i a, KnownNat w, MM.MemWidth w, Typ
          -- ^ The original basic blocks
          -> SymbolMap w
          -> m (Either E.SomeException ([ConcreteBlock i w], [ConcreteBlock i w]), NewSymbolsMap w, [Diagnostic])
-redirect isa instrumentor mem strat layoutAddr blocks symmap = runRewriterT isa symmap $ do
-  baseSymBlocks <- symbolizeBasicBlocks mem (L.sortBy (comparing basicBlockAddress) blocks)
+redirect isa textStart textEnd instrumentor mem strat layoutAddr blocks symmap = runRewriterT isa mem symmap $ do
+  -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress) (F.toList blocks)))))
+  baseSymBlocks <- symbolizeBasicBlocks (L.sortBy (comparing basicBlockAddress) blocks)
+  -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
-    insns' <- lift $ instrumentor sb
-    case insns' of
-      Nothing      -> return (LayoutPair cb sb Unmodified)
-      Just insns'' -> return (LayoutPair cb sb { basicBlockInstructions = insns'' } Modified)
-  concretizedBlocks <- concretize strat mem layoutAddr transformedBlocks
+    -- We only want to instrument blocks that live in the .text
+    case textStart <= basicBlockAddress cb && basicBlockAddress cb < textEnd of
+     True  ->  do
+       insns' <- lift $ instrumentor sb
+       case insns' of
+         Nothing      -> return (LayoutPair cb sb Unmodified)
+         Just insns'' -> return (LayoutPair cb sb { basicBlockInstructions = insns'' } Modified)
+     False -> return (LayoutPair cb sb Unmodified)
+  concretizedBlocks <- concretize strat layoutAddr transformedBlocks
   redirectedBlocks <- redirectOriginalBlocks concretizedBlocks
   let sorter = L.sortBy (comparing basicBlockAddress)
   return $ (sorter *** sorter . catMaybes) (unzip (map toPair (F.toList redirectedBlocks)))

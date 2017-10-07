@@ -233,31 +233,34 @@ addrRefToAddress f v =
     D.FPMem80 a -> f a
     _ -> NoAddress
 
-ripToAbs :: (MM.MemWidth w) => RelAddress w -> Instruction () -> D.AddrRef -> TargetAddress w
-ripToAbs iStartAddr i ref =
+ripToAbs :: (MM.MemWidth w) => MM.Memory w -> RelAddress w -> Instruction () -> D.AddrRef -> TargetAddress w
+ripToAbs mem iStartAddr i ref =
   case ref of
-    D.IP_Offset_32 _seg disp -> absoluteDisplacement iEndAddr disp
-    D.IP_Offset_64 _seg disp -> absoluteDisplacement iEndAddr disp
+    D.IP_Offset_32 _seg disp -> absoluteDisplacement mem iEndAddr disp
+    D.IP_Offset_64 _seg disp -> absoluteDisplacement mem iEndAddr disp
     _ -> NoAddress
   where
-    iEndAddr = iStartAddr `addressAddOffset` fromIntegral (x64Size i)
+    addOff   = addressAddOffset mem
+    iEndAddr = iStartAddr `addOff` fromIntegral (x64Size i)
 
-absoluteDisplacement :: (MM.MemWidth w) => RelAddress w -> D.Displacement -> TargetAddress w
-absoluteDisplacement endAddr disp =
+absoluteDisplacement :: (MM.MemWidth w) => MM.Memory w -> RelAddress w -> D.Displacement -> TargetAddress w
+absoluteDisplacement mem endAddr disp =
   case disp of
     D.NoDisplacement -> L.error "Unexpected NoDisplacement"
-    D.Disp8 d -> AbsoluteAddress (endAddr `addressAddOffset` fromIntegral d) -- (Address (fromIntegral d + fromIntegral endAddr))
-    D.Disp32 d -> AbsoluteAddress (endAddr `addressAddOffset` fromIntegral d) -- (Address (fromIntegral (d + fromIntegral endAddr)))
+    D.Disp8  d       -> AbsoluteAddress (endAddr `addOff` fromIntegral d) -- (Address (fromIntegral d + fromIntegral endAddr))
+    D.Disp32 d       -> AbsoluteAddress (endAddr `addOff` fromIntegral d) -- (Address (fromIntegral (d + fromIntegral endAddr)))
+  where
+  addOff = addressAddOffset mem
 
 -- Needs to convert all Disp8 IP relative references to Disp32
-x64SymbolizeAddresses :: (MM.MemWidth w) => RelAddress w -> Instruction () -> Instruction (TargetAddress w)
-x64SymbolizeAddresses insnAddr xi@(XI ii) =
-  XI (ii { D.iiArgs = fmap (saveAbsoluteRipAddresses insnAddr xi) (D.iiArgs ii) })
+x64SymbolizeAddresses :: (MM.MemWidth w) => MM.Memory w -> RelAddress w -> Instruction () -> Instruction (TargetAddress w)
+x64SymbolizeAddresses mem insnAddr xi@(XI ii) =
+  XI (ii { D.iiArgs = fmap (saveAbsoluteRipAddresses mem insnAddr xi) (D.iiArgs ii) })
 
-saveAbsoluteRipAddresses :: (MM.MemWidth w) => RelAddress w -> Instruction () -> AnnotatedOperand () -> AnnotatedOperand (TargetAddress w)
-saveAbsoluteRipAddresses insnAddr i AnnotatedOperand { aoOperand = (v, ty) } =
+saveAbsoluteRipAddresses :: (MM.MemWidth w) => MM.Memory w -> RelAddress w -> Instruction () -> AnnotatedOperand () -> AnnotatedOperand (TargetAddress w)
+saveAbsoluteRipAddresses mem insnAddr i AnnotatedOperand { aoOperand = (v, ty) } =
   AnnotatedOperand { aoOperand = (I.runIdentity (mapAddrRef promoteRipDisp8 I.Identity v), ty)
-                   , aoAnnotation = addrRefToAddress (ripToAbs insnAddr i) v
+                   , aoAnnotation = addrRefToAddress (ripToAbs mem insnAddr i) v
                    }
 
 promoteRipDisp8 :: D.AddrRef -> I.Identity D.AddrRef
@@ -267,22 +270,23 @@ promoteRipDisp8 ref =
     D.IP_Offset_64 seg (D.Disp8 d) -> I.Identity $ D.IP_Offset_64 seg (D.Disp32 (fromIntegral d))
     _ -> I.Identity ref
 
-x64ConcretizeAddresses :: (L.HasCallStack, MM.MemWidth w) => RelAddress w -> Instruction (TargetAddress w) -> Instruction ()
-x64ConcretizeAddresses insnAddr xi@(XI ii) =
-  XI $ ii { D.iiArgs = fmap (fixRipRelAddresses insnAddr xi) (D.iiArgs ii) }
+x64ConcretizeAddresses :: (L.HasCallStack, MM.MemWidth w) => MM.Memory w -> RelAddress w -> Instruction (TargetAddress w) -> Instruction ()
+x64ConcretizeAddresses mem insnAddr xi@(XI ii) =
+  XI $ ii { D.iiArgs = fmap (fixRipRelAddresses mem insnAddr xi) (D.iiArgs ii) }
 
 fixRipRelAddresses :: (L.HasCallStack, MM.MemWidth w)
-                   => RelAddress w
+                   => MM.Memory w
+                   -> RelAddress w
                    -> Instruction (TargetAddress w)
                    -> AnnotatedOperand (TargetAddress w)
                    -> AnnotatedOperand ()
-fixRipRelAddresses insnAddr i AnnotatedOperand { aoOperand = (v, ty)
-                                               , aoAnnotation = targetAddr
-                                               } =
+fixRipRelAddresses mem insnAddr i AnnotatedOperand { aoOperand = (v, ty)
+                                                   , aoAnnotation = targetAddr
+                                                   } =
   case targetAddr of
     NoAddress -> mkUnitAnnot (v, ty)
     AbsoluteAddress a
-      | Just v' <- mapAddrRef (absToRip insnAddr i a) (const Nothing) v -> mkUnitAnnot (v', ty)
+      | Just v' <- mapAddrRef (absToRip mem insnAddr i a) (const Nothing) v -> mkUnitAnnot (v', ty)
       | otherwise -> L.error "Unexpected rip rel fix"
 
 mapAddrRef :: (Applicative f) => (D.AddrRef -> f D.AddrRef) -> (D.Value -> f D.Value) -> D.Value -> f D.Value
@@ -302,12 +306,13 @@ mapAddrRef f ifNotMem v =
 
 -- FIXME: Guard these arithmetic operations from overflows
 absToRip :: (MM.MemWidth w)
-         => RelAddress w
+         => MM.Memory w
+         -> RelAddress w
          -> Instruction (TargetAddress w)
          -> RelAddress w
          -> D.AddrRef
          -> Maybe D.AddrRef
-absToRip iStartAddr i a ref =
+absToRip mem iStartAddr i a ref =
   case ref of
     D.IP_Offset_32 seg (D.Disp32 _) ->
       Just $ D.IP_Offset_32 seg (D.Disp32 (fromIntegral (a `addressDiff` iEndAddr)))
@@ -315,7 +320,8 @@ absToRip iStartAddr i a ref =
       Just $ D.IP_Offset_64 seg (D.Disp32 (fromIntegral (a `addressDiff` iEndAddr)))
     _ -> Nothing
   where
-    iEndAddr = iStartAddr `addressAddOffset` fromIntegral (x64Size i)
+    iEndAddr = iStartAddr `addOff` fromIntegral (x64Size i)
+    addOff   = addressAddOffset mem
 
 -- ipDisplacement :: Word64 -> D.Displacement -> D.Displacement
 -- ipDisplacement iEndAddr disp =

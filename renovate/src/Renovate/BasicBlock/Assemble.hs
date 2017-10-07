@@ -14,6 +14,7 @@ module Renovate.BasicBlock.Assemble
   BlockAssemblyException(..)
 ) where
 
+import qualified GHC.Err.Located as L
 import           Control.Applicative
 import           Control.Exception ( assert )
 import qualified Control.Lens as L
@@ -88,6 +89,8 @@ assembleBlocks :: (C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
                -> ISA i a w
                -> MM.MemSegmentOff w
                -- ^ The address of the start of the text section
+               -> MM.MemSegmentOff w
+               -- ^ The address of the end of the text section
                -> B.ByteString
                -- ^ The original text section contents
                -> RelAddress w
@@ -96,12 +99,15 @@ assembleBlocks :: (C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
                -- ^ A function to assemble a single instruction to bytes
                -> [ConcreteBlock i w]
                -> m (B.ByteString, B.ByteString)
-assembleBlocks mem isa textSecStart origTextBytes extraAddr assemble blocks = do
+assembleBlocks mem isa textSecStart textSecEnd origTextBytes extraAddr assemble blocks = do
+  -- traceM $ "absStartAddr = " ++ show absStartAddr
   s1 <- St.execStateT (unA assembleDriver) s0
   return (fromBuilder (asTextSection s1), fromBuilder (asExtraText s1))
   where
     absStartAddr = relFromSegmentOff mem textSecStart
+    absEndAddr   = relFromSegmentOff mem textSecEnd
     s0 = AssembleState { asTextStart        = absStartAddr
+                       , asTextEnd          = absEndAddr
                        , asTextAddr         = absStartAddr
                        , asTextSection      = mempty
                        , asOrigTextBytes    = origTextBytes
@@ -109,13 +115,17 @@ assembleBlocks mem isa textSecStart origTextBytes extraAddr assemble blocks = do
                        , asExtraAddr        = extraAddr
                        , asExtraText        = mempty
                        , asAssemble         = assemble
-                       , _asOrigBlocks      = L.sortOn basicBlockAddress origBlocks
+                       , _asOrigBlocks      = L.sortOn basicBlockAddress filteredBlocks
                        , _asAllocatedBlocks = L.sortOn basicBlockAddress allocatedBlocks
                        , asISA              = isa
+                       , asMemory           = mem
                        }
     -- Split the inputs block list into 2 lists. One for blocks that fit in the
     -- original address space and one for the newly allocated blocks.
     (origBlocks, allocatedBlocks) = foldr go ([],[]) blocks
+    filteredBlocks = filter inText origBlocks
+    inText b = absoluteAddress absStartAddr <= absoluteAddress (basicBlockAddress b) &&
+               absoluteAddress (basicBlockAddress b) < absoluteAddress absEndAddr
     go b (origAcc, allocatedAcc) = case MM.resolveAbsoluteAddr mem (absoluteAddress (basicBlockAddress b)) of
       Nothing -> (origAcc, b:allocatedAcc)
       Just _  -> (b:origAcc, allocatedAcc)
@@ -157,14 +167,22 @@ assembleAsExtra :: (C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
                 => ConcreteBlock i w
                 -> Assembler i a w m ()
 assembleAsExtra b = do
+  padToBlockStartExtra b
   nextExtraAddr <- St.gets asExtraAddr
+  -- traceM $ "nextExtraAddr = " ++ show nextExtraAddr
+  -- traceM $ "b = " ++ show (basicBlockAddress b)
   unless (nextExtraAddr == basicBlockAddress b) $ do
     C.throwM (DiscontiguousBlocks b)
   bytes <- assembleBlock b
+  mem <- St.gets asMemory
   let bsize = B.length bytes
-  St.modify' $ \s -> s { asExtraAddr = asExtraAddr s `addressAddOffset` fromIntegral bsize
+      addOff = addressAddOffset mem
+  St.modify' $ \s -> s { asExtraAddr = asExtraAddr s `addOff` fromIntegral bsize
                        , asExtraText = asExtraText s <> B.byteString bytes
                        }
+
+assertM :: (L.HasCallStack, Applicative m) => Bool -> m ()
+assertM b = assert b (pure ())
 
 -- | A block in the text section may be overlapped by some number of blocks
 -- following it.  In that case, we need to include the non-overlapped prefix of
@@ -173,7 +191,7 @@ assembleAsExtra b = do
 -- If there are overlapping blocks, they should be contiguous (but there may be
 -- some slack space after the last overlapping block where no other blocks could
 -- fit).
-assembleAsText :: (C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
+assembleAsText :: (L.HasCallStack, C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
                => ConcreteBlock i w
                -> Assembler i a w m ()
 assembleAsText b = do
@@ -202,15 +220,15 @@ checkedOverlappingAssemble :: (C.MonadThrow m, MM.MemWidth w)
 checkedOverlappingAssemble b overlays = do
   baseBytes <- assembleBlock b
   (prefixSize, suffixSize) <- computeBaseBlockBytes b overlays
-  assert (prefixSize <= B.length baseBytes) (return ())
+  assertM (prefixSize <= B.length baseBytes)
   let prefixBytes = B.take prefixSize baseBytes
-  assert (B.length prefixBytes == prefixSize) (return ())
+  assertM (B.length prefixBytes == prefixSize)
   appendTextBytes prefixBytes
 
   -- Splice in all of the overlays
   overlayByteCounts <- T.forM overlays $ \overlay -> do
     curTextAddr <- St.gets asTextAddr
-    assert (curTextAddr == basicBlockAddress overlay) (return ())
+    assertM (curTextAddr == basicBlockAddress overlay)
     overlayBytes <- assembleBlock overlay
     appendTextBytes overlayBytes
     return (B.length overlayBytes)
@@ -226,7 +244,7 @@ checkedOverlappingAssemble b overlays = do
   -- Thumb could be a problem, as some instructions are four bytes, while others
   -- are two.  We need to audit that.
   let overlayBytes = sum overlayByteCounts
-  assert (B.length baseBytes == prefixSize + overlayBytes + suffixSize) (return ())
+  assertM (B.length baseBytes == prefixSize + overlayBytes + suffixSize)
   let suffixBytes = B.drop (prefixSize + overlayBytes) baseBytes
   appendTextBytes suffixBytes
 
@@ -251,8 +269,10 @@ computeBaseBlockBytes b overlays = do
 
 appendTextBytes :: (MM.MemWidth w, Monad m) => B.ByteString -> Assembler i a w m ()
 appendTextBytes bs = do
+  mem <- St.gets asMemory
+  let addOff = addressAddOffset mem
   St.modify' $ \s -> s { asTextSection = asTextSection s <> B.byteString bs
-                       , asTextAddr = asTextAddr s `addressAddOffset` fromIntegral (B.length bs)
+                       , asTextAddr = asTextAddr s `addOff` fromIntegral (B.length bs)
                        }
 
 -- | Look up all of the blocks overlapping the given block.
@@ -268,15 +288,19 @@ lookupOverlappingBlocks :: forall i a w m
                         -> Assembler i a w m [ConcreteBlock i w]
 lookupOverlappingBlocks b = do
   isa <- St.gets asISA
+  mem <- St.gets asMemory
   let dummyJump = isaMakeRelativeJumpTo isa (basicBlockAddress b) (basicBlockAddress b)
-      jumpSize = sum (map (isaInstructionSize isa) dummyJump)
+      jumpSize  = sum (map (isaInstructionSize isa) dummyJump)
+      addOff    = addressAddOffset mem
       blockSize = concreteBlockSize isa b
-      blockEnd = basicBlockAddress b `addressAddOffset` fromIntegral blockSize
-  go isa blockEnd (basicBlockAddress b `addressAddOffset` fromIntegral jumpSize)
+      blockEnd  = basicBlockAddress b `addOff` fromIntegral blockSize
+  go isa blockEnd (basicBlockAddress b `addOff` fromIntegral jumpSize)
   where
     go :: ISA i a w -> RelAddress w -> RelAddress w -> Assembler i a w m [ConcreteBlock i w]
     go isa blockEnd nextAllowableAddress = do
+      mem <- St.gets asMemory
       mb' <- takeNextOrigBlock
+      let addOff = addressAddOffset mem
       case mb' of
         Nothing -> return []
         Just b' -> do
@@ -295,10 +319,10 @@ lookupOverlappingBlocks b = do
                   C.throwM (BlockOverlappingRedirection b')
               | basicBlockAddress b' > nextAllowableAddress -> do
                   C.throwM (DiscontiguousBlocks b')
-              | (basicBlockAddress b' `addressAddOffset` bsize) > blockEnd ->
+              | (basicBlockAddress b' `addOff` bsize) > blockEnd ->
                   C.throwM (OverlayBlockNotContained b')
               | otherwise -> do
-                  (b':) <$> go isa blockEnd (nextAllowableAddress `addressAddOffset` bsize)
+                  (b':) <$> go isa blockEnd (nextAllowableAddress `addOff` bsize)
 
 -- | If the given block doesn't start at the next expected address in the text
 -- section, pull bytes from the original text section to pad it out until we
@@ -306,26 +330,56 @@ lookupOverlappingBlocks b = do
 --
 -- This covers cases where the previous block was followed by data (that was not
 -- recognized as instructions by the analysis).  We have to preserve such data.
-padToBlockStart :: (Monad m, MM.MemWidth w) => ConcreteBlock i w -> Assembler i a w m ()
+padToBlockStart :: (L.HasCallStack, Monad m, MM.MemWidth w) => ConcreteBlock i w -> Assembler i a w m ()
 padToBlockStart b = do
-  nextAddr <- St.gets asTextAddr
-  assert (nextAddr <= basicBlockAddress b) (return ())
+  nextAddr  <- St.gets asTextAddr
+  -- startAddr <- St.gets asTextStart
+  -- endAddr   <- St.gets asTextEnd
+  -- Only do padding when the basic block is in the .text
+  -- when (startAddr <= basicBlockAddress b && basicBlockAddress b <= endAddr) $ do
+  assertM (nextAddr <= basicBlockAddress b)
   case nextAddr == basicBlockAddress b of
     True -> return ()
     False -> do
+      -- traceM "generating padding"
+      -- traceM $ "startAddr = " ++ show startAddr
+      -- traceM $ "nextAddr  = " ++ show nextAddr
+      -- traceM $ "b         = " ++ show (basicBlockAddress b)
+      -- traceM $ "endAddr   = " ++ show endAddr
       origTextBytes <- St.gets asOrigTextBytes
-      textStart <- St.gets asTextStart
-      let gapSize = fromIntegral (basicBlockAddress b `addressDiff` nextAddr)
-          idx = fromIntegral (nextAddr `addressDiff` textStart)
+      textStart     <- St.gets asTextStart
+      let gapSize  = fromIntegral (basicBlockAddress b `addressDiff` nextAddr)
+          idx      = fromIntegral (nextAddr `addressDiff` textStart)
           gapBytes = B.take gapSize (B.drop idx origTextBytes)
-      assert (B.length gapBytes == gapSize) (return ())
-      St.modify' $ \s -> s { asTextAddr = asTextAddr s `addressAddOffset` fromIntegral gapSize
+      -- traceM $ "gapSize = " ++ show gapSize
+      -- traceM ""
+      assertM (B.length gapBytes == gapSize)
+      mem <- St.gets asMemory
+      let addOff = addressAddOffset mem
+      St.modify' $ \s -> s { asTextAddr    = asTextAddr s `addOff` fromIntegral gapSize
                            , asTextSection = asTextSection s <> B.byteString gapBytes
+                           }
+
+padToBlockStartExtra :: (L.HasCallStack, Monad m, MM.MemWidth w) => ConcreteBlock i w -> Assembler i a w m ()
+padToBlockStartExtra b = do
+  nextExtraAddr <- St.gets asExtraAddr
+  assertM (nextExtraAddr <= basicBlockAddress b)
+  case nextExtraAddr == basicBlockAddress b of
+    True -> return ()
+    False -> do
+      let gapSize  = fromIntegral (basicBlockAddress b `addressDiff` nextExtraAddr)
+          gapBytes = B.replicate gapSize 0
+      assertM (B.length gapBytes == gapSize)
+      mem <- St.gets asMemory
+      let addOff = addressAddOffset mem
+      St.modify' $ \s -> s { asExtraAddr = asExtraAddr s `addOff` fromIntegral gapSize
+                           , asExtraText = asExtraText s <> B.byteString gapBytes
                            }
 
 -- | Looks for a gap after the current block (assumes, current block is last of
 -- the blocks for the original address space) and fills that gap with the bytes
 -- from the original program text.
+-- TODO: can this logic benefit from knowing the textEnd?
 padLastBlock :: (Monad m, MM.MemWidth w) => Assembler i a w m ()
 padLastBlock = do
   origTextBytes <- St.gets asOrigTextBytes
@@ -337,7 +391,9 @@ padLastBlock = do
   -- traceM $ "padLastBlock = " ++ show (B.length origTextBytes - idx)
   if leftOversLen > 0
      then do
-       St.modify' $ \s -> s { asTextAddr    = asTextAddr s `addressAddOffset` fromIntegral leftOversLen
+       mem <- St.gets asMemory
+       let addOff = addressAddOffset mem
+       St.modify' $ \s -> s { asTextAddr    = asTextAddr s `addOff` fromIntegral leftOversLen
                             , asTextSection = asTextSection s <> B.byteString leftOvers
                             }
      else return ()
@@ -387,6 +443,8 @@ newtype Assembler i a w m a' = Assembler { unA :: St.StateT (AssembleState i a w
 data AssembleState i a w =
   AssembleState { asTextStart :: RelAddress w
                 -- ^ The starting address of the text section
+                , asTextEnd   :: RelAddress w
+                -- ^ The ending address of the text section
                 , asTextAddr :: !(RelAddress w)
                 -- ^ The next address to fill in the text section builder
                 , asTextSection :: !B.Builder
@@ -416,6 +474,8 @@ data AssembleState i a w =
                 -- ^ The original bytes of the text section, used to extract
                 -- bits that are not covered by basic blocks
                 , asISA :: ISA i a w
+                , asMemory :: MM.Memory w
+                -- ^ The macaw memory object
                 }
 
 asOrigBlocks :: L.Lens' (AssembleState i a w) [ConcreteBlock i w]
