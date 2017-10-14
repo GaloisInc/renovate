@@ -25,7 +25,7 @@ library
                        bytestring,
                        flexdis86,
                        macaw-x86,
-                       macaw,
+                       macaw-base,
                        ansi-wl-pprint,
                        exceptions,
                        prettyprinter,
@@ -44,7 +44,7 @@ test-suite renovate-x86-tests
   hs-source-dirs: tests
   build-depends: base,
                  parameterized-utils,
-                 macaw,
+                 macaw-base,
                  macaw-x86,
                  bytestring,
                  containers,

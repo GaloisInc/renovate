@@ -53,7 +53,7 @@ library
                        located-base >= 0.1 && < 0.2,
                        prettyprinter,
                        parameterized-utils,
-                       macaw,
+                       macaw-base,
                        elf-edit >= 0.28
 
   hs-source-dirs:      src
