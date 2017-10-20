@@ -3,6 +3,8 @@
 set -e
 set -o pipefail
 
+ssh-add "$HOME/.ssh/id_ed25519_semmc"
+
 export GHC_VER=$1
 
 ABSOLUTE_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
