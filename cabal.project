@@ -4,7 +4,13 @@ packages: deps/elf-edit/
           deps/macaw/base/
           deps/macaw/x86/
           deps/parameterized-utils/
+          deps/crucible/crucible/
+          deps/crucible/galois-matlab/
           deps/dismantle/dismantle-tablegen/
           deps/dismantle/dismantle-ppc/
+          deps/semmc/semmc/
+          deps/semmc/semmc-ppc/
+          deps/macaw-semmc/macaw-ppc/
           renovate/
           renovate-x86/
+          renovate-ppc/
