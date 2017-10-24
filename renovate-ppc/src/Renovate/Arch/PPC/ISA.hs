@@ -19,6 +19,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import           Data.Coerce ( coerce )
 import           Data.Int ( Int32 )
+import qualified Data.Text.Prettyprint.Doc as PP
 import           Data.Word ( Word8, Word64 )
 import           Text.Printf ( printf )
 
@@ -34,6 +35,10 @@ data TargetAddress w = NoAddress
                      deriving (Eq, Ord, Show)
 
 newtype Instruction a = I { unI :: D.AnnotatedInstruction a }
+  deriving (Show)
+
+instance PP.Pretty (Instruction a) where
+  pretty = PP.pretty . ppcPrettyInstruction
 
 assemble :: (C.MonadThrow m) => Instruction () -> m B.ByteString
 assemble = return . LB.toStrict . D.assembleInstruction . toInst
