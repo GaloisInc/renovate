@@ -36,5 +36,7 @@ cabal update || exit 1
 echo "Testing ghc"
 /opt/ghc/${GHC_VER}/bin/ghc --version
 
+ln -sf ./cabal.project.dist ./cabal.project
+
 cabal new-build renovate-x86 || exit 1
 cabal new-build renovate-ppc || exit 1
