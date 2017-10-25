@@ -67,8 +67,8 @@ compose funcs = go funcs
 
 -- | An identity rewriter (i.e., a rewriter that makes no changes, but forces
 -- everything to be redirected).
-identity :: (Monad m) => b -> B.SymbolicBlock i a w -> m (Maybe [B.TaggedInstruction i a])
-identity _ sb = return $! Just (B.basicBlockInstructions sb)
+identity :: (Monad m) => b -> ISA.ISA i a w -> MM.Memory w -> B.SymbolicBlock i a w -> m (Maybe [B.TaggedInstruction i a])
+identity _ _ _ sb = return $! Just (B.basicBlockInstructions sb)
 
-nop :: Monad m => b -> B.SymbolicBlock i a w -> m (Maybe [B.TaggedInstruction i a])
-nop _ _ = return Nothing
+nop :: Monad m => b -> ISA.ISA i a w -> MM.Memory w -> B.SymbolicBlock i a w -> m (Maybe [B.TaggedInstruction i a])
+nop _ _ _ _ = return Nothing
