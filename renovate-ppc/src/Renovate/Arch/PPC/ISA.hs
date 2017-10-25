@@ -7,6 +7,8 @@ module Renovate.Arch.PPC.ISA (
   disassemble1,
   Instruction,
   TargetAddress(..),
+  toInst,
+  fromInst,
   -- * Exceptions
   InstructionDisassemblyFailure(..)
   ) where
@@ -39,6 +41,12 @@ newtype Instruction a = I { unI :: D.AnnotatedInstruction a }
 
 instance PP.Pretty (Instruction a) where
   pretty = PP.pretty . ppcPrettyInstruction
+
+instance Functor Instruction where
+  fmap f (I i) =
+    case i of
+      D.Instruction opc operands ->
+        I (D.Instruction (coerce opc) (FC.fmapFC (\(D.Annotated a o) -> D.Annotated (f a) o) operands))
 
 assemble :: (C.MonadThrow m) => Instruction () -> m B.ByteString
 assemble = return . LB.toStrict . D.assembleInstruction . toInst

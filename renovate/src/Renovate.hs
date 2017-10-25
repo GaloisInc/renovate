@@ -33,6 +33,7 @@ module Renovate
   B.SymbolicInfo(..),
   Recovery.BlockInfo(..),
   B.instructionAddresses,
+  B.instructionAddresses',
   B.concreteBlockSize,
   B.symbolicBlockSize,
   -- * Instructions

@@ -45,7 +45,7 @@ data RenovateConfig i a w arch b =
                  , rcDisassembler  :: forall m . (C.MonadThrow m) => B.ByteString -> m [i ()]
                  , rcDisassembler1 :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, i ())
                  , rcAnalysis      :: ISA.ISA i a w -> MM.Memory w -> R.BlockInfo i w arch -> b
-                 , rcRewriter      :: b -> B.SymbolicBlock i a w -> RW.RewriteM i w (Maybe [B.TaggedInstruction i a])
+                 , rcRewriter      :: b -> ISA.ISA i a w -> MM.Memory w -> B.SymbolicBlock i a w -> RW.RewriteM i w (Maybe [B.TaggedInstruction i a])
                  }
 
 -- | Compose a list of instrumentation functions into a single

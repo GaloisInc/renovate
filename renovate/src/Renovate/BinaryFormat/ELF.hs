@@ -783,7 +783,7 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
                               (RA.relFromSegmentOff mem entryPoint)
                               newGlobalBase
                               cfgs
-                              (RE.redirect isa textStart textEnd (rewriter analysisResult) mem strat layoutAddr blocks symmap)
+                              (RE.redirect isa textStart textEnd (rewriter analysisResult isa mem) mem strat layoutAddr blocks symmap)
           of
             ((Left exn2, _newSyms, diags2), _info) -> do
               riRedirectionDiagnostics L..= diags2

@@ -9,7 +9,10 @@ module Renovate.Arch.PPC (
   disassemble,
   disassemble1,
   Instruction,
-  TargetAddress,
+  TargetAddress(..),
+  -- * Helpers
+  toInst,
+  fromInst,
   -- * Exceptions
   InstructionDisassemblyFailure(..)
   ) where
@@ -26,7 +29,7 @@ import           Renovate.Arch.PPC.ISA
 
 config32 :: (MM.MemWidth w)
          => (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w PPC32.PPC -> a)
-         -> (a -> SymbolicBlock Instruction (TargetAddress w) w
+         -> (a -> ISA Instruction (TargetAddress w) w -> MM.Memory w -> SymbolicBlock Instruction (TargetAddress w) w
                -> RewriteM Instruction w (Maybe [TaggedInstruction Instruction (TargetAddress w)]))
          -> RenovateConfig Instruction (TargetAddress w) w PPC32.PPC a
 config32 analysis rewriter =
@@ -41,7 +44,7 @@ config32 analysis rewriter =
 
 config64 :: (MM.MemWidth w)
          => (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w PPC64.PPC -> a)
-         -> (a -> SymbolicBlock Instruction (TargetAddress w) w
+         -> (a -> ISA Instruction (TargetAddress w) w -> MM.Memory w -> SymbolicBlock Instruction (TargetAddress w) w
                -> RewriteM Instruction w (Maybe [TaggedInstruction Instruction (TargetAddress w)]))
          -> RenovateConfig Instruction (TargetAddress w) w PPC64.PPC a
 config64 analysis rewriter =
