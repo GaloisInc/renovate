@@ -3,8 +3,7 @@
 module Renovate.Arch.X86_64.ISA (
   isa,
   assemble,
-  disassemble,
-  disassemble1
+  disassemble
   ) where
 
 import qualified GHC.Err.Located as L
@@ -34,22 +33,10 @@ assemble i =
     Nothing -> C.throwM (InstructionAssemblyFailure i)
     Just bldr -> return (LB.toStrict (B.toLazyByteString bldr))
 
--- | Disassemble a 'B.ByteString' into concrete instructions (with no
--- annotation)
---
--- This can fail with exceptions of type 'DisassemblyFailure'.
-disassemble :: (C.MonadThrow m) => B.ByteString -> m [Instruction ()]
-disassemble = mapM checkDisassembly . D.disassembleBuffer
-  where
-    checkDisassembly disAddr =
-      case D.disInstruction disAddr of
-        Nothing -> C.throwM (InstructionDisassmblyFailure (D.disOffset disAddr) (D.disLen disAddr))
-        Just i -> return (fromFlexInst i)
-
 -- | Disassemble a single instruction from a 'B.ByteString' and return
 -- the instruction and remaining bytes.
-disassemble1 :: (C.MonadThrow m) => B.ByteString -> m (Int, Instruction ())
-disassemble1 b =
+disassemble :: (C.MonadThrow m) => B.ByteString -> m (Int, Instruction ())
+disassemble b =
   case mii of
     Nothing -> C.throwM (InstructionDisassmblyFailure1 b bytesRead)
     Just i -> return (bytesRead, fromFlexInst i)

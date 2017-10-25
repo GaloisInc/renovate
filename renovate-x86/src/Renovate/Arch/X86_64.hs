@@ -14,7 +14,6 @@ module Renovate.Arch.X86_64 (
   -- * Assembly
   assemble,
   disassemble,
-  disassemble1,
   -- * Utilities
   instrOpcode,
   instrOperands,
@@ -55,7 +54,6 @@ config analysis rewriter =
     , rcArchInfo      = X86.x86_64_linux_info
     , rcAssembler     = assemble
     , rcDisassembler  = disassemble
-    , rcDisassembler1 = disassemble1
     , rcAnalysis      = analysis
     , rcRewriter      = rewriter
     }

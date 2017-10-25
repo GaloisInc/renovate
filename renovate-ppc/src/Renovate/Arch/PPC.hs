@@ -7,7 +7,6 @@ module Renovate.Arch.PPC (
   -- * Assembly and Disassembly
   assemble,
   disassemble,
-  disassemble1,
   Instruction,
   TargetAddress(..),
   -- * Helpers
@@ -37,7 +36,6 @@ config32 analysis rewriter =
                  , rcArchInfo = MP.ppc32_linux_info
                  , rcAssembler = assemble
                  , rcDisassembler = disassemble
-                 , rcDisassembler1 = disassemble1
                  , rcAnalysis = analysis
                  , rcRewriter = rewriter
                  }
@@ -52,7 +50,6 @@ config64 analysis rewriter =
                  , rcArchInfo = MP.ppc64_linux_info
                  , rcAssembler = assemble
                  , rcDisassembler = disassemble
-                 , rcDisassembler1 = disassemble1
                  , rcAnalysis = analysis
                  , rcRewriter = rewriter
                  }

@@ -764,7 +764,7 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
   riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
   let isa = rcISA cfg
       archInfo = rcArchInfo cfg
-  case R.recoverBlocks isa (rcDisassembler1 cfg) archInfo mem (entryPoint NEL.:| []) of
+  case R.recoverBlocks isa (rcDisassembler cfg) archInfo mem (entryPoint NEL.:| []) of
     (Left exn1, diags1) -> do
       riBlockRecoveryDiagnostics L..= diags1
       C.throwM (BlockRecoveryFailure exn1 diags1)
@@ -823,7 +823,7 @@ analyzeTextSection cfg mem entryPoint = do
   riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
   let isa      = rcISA cfg
       archInfo = rcArchInfo cfg
-  case R.recoverBlocks isa (rcDisassembler1 cfg) archInfo mem (entryPoint NEL.:| []) of
+  case R.recoverBlocks isa (rcDisassembler cfg) archInfo mem (entryPoint NEL.:| []) of
     (Left exn1, diags1) -> do
       riBlockRecoveryDiagnostics L..= diags1
       C.throwM (BlockRecoveryFailure exn1 diags1)

@@ -4,7 +4,6 @@ module Renovate.Arch.PPC.ISA (
   isa,
   assemble,
   disassemble,
-  disassemble1,
   Instruction,
   TargetAddress(..),
   toInst,
@@ -51,11 +50,8 @@ instance Functor Instruction where
 assemble :: (C.MonadThrow m) => Instruction () -> m B.ByteString
 assemble = return . LB.toStrict . D.assembleInstruction . toInst
 
-disassemble :: (C.MonadThrow m) => B.ByteString -> m [Instruction ()]
-disassemble = undefined
-
-disassemble1 :: (C.MonadThrow m) => B.ByteString -> m (Int, Instruction ())
-disassemble1 bs =
+disassemble :: (C.MonadThrow m) => B.ByteString -> m (Int, Instruction ())
+disassemble bs =
   case minsn of
     Just i -> return (bytesConsumed, fromInst i)
     Nothing -> C.throwM (InstructionDisassemblyFailure bs bytesConsumed)
