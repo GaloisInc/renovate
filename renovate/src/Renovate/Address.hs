@@ -144,12 +144,22 @@ addressAddOffset mem a offset =
 -- | Compute the difference between two addresses
 addressDiff :: (L.HasCallStack, MM.MemWidth w) => RelAddress w -> RelAddress w -> Int64
 addressDiff a1 a2
-  | offUnsigned > fromIntegral i64Max = L.error ("addressDiff: difference too large to fit in an Int64 " ++ show (a1, a2))
-  | a1 > a2 = fromIntegral offUnsigned
+  | offUnsigned > fromIntegral i64Max = L.error $
+    -- Let's just go full diagnostic
+    unlines ["addressDiff: difference too large to fit in an Int64 " ++ show (a1, a2)
+            ,"absoluteAddress a1 = " ++ show aa1
+            ,"absoluteAddress a2 = " ++ show aa2
+            ,"offUnsigned        = " ++ show offUnsigned
+            ,"negate offUnsigned = " ++ show (negate offUnsigned)
+            ,"i64Max             = 0x" ++ N.showHex i64Max ""
+            ]
+  | aa1 > aa2 = fromIntegral offUnsigned
   | otherwise = negate (fromIntegral offUnsigned)
   where
+    aa1 = absoluteAddress a1
+    aa2 = absoluteAddress a2
     offUnsigned
-      | a1 > a2 = (absoluteAddress a1) - (absoluteAddress a2)
-      | otherwise = (absoluteAddress a2) - (absoluteAddress a1)
+      | aa1 > aa2 = aa1 - aa2
+      | otherwise = aa2 - aa1
     i64Max :: Word64
     i64Max = fromIntegral (maxBound :: Int64)
