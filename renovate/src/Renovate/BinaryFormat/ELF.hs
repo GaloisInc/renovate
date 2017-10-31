@@ -180,11 +180,11 @@ rewriteElf :: (ISA.InstructionConstraints i a,
            -- (including statically-allocated data)
            -> RE.LayoutStrategy
            -- ^ The layout strategy for blocks in the new binary
-           -> Either C.SomeException (E.Elf w, RewriterInfo w)
+           -> Either C.SomeException (E.Elf w, b, RewriterInfo w)
 rewriteElf cfg e mem strat =
   P.runCatch $ do
-    ri <- S.execStateT (unElfRewrite act) (emptyRewriterInfo e)
-    return (_riELF ri, ri)
+    (analysisResult, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
+    return (_riELF ri, analysisResult, ri)
   where
     act = doRewrite cfg mem strat
 
@@ -278,7 +278,7 @@ doRewrite :: (ISA.InstructionConstraints i a,
           => RenovateConfig i a w arch b
           -> MM.Memory w
           -> RE.LayoutStrategy
-          -> ElfRewriter w ()
+          -> ElfRewriter w b
 doRewrite cfg mem strat = do
   -- We pull some information from the unmodified initial binary: the text
   -- section, the entry point(s), and original symbol table (if any).
@@ -313,7 +313,8 @@ doRewrite cfg mem strat = do
       Just textSectionStartAddr = MM.resolveAbsoluteAddr mem (fromIntegral (E.elfSectionAddr textSection))
       Just textSectionEndAddr   = MM.incSegmentOff textSectionStartAddr (fromIntegral ((E.elfSectionSize textSection)))
 
-  ( overwrittenBytes
+  ( analysisResult
+    , overwrittenBytes
     , instrumentedBytes
     , mNewData
     , newSyms ) <- instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr
@@ -347,6 +348,7 @@ doRewrite cfg mem strat = do
   -- Now overwrite the original code (in the .text segment) with the
   -- content computed by our transformation.
   modifyCurrentELF (overwriteTextSection overwrittenBytes)
+  return analysisResult
 
 -- | The analysis driver
 doAnalysis :: (ISA.InstructionConstraints i a,
@@ -758,7 +760,7 @@ instrumentTextSection :: forall i a w arch b
                       -- ^ The address to lay out the new data section
                       -> RM.SymbolMap w
                       -- ^ meta data?
-                      -> ElfRewriter w (B.ByteString, B.ByteString, Maybe B.ByteString, RM.NewSymbolsMap w)
+                      -> ElfRewriter w (b, B.ByteString, B.ByteString, Maybe B.ByteString, RM.NewSymbolsMap w)
 instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes entryPoint strat layoutAddr newGlobalBase symmap = do
   traceM ("instrumentTextSection entry point: " ++ show entryPoint)
   riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
@@ -796,7 +798,7 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
                 RenovateConfig { rcAssembler = asm } -> do
                   (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks
                   let newDataBytes = mkNewDataSection newGlobalBase info
-                  return (overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
+                  return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
       where
       textStart  = RA.relFromSegmentOff mem textSectionStartAddr
       textEnd    = RA.relFromSegmentOff mem textSectionEndAddr
