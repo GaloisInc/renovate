@@ -279,7 +279,7 @@ addOriginalBlock isa mem jumpSize h cb
     addOff    = addressAddOffset mem
     addr      = basicBlockAddress cb `addOff` fromIntegral jumpSize
 
-randomOrder :: RandomSeed -> [SymbolicBlock i a w] -> [SymbolicBlock i a w]
+randomOrder :: RandomSeed -> [a] -> [a]
 randomOrder seed initial = runST $ do
   gen      <- MWC.initialize seed
   vec      <- V.thaw (V.fromList initial)
@@ -288,7 +288,7 @@ randomOrder seed initial = runST $ do
   where
   -- This looks like a bit of a mess, but it's actually just the fisher-yates
   -- inplace shuffle.
-  go :: MWC.GenST s -> Int -> MV.STVector s (SymbolicBlock i a w) -> ST s (MV.STVector s (SymbolicBlock i a w))
+  go :: MWC.GenST s -> Int -> MV.STVector s a -> ST s (MV.STVector s a)
   go g i vec
     | i >= MV.length vec - 2 = return vec
     | otherwise = do
