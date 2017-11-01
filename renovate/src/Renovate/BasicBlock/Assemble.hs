@@ -84,7 +84,7 @@ instance C.Exception BlockAssemblyException
 --
 -- This function assumes that the extra contiguous blocks are at higher
 -- addresses than the original text section.
-assembleBlocks :: (C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
+assembleBlocks :: (L.HasCallStack, C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
                => MM.Memory w
                -> ISA i a w
                -> MM.MemSegmentOff w
@@ -100,7 +100,6 @@ assembleBlocks :: (C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
                -> [ConcreteBlock i w]
                -> m (B.ByteString, B.ByteString)
 assembleBlocks mem isa textSecStart textSecEnd origTextBytes extraAddr assemble blocks = do
-  -- traceM $ "absStartAddr = " ++ show absStartAddr
   s1 <- St.execStateT (unA assembleDriver) s0
   return (fromBuilder (asTextSection s1), fromBuilder (asExtraText s1))
   where
@@ -163,7 +162,7 @@ assembleDriver = do
 
 -- | Code in the extra section never overlaps, so we can just perform some basic
 -- consistency check sand then append it.
-assembleAsExtra :: (C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
+assembleAsExtra :: (L.HasCallStack, C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
                 => ConcreteBlock i w
                 -> Assembler i a w m ()
 assembleAsExtra b = do
@@ -213,7 +212,7 @@ assembleAsText b = do
 -- jump.  The overlapping blocks must be contained and contiguous.
 --
 -- There may be space after the last block that will be filled with traps.
-checkedOverlappingAssemble :: (C.MonadThrow m, MM.MemWidth w)
+checkedOverlappingAssemble :: (L.HasCallStack, C.MonadThrow m, MM.MemWidth w)
                            => ConcreteBlock i w
                            -> [ConcreteBlock i w]
                            -> Assembler i a w m ()
@@ -283,7 +282,7 @@ appendTextBytes bs = do
 -- As a side effect, removes the overlapping blocks from the list of blocks to
 -- be assembled.
 lookupOverlappingBlocks :: forall i a w m
-                         . (C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
+                         . (L.HasCallStack, C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
                         => ConcreteBlock i w
                         -> Assembler i a w m [ConcreteBlock i w]
 lookupOverlappingBlocks b = do
@@ -398,7 +397,7 @@ padLastBlock = do
                             }
      else return ()
 
-assembleBlock :: (C.MonadThrow m) => ConcreteBlock i w -> Assembler i a w m (B.ByteString)
+assembleBlock :: (L.HasCallStack, C.MonadThrow m) => ConcreteBlock i w -> Assembler i a w m (B.ByteString)
 assembleBlock b = do
   assembler <- St.gets asAssemble
   case mapM assembler (basicBlockInstructions b) of
