@@ -49,7 +49,7 @@ concretize :: (Monad m, T.Traversable t, InstructionConstraints i a, KnownNat w,
            -> RelAddress w
            -- ^ The start address of the concretized (instrumented) blocks
            -> t (SymbolicPair i a w)
-           -> RewriterT i a w m (t (ConcretePair i w))
+           -> RewriterT i a w m [ConcretePair i w]
 concretize strat startAddr blocks = do
   -- First, build up a mapping of symbolic address to new concrete
   -- address

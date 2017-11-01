@@ -28,6 +28,6 @@ layoutBlocks :: (Monad m, T.Traversable t, InstructionConstraints i a, MM.MemWid
              -> RelAddress w
              -- ^ Address to begin block layout of instrumented blocks
              -> t (SymbolicPair i a w)
-             -> RewriterT i a w m (t (AddressAssignedPair i a w))
+             -> RewriterT i a w m [AddressAssignedPair i a w]
 layoutBlocks strat startAddr blocks =
   compactLayout startAddr strat blocks

@@ -43,7 +43,7 @@ compactLayout :: (Monad m, T.Traversable t, InstructionConstraints i a, MM.MemWi
               -- ^ Address to begin block layout of instrumented blocks
               -> LayoutStrategy
               -> t (SymbolicPair i a w)
-              -> RewriterT i a w m (t (AddressAssignedPair i a w))
+              -> RewriterT i a w m [AddressAssignedPair i a w]
 compactLayout startAddr strat blocks = do
   h0 <- if strat == Parallel -- the parallel strategy is now a special case of
                              -- compact. In particular, we avoid allocating
@@ -59,8 +59,9 @@ compactLayout startAddr strat blocks = do
   -- behavior of blocks ending in conditional jumps (or non-jumps).
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . lpOrig) (F.toList blocks)))))
   mem     <- askMem
-  blocks' <- reifyFallthroughSuccessors mem blocks
-  -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . lpOrig) (F.toList blocks')))))
+  let (modifiedBlocks, unmodifiedBlocks) = L.partition (\b -> lpStatus b == Modified)
+                                                       (F.toList blocks)
+  blocks' <- reifyFallthroughSuccessors mem modifiedBlocks
 
   -- Either, a) Sort all of the instrumented blocks by size
   --         b) Randomize the order of the blocks.
@@ -87,7 +88,7 @@ compactLayout startAddr strat blocks = do
   -- Note that we are assigning addresses to blocks', which has augmented the
   -- symbolic blocks with additional jumps to preserve fallthrough behavior.
   -- That is critical.
-  T.traverse (assignConcreteAddress symBlockAddrs) blocks'
+  T.traverse (assignConcreteAddress symBlockAddrs) (F.toList blocks' ++ unmodifiedBlocks)
   where
     bySize isa mem = Down . symbolicBlockSize isa mem startAddr
 
