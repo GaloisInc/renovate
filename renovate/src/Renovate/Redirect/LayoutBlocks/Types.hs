@@ -102,7 +102,7 @@ ppInsnLists xs ys = go xs ys
 data Status
   = Modified
   | Unmodified
-  deriving (Show)
+  deriving (Eq, Ord, Read, Show)
 
 type SymbolicPair         i a w = LayoutPair (SymbolicBlock        i a w) i w
 type AddressAssignedPair  i a w = LayoutPair (AddressAssignedBlock i a w) i w
