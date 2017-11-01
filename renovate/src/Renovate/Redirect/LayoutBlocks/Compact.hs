@@ -28,9 +28,6 @@ import           Renovate.Redirect.Monad
 
 import           Renovate.Redirect.LayoutBlocks.Types
 
--- import Debug.Trace
--- import qualified Data.Text.Prettyprint.Doc as PD
-
 -- | The address heap associates chunks of memory to addresses.  The ordering of
 -- the heap is based on the size of the chunk of memory at each address.  The
 -- sizes are stored as negative values so that taking the minimum element of the
@@ -156,7 +153,7 @@ allocateBlockAddress isa mem (newTextAddr, h, m) sb =
 
     allocateFromHeap allocSize addr h' =
       assert (allocSize >= fromIntegral sbSize) $ do
-        let addr' = addr `addOff` fromIntegral sbSize
+        let addr'      = addr `addOff` fromIntegral sbSize
             allocSize' = allocSize - fromIntegral sbSize
         case allocSize' of
           0 -> (newTextAddr, h', M.insert (basicBlockAddress sb) addr m)
@@ -225,7 +222,7 @@ addExplicitFallthrough mem symSucIdx pair@(LayoutPair cb sb Modified) = do
                                                            (show (basicBlockAddress sb))
                                                            (show (basicBlockAddress cb)))
       | otherwise = projectInstruction $ last (basicBlockInstructions sb)
-addExplicitFallthrough _mem _symSucIdx pair@(LayoutPair _cb _sb Unmodified) = return pair
+addExplicitFallthrough _ _ pair@(LayoutPair _ _ Unmodified) = return pair
 
 appendUnconditionalJump :: (MM.MemWidth w)
                         => ISA i a w
