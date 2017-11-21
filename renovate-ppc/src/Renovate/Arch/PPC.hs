@@ -13,7 +13,10 @@ module Renovate.Arch.PPC (
   disassemble,
   Instruction,
   TargetAddress(..),
-  -- * Helpers
+  -- * ELF Support
+  MP.tocBaseForELF,
+  MP.tocEntryAddrsForElf,
+  -- * Instruction Helpers
   toInst,
   fromInst,
   -- * Exceptions
