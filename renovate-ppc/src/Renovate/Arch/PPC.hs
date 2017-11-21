@@ -3,6 +3,9 @@ module Renovate.Arch.PPC (
   -- * Configuration
   config32,
   config64,
+  -- * Architecture Selection
+  MP.PPC64,
+  MP.PPC32,
   -- * Functions
   isa,
   -- * Assembly and Disassembly
