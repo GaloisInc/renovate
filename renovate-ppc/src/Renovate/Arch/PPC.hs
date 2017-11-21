@@ -22,20 +22,17 @@ import qualified Data.Macaw.CFG.Core as MC
 import qualified Data.Macaw.Memory as MM
 import           Data.Macaw.Types ( BVType )
 
-import qualified SemMC.Architecture.PPC32 as PPC32
-import qualified SemMC.Architecture.PPC64 as PPC64
-
 import qualified Data.Macaw.PPC as MP
 
 import           Renovate
 import           Renovate.Arch.PPC.ISA
 
 config32 :: (MM.MemWidth w)
-         => (MC.ArchSegmentOff PPC32.PPC -> Maybe (MA.AbsValue 32 (BVType 32)))
-         -> (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w PPC32.PPC -> a)
+         => (MC.ArchSegmentOff MP.PPC32 -> Maybe (MA.AbsValue 32 (BVType 32)))
+         -> (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w MP.PPC32 -> a)
          -> (a -> ISA Instruction (TargetAddress w) w -> MM.Memory w -> SymbolicBlock Instruction (TargetAddress w) w
                -> RewriteM Instruction w (Maybe [TaggedInstruction Instruction (TargetAddress w)]))
-         -> RenovateConfig Instruction (TargetAddress w) w PPC32.PPC a
+         -> RenovateConfig Instruction (TargetAddress w) w MP.PPC32 a
 config32 tocMap analysis rewriter =
   RenovateConfig { rcISA = isa
                  , rcArchInfo = MP.ppc32_linux_info tocMap
@@ -46,11 +43,11 @@ config32 tocMap analysis rewriter =
                  }
 
 config64 :: (MM.MemWidth w)
-         => (MC.ArchSegmentOff PPC64.PPC -> Maybe (MA.AbsValue 64 (BVType 64)))
-         -> (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w PPC64.PPC -> a)
+         => (MC.ArchSegmentOff MP.PPC64 -> Maybe (MA.AbsValue 64 (BVType 64)))
+         -> (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w MP.PPC64 -> a)
          -> (a -> ISA Instruction (TargetAddress w) w -> MM.Memory w -> SymbolicBlock Instruction (TargetAddress w) w
                -> RewriteM Instruction w (Maybe [TaggedInstruction Instruction (TargetAddress w)]))
-         -> RenovateConfig Instruction (TargetAddress w) w PPC64.PPC a
+         -> RenovateConfig Instruction (TargetAddress w) w MP.PPC64 a
 config64 tocMap analysis rewriter =
   RenovateConfig { rcISA = isa
                  , rcArchInfo = MP.ppc64_linux_info tocMap
