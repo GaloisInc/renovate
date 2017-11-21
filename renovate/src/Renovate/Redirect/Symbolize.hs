@@ -63,7 +63,7 @@ symbolizeBasicBlocks concreteBlocks = do
 -- See Note [Jump Promotion]
 symbolizeJumps :: forall i a w m
                 . (Monad m, KnownNat w, MM.MemWidth w, Typeable w, PD.Pretty (i ()))
-               => M.Map (RelAddress w) SymbolicAddress
+               => M.Map (ConcreteAddress w) SymbolicAddress
                -> (ConcreteBlock i w, SymbolicAddress)
                -> RewriterT i a w m (ConcreteBlock i w, SymbolicBlock i a w)
 symbolizeJumps symAddrMap (cb, symAddr) = do

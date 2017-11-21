@@ -59,8 +59,8 @@ deriving instance (Ord (a 32), Ord (a 64)) => Ord (SomeAddr a)
 deriving instance (Show (a 32), Show (a 64)) => Show (SomeAddr a)
 
 
-type SymbolMap     w = Map (RelAddress w) B.ByteString
-type NewSymbolsMap w = Map (RelAddress w) (RelAddress w, B.ByteString)
+type SymbolMap     w = Map (ConcreteAddress w) B.ByteString
+type NewSymbolsMap w = Map (ConcreteAddress w) (ConcreteAddress w, B.ByteString)
 
 data RewriterEnv i t w = RewriterEnv
   { reISA       :: !(ISA i t w)

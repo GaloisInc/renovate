@@ -7,37 +7,37 @@ module Renovate.Redirect (
   ConcreteBlock,
   SymbolicBlock,
   BasicBlock(..),
-  RelAddress,
+  ConcreteAddress,
   SymbolicAddress,
   TaggedInstruction
   ) where
 
-import GHC.TypeLits ( KnownNat )
+import           GHC.TypeLits ( KnownNat )
 
-import Control.Arrow ( (***) )
+import           Control.Arrow ( (***) )
 import qualified Control.Monad.Catch as E
-import Control.Monad.Trans ( lift )
+import           Control.Monad.Trans ( lift )
 import           Data.Maybe ( catMaybes )
 import qualified Data.Foldable as F
 import qualified Data.List as L
-import Data.Ord ( comparing )
+import           Data.Ord ( comparing )
 import qualified Data.Traversable as T
-import Data.Typeable ( Typeable )
+import           Data.Typeable ( Typeable )
 
-import Prelude
+import           Prelude
 
 import qualified Data.Macaw.Memory as MM
 
-import Renovate.Address
-import Renovate.BasicBlock
-import Renovate.ISA
-import Renovate.Redirect.Concretize
-import Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
-                                            , Status(..)
-                                            , LayoutPair(..) )
-import Renovate.Redirect.Symbolize
-import Renovate.Redirect.Internal
-import Renovate.Redirect.Monad
+import           Renovate.Address
+import           Renovate.BasicBlock
+import           Renovate.ISA
+import           Renovate.Redirect.Concretize
+import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
+                                                      , Status(..)
+                                                      , LayoutPair(..) )
+import           Renovate.Redirect.Symbolize
+import           Renovate.Redirect.Internal
+import           Renovate.Redirect.Monad
 
 -- import qualified Data.Text.Prettyprint.Doc as PD
 -- import Debug.Trace
@@ -58,16 +58,16 @@ import Renovate.Redirect.Monad
 redirect :: (Monad m, InstructionConstraints i a, KnownNat w, MM.MemWidth w, Typeable w)
          => ISA i a w
          -- ^ Information about the ISA in use
-         -> RelAddress w
+         -> ConcreteAddress w
          -- ^ start of text section
-         -> RelAddress w
+         -> ConcreteAddress w
          -- ^ end of text section
          -> (SymbolicBlock i a w -> m (Maybe [TaggedInstruction i a]))
          -- ^ Instrumentor
          -> MM.Memory w
          -- ^ The memory space
          -> LayoutStrategy
-         -> RelAddress w
+         -> ConcreteAddress w
          -- ^ The start address for the copied blocks
          -> [ConcreteBlock i w]
          -- ^ The original basic blocks

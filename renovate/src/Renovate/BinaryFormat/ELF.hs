@@ -56,10 +56,8 @@ import           Text.Printf ( printf )
 import           Prelude
 
 import qualified Data.ElfEdit as E
-import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.Memory.ElfLoader as MM
-import qualified Data.Macaw.Types as MM
 import qualified Data.Parameterized.Classes as PC
 import qualified Data.Parameterized.NatRepr as NR
 
@@ -307,18 +305,18 @@ doRewrite cfg mem strat = do
   -- (overwrittenBytes) and the contents of the new code segment
   -- (instrumentedBytes), which will be placed at the address computed
   -- above.
-  let -- FIXME: Find a real segment index here
-      layoutAddr = RA.firstRelAddress 80 (fromIntegral nextSegmentAddress)
-      dataAddr = RA.firstRelAddress 81 (fromIntegral newDataSectionBase)
-      Just textSectionStartAddr = MM.resolveAbsoluteAddr mem (fromIntegral (E.elfSectionAddr textSection))
-      Just textSectionEndAddr   = MM.incSegmentOff textSectionStartAddr (fromIntegral ((E.elfSectionSize textSection)))
+  let layoutAddr = RA.concreteFromAbsolute (fromIntegral nextSegmentAddress)
+      dataAddr = RA.concreteFromAbsolute (fromIntegral newDataSectionBase)
+      textSectionStartAddr = RA.concreteFromAbsolute (fromIntegral (E.elfSectionAddr textSection))
+      textSectionEndAddr = RA.addressAddOffset mem textSectionStartAddr (fromIntegral ((E.elfSectionSize textSection)))
+      Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
 
   ( analysisResult
     , overwrittenBytes
     , instrumentedBytes
     , mNewData
     , newSyms ) <- instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr
-                                       (E.elfSectionData textSection) entryPoint strat layoutAddr dataAddr symmap
+                                       (E.elfSectionData textSection) concEntryPoint strat layoutAddr dataAddr symmap
 
   (extraTextSecIdx, instrumentationSeg) <- withCurrentELF (newInstrumentationSegment nextSegmentAddress instrumentedBytes)
 
@@ -377,7 +375,7 @@ buildSymbolMap :: Integral (E.ElfWordType w)
                => MM.Memory w
                -> E.Elf w
                -> ElfRewriter w (RM.SymbolMap w)
-buildSymbolMap mem elf = do
+buildSymbolMap _mem elf = do
   case filter isSymbolTable (F.toList (E._elfFileData elf)) of
     [E.ElfDataSymtab table] -> do
       let entries = catMaybes (map mkPair (F.toList (E.elfSymbolTableEntries table)))
@@ -385,9 +383,10 @@ buildSymbolMap mem elf = do
     -- TODO: can there be more than 1 symbol table?
     _ -> return mempty
   where
-  mkPair e = case MM.resolveAbsoluteAddr mem (fromIntegral (E.steValue e)) of
-    Just addr | E.steType e == E.STT_FUNC -> Just (RA.relFromSegmentOff mem addr, E.steName e)
-    _ -> Nothing
+    mkPair e
+      | let addr = RA.concreteFromAbsolute (fromIntegral (E.steValue e))
+      , E.steType e == E.STT_FUNC = Just (addr, E.steName e)
+      | otherwise = Nothing
 
 isSymbolTable :: E.ElfDataRegion w -> Bool
 isSymbolTable (E.ElfDataSymtab{}) = True
@@ -396,7 +395,7 @@ isSymbolTable _                   = False
 buildNewSymbolTable :: (E.ElfWidthConstraints w, MM.MemWidth w)
                     => Word16
                     -> E.ElfSectionIndex
-                    -> RA.RelAddress w
+                    -> RA.ConcreteAddress w
                     -> RM.NewSymbolsMap w
                     -> E.ElfSymbolTable (E.ElfWordType w)
                     -- ^ The original symbol table
@@ -425,9 +424,9 @@ newFromEntry :: MM.MemWidth w
              => E.ElfWidthConstraints w
              => Word16
              -> E.ElfSectionIndex
-             -> RA.RelAddress w
+             -> RA.ConcreteAddress w
              -> E.ElfSymbolTableEntry (E.ElfWordType w)
-             -> RA.RelAddress w
+             -> RA.ConcreteAddress w
              -> B.ByteString
              -> E.ElfSymbolTableEntry (E.ElfWordType w)
 newFromEntry textSecIdx extraTextSecIdx layoutAddr e addr nm = e
@@ -734,39 +733,36 @@ instrumentTextSection :: forall i a w arch b
                        . (ISA.InstructionConstraints i a,
                           Typeable w,
                           KnownNat w,
-                          w ~ MM.RegAddrWidth (MM.ArchReg arch),
-                          MM.PrettyF (MM.ArchStmt arch),
-                          MM.ArchConstraints arch,
-                          MM.RegisterInfo (MM.ArchReg arch),
-                          MM.HasRepr (MM.ArchReg arch) MM.TypeRepr,
-                          Show (MM.ArchReg arch (MM.BVType (MM.ArchAddrWidth arch))),
-                          MM.MemWidth w)
+                          R.ArchBits arch w)
                       => RenovateConfig i a w arch b
                       -> MM.Memory w
                       -- ^ The memory space
-                      -> MM.MemSegmentOff w
+                      -> RA.ConcreteAddress w
                       -- ^ The address of the start of the text section
-                      -> MM.MemSegmentOff w
+                      -> RA.ConcreteAddress w
                       -- ^ The address of the end of the text section
                       -> B.ByteString
                       -- ^ The bytes of the text section
-                      -> MM.MemSegmentOff w
+                      -> RA.ConcreteAddress w
                       -- ^ The entry point in the text section
                       -> RE.LayoutStrategy
                       -- ^ The strategy to use for laying out instrumented blocks
-                      -> RA.RelAddress w
+                      -> RA.ConcreteAddress w
                       -- ^ The address to lay out the instrumented blocks
-                      -> RA.RelAddress w
+                      -> RA.ConcreteAddress w
                       -- ^ The address to lay out the new data section
                       -> RM.SymbolMap w
                       -- ^ meta data?
                       -> ElfRewriter w (b, B.ByteString, B.ByteString, Maybe B.ByteString, RM.NewSymbolsMap w)
 instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes entryPoint strat layoutAddr newGlobalBase symmap = do
+  -- We use an irrefutable match on the entry point -- we are asserting that the
+  -- entry point is mapped in the 'MM.Memory' object passed in.
+  let Just entrySegOff = RA.concreteAsSegmentOff mem entryPoint
   traceM ("instrumentTextSection entry point: " ++ show entryPoint)
-  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
+  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entrySegOff)
   let isa = rcISA cfg
       archInfo = rcArchInfo cfg
-  case R.recoverBlocks isa (rcDisassembler cfg) archInfo mem (entryPoint NEL.:| []) of
+  case R.recoverBlocks isa (rcDisassembler cfg) archInfo mem (entrySegOff NEL.:| []) of
     (Left exn1, diags1) -> do
       riBlockRecoveryDiagnostics L..= diags1
       C.throwM (BlockRecoveryFailure exn1 diags1)
@@ -782,10 +778,10 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
         RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } ->
           let analysisResult = analysis isa mem blockInfo in
           case RW.runRewriteM mem
-                              (RA.relFromSegmentOff mem entryPoint)
+                              entryPoint
                               newGlobalBase
                               cfgs
-                              (RE.redirect isa textStart textEnd (rewriter analysisResult isa mem) mem strat layoutAddr blocks symmap)
+                              (RE.redirect isa textSectionStartAddr textSectionEndAddr (rewriter analysisResult isa mem) mem strat layoutAddr blocks symmap)
           of
             ((Left exn2, _newSyms, diags2), _info) -> do
               riRedirectionDiagnostics L..= diags2
@@ -799,21 +795,12 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
                   (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks
                   let newDataBytes = mkNewDataSection newGlobalBase info
                   return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
-      where
-      textStart  = RA.relFromSegmentOff mem textSectionStartAddr
-      textEnd    = RA.relFromSegmentOff mem textSectionEndAddr
 
 analyzeTextSection :: forall i a w arch b
                     . (ISA.InstructionConstraints i a,
                        Typeable w,
                        KnownNat w,
-                       w ~ MM.RegAddrWidth (MM.ArchReg arch),
-                       MM.PrettyF (MM.ArchStmt arch),
-                       MM.ArchConstraints arch,
-                       MM.RegisterInfo (MM.ArchReg arch),
-                       MM.HasRepr (MM.ArchReg arch) MM.TypeRepr,
-                       Show (MM.ArchReg arch (MM.BVType (MM.ArchAddrWidth arch))),
-                       MM.MemWidth w)
+                       R.ArchBits arch w)
                    => RenovateConfig i a w arch b
                    -> MM.Memory w
                    -- ^ The memory space
@@ -836,7 +823,7 @@ analyzeTextSection cfg mem entryPoint = do
       riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
       return $! (rcAnalysis cfg) isa mem blockInfo
 
-mkNewDataSection :: (MM.MemWidth w) => RA.RelAddress w -> RW.RewriteInfo w -> Maybe B.ByteString
+mkNewDataSection :: (MM.MemWidth w) => RA.ConcreteAddress w -> RW.RewriteInfo w -> Maybe B.ByteString
 mkNewDataSection baseAddr info = do
   guard (bytes > 0)
   return (B.pack (replicate bytes 0))

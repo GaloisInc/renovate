@@ -41,7 +41,7 @@ type Value = D.Value
 -- | The target address of a jump.  This is used as the annotation
 -- type for symbolic instructions.
 data TargetAddress w = NoAddress
-                     | AbsoluteAddress (RelAddress w)
+                     | AbsoluteAddress (ConcreteAddress w)
                      deriving (Eq, Ord, Show)
 
 -- | The type of an operand with an annotation

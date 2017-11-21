@@ -66,7 +66,7 @@ isa =
 -- Fortunately, all of the conditional jumps start with 'j', and no
 -- other instructions start with 'j'.  This lets us have an easy case
 -- to handle all of them.
-x64JumpType :: (MM.MemWidth w) => Instruction t -> MM.Memory w -> RelAddress w -> JumpType w
+x64JumpType :: (MM.MemWidth w) => Instruction t -> MM.Memory w -> ConcreteAddress w -> JumpType w
 x64JumpType xi@(XI ii) _mem addr =
   case (D.iiOp ii, map (fst . aoOperand) (D.iiArgs ii)) of
     ("jmp", [D.JumpOffset _ off]) -> RelativeJump Unconditional addr (fixJumpOffset sz off)
@@ -109,7 +109,7 @@ fixJumpOffset sz off = fromIntegral (off + fromIntegral sz)
 -- +/- 2GB.
 --
 -- See Note [RelativeJump]
-x64MakeRelativeJumpTo :: (MM.MemWidth w) => RelAddress w -> RelAddress w -> [Instruction ()]
+x64MakeRelativeJumpTo :: (MM.MemWidth w) => ConcreteAddress w -> ConcreteAddress w -> [Instruction ()]
 x64MakeRelativeJumpTo srcAddr targetAddr
   | abs jmpOffset > i32Max =
     L.error ("Relative branch is out of range: from " ++ show srcAddr ++
@@ -147,7 +147,7 @@ x64MakeSymbolicJump sa = [tagInstruction (Just sa) i]
     i = annotateInstr (makeInstr "jmp" [off]) NoAddress
     off = D.JumpOffset D.ZSize 0
 
-x64ModifyJumpTarget :: (MM.MemWidth w) => Instruction () -> RelAddress w -> RelAddress w -> Maybe [Instruction ()]
+x64ModifyJumpTarget :: (MM.MemWidth w) => Instruction () -> ConcreteAddress w -> ConcreteAddress w -> Maybe [Instruction ()]
 x64ModifyJumpTarget (XI ii) srcAddr targetAddr
   | abs jmpOffset > i32Max =
     L.error ("Relative branch is out of range: from " ++ show srcAddr ++
@@ -220,7 +220,7 @@ addrRefToAddress f v =
     D.FPMem80 a -> f a
     _ -> NoAddress
 
-ripToAbs :: (MM.MemWidth w) => MM.Memory w -> RelAddress w -> Instruction () -> D.AddrRef -> TargetAddress w
+ripToAbs :: (MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> Instruction () -> D.AddrRef -> TargetAddress w
 ripToAbs mem iStartAddr i ref =
   case ref of
     D.IP_Offset_32 _seg disp -> absoluteDisplacement mem iEndAddr disp
@@ -230,7 +230,7 @@ ripToAbs mem iStartAddr i ref =
     addOff   = addressAddOffset mem
     iEndAddr = iStartAddr `addOff` fromIntegral (x64Size i)
 
-absoluteDisplacement :: (MM.MemWidth w) => MM.Memory w -> RelAddress w -> D.Displacement -> TargetAddress w
+absoluteDisplacement :: (MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> D.Displacement -> TargetAddress w
 absoluteDisplacement mem endAddr disp =
   case disp of
     D.NoDisplacement -> L.error "Unexpected NoDisplacement"
@@ -240,11 +240,11 @@ absoluteDisplacement mem endAddr disp =
   addOff = addressAddOffset mem
 
 -- Needs to convert all Disp8 IP relative references to Disp32
-x64SymbolizeAddresses :: (MM.MemWidth w) => MM.Memory w -> RelAddress w -> Instruction () -> Instruction (TargetAddress w)
+x64SymbolizeAddresses :: (MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> Instruction () -> Instruction (TargetAddress w)
 x64SymbolizeAddresses mem insnAddr xi@(XI ii) =
   XI (ii { D.iiArgs = fmap (saveAbsoluteRipAddresses mem insnAddr xi) (D.iiArgs ii) })
 
-saveAbsoluteRipAddresses :: (MM.MemWidth w) => MM.Memory w -> RelAddress w -> Instruction () -> AnnotatedOperand () -> AnnotatedOperand (TargetAddress w)
+saveAbsoluteRipAddresses :: (MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> Instruction () -> AnnotatedOperand () -> AnnotatedOperand (TargetAddress w)
 saveAbsoluteRipAddresses mem insnAddr i AnnotatedOperand { aoOperand = (v, ty) } =
   AnnotatedOperand { aoOperand = (I.runIdentity (mapAddrRef promoteRipDisp8 I.Identity v), ty)
                    , aoAnnotation = addrRefToAddress (ripToAbs mem insnAddr i) v
@@ -257,13 +257,13 @@ promoteRipDisp8 ref =
     D.IP_Offset_64 seg (D.Disp8 d) -> I.Identity $ D.IP_Offset_64 seg (D.Disp32 (fromIntegral d))
     _ -> I.Identity ref
 
-x64ConcretizeAddresses :: (L.HasCallStack, MM.MemWidth w) => MM.Memory w -> RelAddress w -> Instruction (TargetAddress w) -> Instruction ()
+x64ConcretizeAddresses :: (L.HasCallStack, MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> Instruction (TargetAddress w) -> Instruction ()
 x64ConcretizeAddresses mem insnAddr xi@(XI ii) =
   XI $ ii { D.iiArgs = fmap (fixRipRelAddresses mem insnAddr xi) (D.iiArgs ii) }
 
 fixRipRelAddresses :: (L.HasCallStack, MM.MemWidth w)
                    => MM.Memory w
-                   -> RelAddress w
+                   -> ConcreteAddress w
                    -> Instruction (TargetAddress w)
                    -> AnnotatedOperand (TargetAddress w)
                    -> AnnotatedOperand ()
@@ -294,9 +294,9 @@ mapAddrRef f ifNotMem v =
 -- FIXME: Guard these arithmetic operations from overflows
 absToRip :: (MM.MemWidth w)
          => MM.Memory w
-         -> RelAddress w
+         -> ConcreteAddress w
          -> Instruction (TargetAddress w)
-         -> RelAddress w
+         -> ConcreteAddress w
          -> D.AddrRef
          -> Maybe D.AddrRef
 absToRip mem iStartAddr i a ref =

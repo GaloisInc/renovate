@@ -19,6 +19,7 @@ import qualified Data.ByteString as B
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Foldable as F
 import qualified Data.Map as M
+import           Data.Maybe ( catMaybes, mapMaybe )
 import qualified Data.Set as S
 
 import qualified Data.Macaw.Architecture.Info as MC
@@ -34,20 +35,18 @@ import           Renovate.ISA
 import           Renovate.Recovery.Monad
 
 type ArchBits arch w = (w ~ MC.RegAddrWidth (MC.ArchReg arch),
-                  MC.PrettyF (MC.ArchStmt arch),
-                  MC.ArchConstraints arch,
-                  MC.RegisterInfo (MC.ArchReg arch),
-                  MC.HasRepr (MC.ArchReg arch) MC.TypeRepr,
-                  MC.MemWidth w,
-                  -- MC.PrettyCFGConstraints arch,
-                  Show (MC.ArchReg arch (MC.BVType (MC.ArchAddrWidth arch))))
+                        MC.ArchConstraints arch,
+                        MC.RegisterInfo (MC.ArchReg arch),
+                        MC.HasRepr (MC.ArchReg arch) MC.TypeRepr,
+                        MC.MemWidth w,
+                        Show (MC.ArchReg arch (MC.BVType (MC.ArchAddrWidth arch))))
 
 -- | Information on recovered basic blocks
 data BlockInfo i w arch = BlockInfo
   { biBlocks           :: [ConcreteBlock i w]
-  , biFunctionEntries  :: [RelAddress w]
-  , biFunctionBlocks   :: M.Map (RelAddress w) [ConcreteBlock i w]
-  , biDiscoveryFunInfo :: M.Map (RelAddress w) (PU.Some (MC.DiscoveryFunInfo arch))
+  , biFunctionEntries  :: [ConcreteAddress w]
+  , biFunctionBlocks   :: M.Map (ConcreteAddress w) [ConcreteBlock i w]
+  , biDiscoveryFunInfo :: M.Map (ConcreteAddress w) (PU.Some (MC.DiscoveryFunInfo arch))
   }
 
 recoverBlocks :: (ArchBits arch w)
@@ -70,16 +69,19 @@ recoverBlocks isa dis1 archInfo mem entries = runRecovery isa dis1 mem $ do
        funcEntries = [ MC.discoveredFunAddr dfi
                      | PU.Some dfi <- MC.exploredFunctions di
                      ]
-       infos = M.mapKeys (relFromSegmentOff mem) (di L.^. MC.funInfo)
+       infos = M.fromList [ (concAddr, val)
+                          | (segOff, val) <- M.toList (di L.^. MC.funInfo)
+                          , Just concAddr <- return (concreteFromSegmentOff mem segOff)
+                          ]
    -- traceM ("unexplored functions: " ++ show (di L.^. MC.unexploredFunctions))
    -- traceM ("explored functions: " ++ show [pretty i | PU.Some i <- MC.exploredFunctions di])
    -- traceM ("Discovered block starts: " ++ show absoluteBlockStarts)
-   blocks <- mapM (buildBlock isa dis1 mem (S.map (relFromSegmentOff mem) absoluteBlockStarts))
-                  (F.toList absoluteBlockStarts)
+   blocks <- catMaybes <$> mapM (buildBlock isa dis1 mem (S.fromList (mapMaybe (concreteFromSegmentOff mem) (F.toList absoluteBlockStarts))))
+                                (F.toList absoluteBlockStarts)
    let funcBlocks        = foldr insertBlocks M.empty blocks
        insertBlocks cb m = M.adjust (cb:) (basicBlockAddress cb) m
    return BlockInfo { biBlocks           = blocks
-                    , biFunctionEntries  = map (relFromSegmentOff mem) funcEntries
+                    , biFunctionEntries  = mapMaybe (concreteFromSegmentOff mem) funcEntries
                     , biFunctionBlocks   = funcBlocks
                     , biDiscoveryFunInfo = infos
                     }
@@ -97,20 +99,21 @@ buildBlock :: (L.HasCallStack, MC.MemWidth w)
            -- byte stream; it returns the number of bytes consumed and
            -- the new instruction.
            -> MC.Memory w
-           -> S.Set (RelAddress w)
+           -> S.Set (ConcreteAddress w)
            -- ^ The set of all basic block entry points
            -> MC.MemSegmentOff w
            -- ^ The address to start disassembling this block from
-           -> Recovery i a w (ConcreteBlock i w)
-buildBlock isa dis1 mem absStarts segAddr = do
-  case MC.addrContentsAfter mem (MC.relativeSegmentAddr segAddr) of
-    Left err -> C.throwM (MemoryError err)
-    Right [MC.ByteRegion bs] -> go blockAbsAddr bs []
-    _ -> C.throwM (NoByteRegionAtAddress (MC.relativeSegmentAddr segAddr))
+           -> Recovery i a w (Maybe (ConcreteBlock i w))
+buildBlock isa dis1 mem absStarts segAddr
+  | Just concAddr <- concreteFromSegmentOff mem segAddr = do
+      case MC.addrContentsAfter mem (MC.relativeSegmentAddr segAddr) of
+        Left err -> C.throwM (MemoryError err)
+        Right [MC.ByteRegion bs] -> Just <$> go concAddr concAddr bs []
+        _ -> C.throwM (NoByteRegionAtAddress (MC.relativeSegmentAddr segAddr))
+  | otherwise = return Nothing
   where
     addOff       = addressAddOffset  mem
-    blockAbsAddr = relFromSegmentOff mem segAddr
-    go insnAddr bs insns = do
+    go blockAbsAddr insnAddr bs insns = do
       case dis1 bs of
         -- Actually, we should probably never hit this case.  We
         -- should have hit a terminator instruction or end of block
@@ -129,7 +132,7 @@ buildBlock isa dis1 mem absStarts segAddr = do
                               }
 
           -- Otherwise, we just keep decoding
-          | otherwise -> go (insnAddr `addOff` fromIntegral bytesRead) (B.drop bytesRead bs) (i : insns)
+          | otherwise -> go blockAbsAddr (insnAddr `addOff` fromIntegral bytesRead) (B.drop bytesRead bs) (i : insns)
 
 
 {- Note [Unaligned Instructions]

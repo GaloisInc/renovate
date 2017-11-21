@@ -26,6 +26,7 @@ import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Lazy as L
 import qualified Data.List as L
 import           Data.Monoid
+import qualified Data.Text.Prettyprint.Doc as PD
 import qualified Data.Traversable as T
 import           Data.Typeable ( Typeable )
 
@@ -37,7 +38,6 @@ import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
 
-import qualified Data.Text.Prettyprint.Doc as PD
 
 -- import Debug.Trace
 
@@ -87,24 +87,22 @@ instance C.Exception BlockAssemblyException
 assembleBlocks :: (L.HasCallStack, C.MonadThrow m, InstructionConstraints i a, MM.MemWidth w)
                => MM.Memory w
                -> ISA i a w
-               -> MM.MemSegmentOff w
+               -> ConcreteAddress w
                -- ^ The address of the start of the text section
-               -> MM.MemSegmentOff w
+               -> ConcreteAddress w
                -- ^ The address of the end of the text section
                -> B.ByteString
                -- ^ The original text section contents
-               -> RelAddress w
+               -> ConcreteAddress w
                -- ^ The address to start laying out extra blocks at
                -> (forall m' . (C.MonadThrow m') => i () -> m' B.ByteString)
                -- ^ A function to assemble a single instruction to bytes
                -> [ConcreteBlock i w]
                -> m (B.ByteString, B.ByteString)
-assembleBlocks mem isa textSecStart textSecEnd origTextBytes extraAddr assemble blocks = do
+assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble blocks = do
   s1 <- St.execStateT (unA assembleDriver) s0
   return (fromBuilder (asTextSection s1), fromBuilder (asExtraText s1))
   where
-    absStartAddr = relFromSegmentOff mem textSecStart
-    absEndAddr   = relFromSegmentOff mem textSecEnd
     s0 = AssembleState { asTextStart        = absStartAddr
                        , asTextEnd          = absEndAddr
                        , asTextAddr         = absStartAddr
@@ -295,7 +293,7 @@ lookupOverlappingBlocks b = do
       blockEnd  = basicBlockAddress b `addOff` fromIntegral blockSize
   go isa blockEnd (basicBlockAddress b `addOff` fromIntegral jumpSize)
   where
-    go :: ISA i a w -> RelAddress w -> RelAddress w -> Assembler i a w m [ConcreteBlock i w]
+    go :: ISA i a w -> ConcreteAddress w -> ConcreteAddress w -> Assembler i a w m [ConcreteBlock i w]
     go isa blockEnd nextAllowableAddress = do
       mem <- St.gets asMemory
       mb' <- takeNextOrigBlock
@@ -440,18 +438,18 @@ newtype Assembler i a w m a' = Assembler { unA :: St.StateT (AssembleState i a w
                                      St.MonadState (AssembleState i a w) )
 
 data AssembleState i a w =
-  AssembleState { asTextStart :: RelAddress w
+  AssembleState { asTextStart :: ConcreteAddress w
                 -- ^ The starting address of the text section
-                , asTextEnd   :: RelAddress w
+                , asTextEnd   :: ConcreteAddress w
                 -- ^ The ending address of the text section
-                , asTextAddr :: !(RelAddress w)
+                , asTextAddr :: !(ConcreteAddress w)
                 -- ^ The next address to fill in the text section builder
                 , asTextSection :: !B.Builder
                 -- ^ The text section we are building up out of new blocks and
                 -- data pulled from the original text section
-                , asExtraStart :: RelAddress w
+                , asExtraStart :: ConcreteAddress w
                 -- ^ The start of the extra text section
-                , asExtraAddr :: !(RelAddress w)
+                , asExtraAddr :: !(ConcreteAddress w)
                 -- ^ The address for blocks that end up in the extra section.
                 -- We keep this around to perform consistency checks (i.e., to
                 -- ensure that the blocks are really contiguous).

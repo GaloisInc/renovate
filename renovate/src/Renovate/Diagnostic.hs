@@ -7,20 +7,18 @@ module Renovate.Diagnostic
 )
 where
 
-import qualified Data.Macaw.Memory as MC
-
 import qualified Control.Monad.Catch as E
-
 import qualified Data.Sequence as Seq
 import           Data.Typeable ( Typeable )
-
 import           Data.Word ( Word64 )
+
+import qualified Data.Macaw.Memory as MC
 
 import           Renovate.Address
 
 -- | The types of diagnostic messages that can be generated during rewriting or
 -- recovery.
-data Diagnostic = forall w. MC.MemWidth w => NoSymbolicAddressForTarget (RelAddress w) String
+data Diagnostic = forall w. MC.MemWidth w => NoSymbolicAddressForTarget (ConcreteAddress w) String
                   -- ^ A concrete address was expected to have a
                   -- symbolic equivalent, but it did not.  The string
                   -- describes the context in which the address was
@@ -29,7 +27,7 @@ data Diagnostic = forall w. MC.MemWidth w => NoSymbolicAddressForTarget (RelAddr
                 | NoConcreteAddressForSymbolicTarget !SymbolicAddress String
                 | forall w. MC.MemWidth w => BlockTooSmallForRedirection
                     !Word64{- block size-} !Word64{- jump instr size -}
-                    (RelAddress w){- address of block-} !String{- show of block-}
+                    (ConcreteAddress w){- address of block-} !String{- show of block-}
                   -- ^ The 'BasicBlock' at 'Address' is too small to
                   -- be redirected, because its size is larger than
                   -- the size of a jump instruction.

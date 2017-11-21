@@ -32,14 +32,14 @@ import           Renovate.Redirect.LayoutBlocks.Types
 -- the heap is based on the size of the chunk of memory at each address.  The
 -- sizes are stored as negative values so that taking the minimum element of the
 -- heap yields the region with the largest amount of space left.
-type AddressHeap w = H.Heap (H.Entry (Down Int) (RelAddress w))
+type AddressHeap w = H.Heap (H.Entry (Down Int) (ConcreteAddress w))
 
 -- | Compute a concrete address for each 'SymbolicBlock'.
 --
 -- Right now, we use an inefficient encoding of jumps.  We could do
 -- better later on.
 compactLayout :: (Monad m, T.Traversable t, InstructionConstraints i a, MM.MemWidth w)
-              => RelAddress w
+              => ConcreteAddress w
               -- ^ Address to begin block layout of instrumented blocks
               -> LayoutStrategy
               -> t (SymbolicPair i a w)
@@ -97,8 +97,8 @@ compactLayout startAddr strat blocks = do
 --
 -- Every symbolic block is assumed to have been assigned an address at this
 -- point.
-assignConcreteAddress :: (Monad m)
-                      => M.Map (SymbolicInfo w) (RelAddress w)
+assignConcreteAddress :: (Monad m, MM.MemWidth w)
+                      => M.Map (SymbolicInfo w) (ConcreteAddress w)
                       -> SymbolicPair i a w
                       -> RewriterT i a w m (AddressAssignedPair i a w)
 assignConcreteAddress assignedAddrs (LayoutPair cb sb Modified) = do
@@ -111,10 +111,10 @@ assignConcreteAddress _ (LayoutPair cb sb Unmodified) =
   return (LayoutPair cb (AddressAssignedBlock sb (basicBlockAddress cb)) Unmodified)
 
 allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth w)
-                               => RelAddress w
+                               => ConcreteAddress w
                                -> AddressHeap w
                                -> [SymbolicBlock i a w]
-                               -> RewriterT i a w m (M.Map (SymbolicInfo w) (RelAddress w))
+                               -> RewriterT i a w m (M.Map (SymbolicInfo w) (ConcreteAddress w))
 allocateSymbolicBlockAddresses startAddr h0 blocksBySize = do
   isa <- askISA
   mem <- askMem
@@ -134,9 +134,9 @@ allocateSymbolicBlockAddresses startAddr h0 blocksBySize = do
 allocateBlockAddress :: (MM.MemWidth w)
                      => ISA i a w
                      -> MM.Memory w
-                     -> (RelAddress w, AddressHeap w, M.Map (SymbolicInfo w) (RelAddress w))
+                     -> (ConcreteAddress w, AddressHeap w, M.Map (SymbolicInfo w) (ConcreteAddress w))
                      -> SymbolicBlock i a w
-                     -> (RelAddress w, AddressHeap w, M.Map (SymbolicInfo w) (RelAddress w))
+                     -> (ConcreteAddress w, AddressHeap w, M.Map (SymbolicInfo w) (ConcreteAddress w))
 allocateBlockAddress isa mem (newTextAddr, h, m) sb =
   case H.viewMin h of
     Nothing -> allocateNewTextAddr
@@ -217,7 +217,7 @@ addExplicitFallthrough mem symSucIdx pair@(LayoutPair cb sb Modified) = do
     isUnconditional (IndirectJump Conditional      ) = False
     isUnconditional (AbsoluteJump Conditional _    ) = False
     isUnconditional (RelativeJump Conditional _ _  ) = False
-    fakeAddress = firstRelAddress 0 0
+    fakeAddress = concreteFromAbsolute 0
     lastInsn
       | null (basicBlockInstructions sb) = L.error (printf "Empty block for symbolic block %s (derived from block %s)"
                                                            (show (basicBlockAddress sb))
@@ -242,7 +242,7 @@ appendUnconditionalJump isa symSucIdx cb sb =
 
 
 buildAddressHeap :: (MM.MemWidth w, Foldable t, Monad m)
-                 => RelAddress w
+                 => ConcreteAddress w
                  -> t (ConcreteBlock i w)
                  -> RewriterT i a w m (AddressHeap w)
 buildAddressHeap startAddr blocks = do

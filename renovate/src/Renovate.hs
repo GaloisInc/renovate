@@ -42,10 +42,11 @@ module Renovate
   B.projectInstruction,
   -- * Addresses
   A.SymbolicAddress,
-  A.RelAddress,
+  A.ConcreteAddress,
   A.absoluteAddress,
-  A.relFromSegmentOff,
-  A.firstRelAddress,
+  A.concreteFromSegmentOff,
+  A.concreteAsSegmentOff,
+  A.concreteFromAbsolute,
   A.addressAddOffset,
   A.addressDiff,
   -- * Analysis

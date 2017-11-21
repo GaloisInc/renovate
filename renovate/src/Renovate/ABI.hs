@@ -31,24 +31,24 @@ data ABI i a r w =
       , clearRegister :: r -> i a
       -- ^ Create an instruction to clear a register (i.e., set it to
       -- zero or some other distinguished neutral value).
-      , allocateMemory :: Word32 -> RelAddress w -> [i a]
+      , allocateMemory :: Word32 -> ConcreteAddress w -> [i a]
       -- ^ Generate a list of instructions that allocate a known (at
       -- rewriting time) number of bytes in the heap and store the
       -- address of the allocated memory block in the provided
       -- address.
-      , computeStackPointerOffset :: RelAddress w -> [i a]
+      , computeStackPointerOffset :: ConcreteAddress w -> [i a]
       -- ^ Take the value at the address and subtract the stack
       -- pointer from it, storing the result back in the given
       -- address.  It changes the type of the value at the address
       -- from a pointer to an offset from the stack pointer.
-      , saveReturnAddress :: RelAddress w -> [i a]
+      , saveReturnAddress :: ConcreteAddress w -> [i a]
       -- ^ Save the return address at an offset from its location on
       -- the stack.  The offset is held in the memory address provided
       -- as the first argument.  Note that this must be installed as
       -- the first code in the function entry, otherwise it will store
       -- garbage.  That restriction could be relaxed if we had frame
       -- pointers, but we can't really count on that.
-      , checkShadowStack :: RelAddress w -> [i a]
+      , checkShadowStack :: ConcreteAddress w -> [i a]
       -- ^ Check the value on the shadow stack against the return
       -- address on the top of the stack.  Fault if they differ.  The
       -- offset of the shadow stack from the real stack is stored at

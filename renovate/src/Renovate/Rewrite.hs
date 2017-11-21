@@ -36,21 +36,21 @@ data RewriteSite w =
 data RewriteInfo w =
   RewriteInfo { infoSites :: [RewriteSite w]
               -- ^ A collection of all of the rewritings applied so far
-              , newGlobals :: M.Map String (A.RelAddress w)
+              , newGlobals :: M.Map String (A.ConcreteAddress w)
               -- ^ A mapping of names to globals allocated in a new data
               -- section.  The names are user-provided and must be unique.
-              , nextGlobalAddress :: A.RelAddress w
+              , nextGlobalAddress :: A.ConcreteAddress w
               -- ^ The next address that will be handed out for a new global
               -- variable.
               }
 
 data RewriteEnv i w =
-  RewriteEnv { envCFGs :: M.Map (A.RelAddress w) (FR.FunctionCFG i w)
+  RewriteEnv { envCFGs :: M.Map (A.ConcreteAddress w) (FR.FunctionCFG i w)
              -- ^ A map of function entry point addresses to CFGs
-             , envBlockCFGIndex :: M.Map (A.RelAddress w) (FR.FunctionCFG i w)
+             , envBlockCFGIndex :: M.Map (A.ConcreteAddress w) (FR.FunctionCFG i w)
              -- ^ A map of block addresses to the CFG that contains them (if
              -- any)
-             , envEntryAddress :: A.RelAddress w
+             , envEntryAddress :: A.ConcreteAddress w
              , envMemory :: MM.Memory w
              }
 
@@ -65,9 +65,9 @@ newtype RewriteM i w a = RewriteM { unRewriteM :: RWS.RWS (RewriteEnv i w) () (R
 -- | Run rewriting computation and return its value, along with metadata about
 -- transformations applied.
 runRewriteM :: MM.Memory w
-            -> A.RelAddress w
+            -> A.ConcreteAddress w
             -- ^ The address of the entry point of the program
-            -> A.RelAddress w
+            -> A.ConcreteAddress w
             -- ^ The address to start allocating new global variables at
             -> [FR.FunctionCFG i w]
             -- ^ The control flow graphs discovered by previous analysis
@@ -110,7 +110,7 @@ lookupBlockCFG sb = do
   return (M.lookup (B.concreteAddress (B.basicBlockAddress sb)) idx)
 
 -- | Get the address of the entry point of the program
-lookupEntryAddress :: RewriteM i w (A.RelAddress w)
+lookupEntryAddress :: RewriteM i w (A.ConcreteAddress w)
 lookupEntryAddress = RWS.asks envEntryAddress
 
 -- | Allocate space for a global variable (occupying the given number
@@ -119,7 +119,7 @@ lookupEntryAddress = RWS.asks envEntryAddress
 --
 -- FIXME: The caller of runInstrument has to allocate a new data
 -- segment for globals allocated here.
-newGlobalVar :: (MM.MemWidth w) => String -> Word32 -> RewriteM i w (A.RelAddress w)
+newGlobalVar :: (MM.MemWidth w) => String -> Word32 -> RewriteM i w (A.ConcreteAddress w)
 newGlobalVar name size = do
   addr <- RWS.gets nextGlobalAddress
   mem  <- RWS.asks envMemory
@@ -133,7 +133,7 @@ newGlobalVar name size = do
 --
 -- This will fail if the variable was not yet allocated, as that is a
 -- programming error.
-lookupGlobalVar :: String -> RewriteM i w (A.RelAddress w)
+lookupGlobalVar :: String -> RewriteM i w (A.ConcreteAddress w)
 lookupGlobalVar name = do
   m <- RWS.gets newGlobals
   case M.lookup name m of

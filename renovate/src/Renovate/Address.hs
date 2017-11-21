@@ -2,27 +2,24 @@
 {-# LANGUAGE OverloadedStrings #-}
 -- | This module defines opaque concrete and symbolic address types.
 module Renovate.Address (
---  Address(..),
   SymbolicAddress(..),
-  RelAddress,
-  relFromSegmentOff,
-  firstRelAddress,
+  ConcreteAddress,
+  concreteFromSegmentOff,
+  concreteFromAbsolute,
+  concreteAsSegmentOff,
   absoluteAddress,
   addressAddOffset,
   addressDiff
   ) where
 
 import qualified GHC.Err.Located as L
-import           Control.Exception (assert)
 
-import           Data.Int ( Int64 )
-import           Data.Maybe ( fromMaybe )
+import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Word ( Word64 )
 import qualified Numeric as N
 
 import qualified Data.Macaw.Memory as MM
 
-import qualified Data.Text.Prettyprint.Doc as PD
 
 
 -- | Symbolic addresses that can be referenced abstractly and
@@ -34,132 +31,81 @@ newtype SymbolicAddress = SymbolicAddress Word64
 instance PD.Pretty SymbolicAddress where
   pretty (SymbolicAddress a) = "0x" PD.<> PD.pretty (N.showHex a "")
 
--- | Addresses relative to some base segment index
+-- | The type of concrete addresses that can be laid out in memory
 --
--- These addresses have base addresses.  The base address allows for
--- computing the difference between addresses in different segments.
+-- These addresses have a fixed (and shared) base address, from which they are
+-- offset.
 --
--- These addresses differ from SegmentedAddr in that they do not have
--- a reference to an already-constructed Segment, as we might not yet
--- have one.
---
--- FIXME: Can we add a segment type index so that addresses in
--- different segments can't be confused?
-data RelAddress w = RelAddress { relSegment :: MM.SegmentIndex
-                               , relBase :: MM.MemWord w
-                               , relOffset :: MM.MemWord w
-                               }
+-- The current backing representation is 'MM.MemAddr', but with the additional
+-- guarantee that the 'MM.addrBase' is zero (i.e., an "absolute" address).
+-- These addresses are not truly absolute, as they will be relocated when mapped
+-- into memory.  They will, however, remain the same distance from one another.
+-- We can use this representation (as opposed to 'MM.MemSegmentOff') because we
+-- will only ever rewrite single modules (i.e., a single binary or shared
+-- library), and do not need inter-module references.  This representation
+-- discards segment information, which we can recover with a 'MM.Memory' object
+-- and the 'MM.resolveAbsoluteAddr' function.
+newtype ConcreteAddress w = ConcreteAddress (MM.MemAddr w)
   deriving (Eq, Ord, Show)
 
-instance (MM.MemWidth w) => PD.Pretty (RelAddress w) where
-  pretty (RelAddress _seg base off) = "0x" PD.<> PD.pretty (N.showHex (base + off) "")
+instance (MM.MemWidth w) => PD.Pretty (ConcreteAddress w) where
+  pretty (ConcreteAddress memAddr) = PD.pretty (show memAddr)
 
--- | Constructs a canonical RelAddress from a MemSegmentOff.
--- it needs the Memory argument for the canonicalization. We look through
--- the set of available segments to find the closest one and construct
--- the address relative to it.
--- Finally, convert an address in @base + offset@ from macaw ('MM.MemSegmentOff') into
--- our internal representation of addresses
-relFromSegmentOff :: (L.HasCallStack, MM.MemWidth w)
-             => MM.Memory w
-             -> MM.MemSegmentOff w
-             -> RelAddress w
-relFromSegmentOff mem so = case foldr findClosest firstSeg segBaseIdxs of
-  s -> let a  = RelAddress
-                { relSegment = MM.segmentIndex s
-                , relBase    = fromMaybe err $ MM.segmentBase s
-                , relOffset  = off - (fromMaybe err (MM.segmentBase s) - fromMaybe err (MM.segmentBase seg))
-                }
-           -- A fake RelAddress for the assert
-           a' = RelAddress
-                { relSegment = 0
-                , relBase    = base
-                , relOffset  = off
-                }
-       -- Make sure we haven't munged the absolute address
-       in assert (absoluteAddress a == absoluteAddress a') a
-  where
-  firstSeg = case segBaseIdxs of
-             []    -> error "mkRelAddress: No segments"
-             (f:_) -> f
-  (seg,off)    = MM.viewSegmentOff so
-  base         = fromMaybe err $ MM.segmentBase seg
-  addr         = base + off
-  segBaseIdxs  = MM.memSegments mem
-  err          = L.error "mkRelAddress: MemSegmentOffs with no base address cannot be converted to RelAddresses"
-  -- The logic here is:
-  -- if the base we're considering is less than the absolute address of
-  -- the MemSegmentOff (so), but greater than our current closest base
-  -- then update to use the segment. Otherwise, keep the one we have.
-  findClosest s acc | Just bs   <- MM.segmentBase s
-                    , Just bacc <- MM.segmentBase acc
-                    , bs <= addr && bs `isCloserThan` bacc = s
-                    | otherwise                            = acc
-    where
-    x `isCloserThan` y = abs (addr - x) < abs (addr - y)
-
--- | Construct the first 'RelAddress' from a given base and segment
-firstRelAddress :: (MM.MemWidth w) => MM.SegmentIndex -> MM.MemWord w -> RelAddress w
-firstRelAddress segIx base = RelAddress { relSegment = segIx
-                                        , relBase = base
-                                        , relOffset = 0
-                                        }
-
-{-# INLINE absoluteAddress #-}
--- | Convert a 'RelAddress' (which is a segment + offset representation) to an
--- absolute address.
-absoluteAddress :: (MM.MemWidth w) => RelAddress w -> MM.MemWord w
-absoluteAddress a = relBase a + relOffset a
-
--- | Add an offset to an 'Address'
+-- | Construct a 'ConcreteAddress' from a 'MM.MemSegmentOff'
 --
--- It will throw an error if the address underflows and ends up before
--- the base of the segment containing the address.
-addressAddOffset :: (L.HasCallStack, MM.MemWidth w) => MM.Memory w -> RelAddress w -> MM.MemWord w -> RelAddress w
-addressAddOffset mem a offset =
-  case MM.lookupSegment mem (relSegment a) of
-    -- We don't have a segment for this address, so this is likely
-    -- an address into the newly allocated blocks. Just update the offset.
-    Nothing       -> a { relOffset = relOffset a + offset }
-    -- Try to keep the address canonicalized
-    Just firstSeg -> case foldr findClosest firstSeg segBaseIdxs of
-      s -> let base = fromMaybe (relBase a) (MM.segmentBase s)
-               off  = addr - base
-               a'   = RelAddress
-                      { relSegment = MM.segmentIndex s
-                      , relBase    = base
-                      , relOffset  = off
-                      }
-           in assert (absoluteAddress a + offset == absoluteAddress a') a'
-  where
-  addr         = absoluteAddress a + offset
-  segBaseIdxs  = MM.memSegments mem
-  findClosest s acc | Just bs   <- MM.segmentBase s
-                    , Just bacc <- MM.segmentBase acc
-                    , bs <= addr && bs `isCloserThan` bacc = s
-                    | otherwise                            = acc
-    where
-    x `isCloserThan` y = abs (addr - x) < abs (addr - y)
+-- This can fail if the 'MM.MemSegmentOff' is not an absolute address (i.e., it
+-- is a pointer to a location in another module)
+concreteFromSegmentOff :: (L.HasCallStack, MM.MemWidth w)
+                       => MM.Memory w
+                       -> MM.MemSegmentOff w
+                       -> Maybe (ConcreteAddress w)
+concreteFromSegmentOff _mem segOff = do
+  let memAddr = MM.relativeSegmentAddr segOff
+  _ <- MM.asAbsoluteAddr memAddr
+  return (ConcreteAddress memAddr)
 
--- | Compute the difference between two addresses
-addressDiff :: (L.HasCallStack, MM.MemWidth w) => RelAddress w -> RelAddress w -> Int64
-addressDiff a1 a2
-  | offUnsigned > fromIntegral i64Max = L.error $
-    -- Let's just go full diagnostic
-    unlines ["addressDiff: difference too large to fit in an Int64 " ++ show (a1, a2)
-            ,"absoluteAddress a1 = " ++ show aa1
-            ,"absoluteAddress a2 = " ++ show aa2
-            ,"offUnsigned        = " ++ show offUnsigned
-            ,"negate offUnsigned = " ++ show (negate offUnsigned)
-            ,"i64Max             = 0x" ++ N.showHex i64Max ""
-            ]
-  | aa1 > aa2 = fromIntegral offUnsigned
-  | otherwise = negate (fromIntegral offUnsigned)
+concreteAsSegmentOff :: (MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> Maybe (MM.MemSegmentOff w)
+concreteAsSegmentOff mem (ConcreteAddress memAddr) = MM.asSegmentOff mem memAddr
+
+-- | Construct a 'ConcreteAddress' from a concrete address specified as a
+-- 'MM.MemWord'
+--
+-- This always succeeds, as we just treat a number as an absolute address.
+--
+-- This function does not ensure that the address is mapped in the underlying
+-- 'MM.Memory'.
+concreteFromAbsolute :: (MM.MemWidth w)
+                     => MM.MemWord w
+                     -> ConcreteAddress w
+concreteFromAbsolute = ConcreteAddress . MM.absoluteAddr
+
+-- | Convert a 'ConcreteAddress' into an absolute address (a 'MM.MemWord')
+--
+-- This always succeeds, because our 'ConcreteAddress' is a wrapper that
+-- guarantees we only have absolute addresses.
+absoluteAddress :: (MM.MemWidth w) => ConcreteAddress w -> MM.MemWord w
+absoluteAddress (ConcreteAddress memAddr) = absAddr
   where
-    aa1 = absoluteAddress a1
-    aa2 = absoluteAddress a2
-    offUnsigned
-      | aa1 > aa2 = aa1 - aa2
-      | otherwise = aa2 - aa1
-    i64Max :: Word64
-    i64Max = fromIntegral (maxBound :: Int64)
+    Just absAddr = MM.asAbsoluteAddr memAddr
+{-# INLINE absoluteAddress #-}
+
+-- | Add an offset to a 'ConcreteAddress'
+--
+-- Since all of our 'ConcreteAddress'es are absolute, this is always legal.
+-- Note, we could wrap, and that isn't really checked.
+addressAddOffset :: (MM.MemWidth w)
+                 => MM.Memory w
+                 -> ConcreteAddress w
+                 -> MM.MemWord w
+                 -> ConcreteAddress w
+addressAddOffset _mem (ConcreteAddress memAddr) memWord =
+  ConcreteAddress (MM.incAddr (fromIntegral memWord) memAddr)
+
+-- | Compute the distance between two 'ConcreteAddress'es
+--
+-- This is actually total because all of our 'ConcreteAddress'es are absolute
+-- (and thus have the same base), so the difference is always valid.
+addressDiff :: (MM.MemWidth w) => ConcreteAddress w -> ConcreteAddress w -> Integer
+addressDiff (ConcreteAddress memAddr1) (ConcreteAddress memAddr2) = diff
+  where
+    Just diff = MM.diffAddr memAddr1 memAddr2

@@ -19,7 +19,7 @@ module Renovate.Analysis.FunctionRecovery (
 
 import qualified GHC.Err.Located as L
 
-import Control.Applicative
+import           Control.Applicative
 import qualified Control.Monad.RWS.Strict as RWS
 import qualified Data.Foldable as F
 import qualified Data.Map.Strict as M
@@ -27,12 +27,12 @@ import qualified Data.Set as S
 
 import qualified Data.Macaw.Memory as MM
 
-import Prelude
+import           Prelude
 
-import Renovate.Address
-import Renovate.BasicBlock
-import Renovate.ISA
-import Renovate.Recovery
+import           Renovate.Address
+import           Renovate.BasicBlock
+import           Renovate.ISA
+import           Renovate.Recovery
 
 -- | Mark a CFG as complete or incomplete
 --
@@ -45,13 +45,13 @@ data Completion = Complete
                 | Incomplete
                 deriving (Eq, Ord, Show)
 
-data FunctionCFG i w = FunctionCFG { cfgEntry :: RelAddress w
+data FunctionCFG i w = FunctionCFG { cfgEntry :: ConcreteAddress w
                                    -- ^ The entry point of the function
-                                   , cfgSuccessors :: M.Map (RelAddress w) [RelAddress w]
+                                   , cfgSuccessors :: M.Map (ConcreteAddress w) [ConcreteAddress w]
                                    -- ^ The successors of each block
-                                   , cfgExitBlocks :: [RelAddress w]
+                                   , cfgExitBlocks :: [ConcreteAddress w]
                                    -- ^ Exit blocks of the function
-                                   , cfgBlocks :: M.Map (RelAddress w) (ConcreteBlock i w)
+                                   , cfgBlocks :: M.Map (ConcreteAddress w) (ConcreteBlock i w)
                                    -- ^ All of the blocks in the CFG
                                    , cfgCompletion :: Completion
                                    -- ^ Whether or not the CFG is complete
@@ -74,7 +74,7 @@ recoverFunctions isa mem blockInfo = runM isa mem blockInfo $ do
 -- as incomplete.
 --
 -- We do not follow call edges.
-buildCFG :: (MM.MemWidth w) => [FunctionCFG i w] -> RelAddress w -> M i a w [FunctionCFG i w]
+buildCFG :: (MM.MemWidth w) => [FunctionCFG i w] -> ConcreteAddress w -> M i a w [FunctionCFG i w]
 buildCFG acc entryAddr = do
   mcfg <- makeCFGForEntry entryAddr
   case mcfg of
@@ -99,7 +99,7 @@ block:
 
 -}
 
-makeCFGForEntry :: (MM.MemWidth w) => RelAddress w -> M i a w (Maybe (FunctionCFG i w))
+makeCFGForEntry :: (MM.MemWidth w) => ConcreteAddress w -> M i a w (Maybe (FunctionCFG i w))
 makeCFGForEntry entryAddr = do
   addBlockToWorklist entryAddr
   processWorklist
@@ -161,7 +161,7 @@ processWorklist = do
             IndirectJump Unconditional -> markFunctionIncomplete
           processWorklist
 
-nextBlockAddress :: (MM.MemWidth w) => ConcreteBlock i w -> M i a w (RelAddress w)
+nextBlockAddress :: (MM.MemWidth w) => ConcreteBlock i w -> M i a w (ConcreteAddress w)
 nextBlockAddress b = do
   isa <- RWS.asks envISA
   mem <- RWS.asks envMem
@@ -173,18 +173,18 @@ markFunctionIncomplete :: M i a w ()
 markFunctionIncomplete = do
   RWS.modify' $ \s -> s { fsHasIndirectJump = True }
 
-addReturnBlock :: RelAddress w -> M i a w ()
+addReturnBlock :: ConcreteAddress w -> M i a w ()
 addReturnBlock addr =
   RWS.modify' $ \s -> s { fsExitBlocks = S.insert addr (fsExitBlocks s) }
 
 {-# INLINE addCFGEdge #-}
-addCFGEdge :: RelAddress w -> RelAddress w -> M i a w ()
+addCFGEdge :: ConcreteAddress w -> ConcreteAddress w -> M i a w ()
 addCFGEdge src dst = do
   RWS.modify' $ \s -> s { fsSuccessors = M.insertWith S.union src (S.singleton dst) (fsSuccessors s) }
   addBlockToWorklist dst
 
 {-# INLINE addBlockToWorklist #-}
-addBlockToWorklist :: RelAddress w -> M i a w ()
+addBlockToWorklist :: ConcreteAddress w -> M i a w ()
 addBlockToWorklist addr = do
   RWS.modify' $ \s ->
     case S.member addr (fsVisited s) of
@@ -198,17 +198,17 @@ newtype M i a w t = M { unM :: RWS.RWS (CFGEnv i a w) () (FunctionState i w) t }
             RWS.MonadReader (CFGEnv i a w),
             RWS.MonadState (FunctionState i w))
 
-data CFGEnv i a w = CFGEnv { envBlocks :: M.Map (RelAddress w) (ConcreteBlock i w)
+data CFGEnv i a w = CFGEnv { envBlocks :: M.Map (ConcreteAddress w) (ConcreteBlock i w)
                            , envISA :: ISA i a w
                            , envMem :: MM.Memory w
                            }
 
-data FunctionState i w = FunctionState { fsSuccessors :: M.Map (RelAddress w) (S.Set (RelAddress w))
-                                       , fsExitBlocks :: S.Set (RelAddress w)
-                                       , fsBlocks :: M.Map (RelAddress w) (ConcreteBlock i w)
+data FunctionState i w = FunctionState { fsSuccessors :: M.Map (ConcreteAddress w) (S.Set (ConcreteAddress w))
+                                       , fsExitBlocks :: S.Set (ConcreteAddress w)
+                                       , fsBlocks :: M.Map (ConcreteAddress w) (ConcreteBlock i w)
                                        , fsHasIndirectJump :: Bool
-                                       , fsVisited :: S.Set (RelAddress w)
-                                       , fsWorklist :: S.Set (RelAddress w)
+                                       , fsVisited :: S.Set (ConcreteAddress w)
+                                       , fsWorklist :: S.Set (ConcreteAddress w)
                                        }
 
 emptyFunctionState :: FunctionState i w

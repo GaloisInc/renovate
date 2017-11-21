@@ -25,7 +25,7 @@ import           Renovate.ISA
 -- better later on.
 layoutBlocks :: (Monad m, T.Traversable t, InstructionConstraints i a, MM.MemWidth w)
              => LayoutStrategy
-             -> RelAddress w
+             -> ConcreteAddress w
              -- ^ Address to begin block layout of instrumented blocks
              -> t (SymbolicPair i a w)
              -> RewriterT i a w m [AddressAssignedPair i a w]

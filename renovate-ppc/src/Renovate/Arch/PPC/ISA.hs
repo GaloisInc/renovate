@@ -32,7 +32,7 @@ import qualified Dismantle.PPC as D
 import           Renovate
 
 data TargetAddress w = NoAddress
-                     | AbsoluteAddress (RelAddress w)
+                     | AbsoluteAddress (ConcreteAddress w)
                      deriving (Eq, Ord, Show)
 
 newtype Instruction a = I { unI :: D.AnnotatedInstruction a }
@@ -101,7 +101,7 @@ ppcMakePadding nBytes
 
 -- | Make an unconditional relative jump from the given @srcAddr@ to the
 -- @targetAddr@.
-ppcMakeRelativeJumpTo :: (MM.MemWidth w) => RelAddress w -> RelAddress w -> [Instruction ()]
+ppcMakeRelativeJumpTo :: (MM.MemWidth w) => ConcreteAddress w -> ConcreteAddress w -> [Instruction ()]
 ppcMakeRelativeJumpTo srcAddr targetAddr
   | offset `mod` 4 /= 0 =
     error (printf "Unaligned jump with source=%d and target=%d" (show srcAddr) (show targetAddr))
@@ -130,7 +130,7 @@ ppcMakeSymbolicJump symAddr = [tagInstruction (Just symAddr) i]
 
 -- | This function converts symbolic address references in operands back to
 -- concrete values.  As with 'ppcSymbolizeAddresses', it is a no-op on PowerPC.
-ppcConcretizeAddresses :: (MM.MemWidth w) => MM.Memory w -> RelAddress w -> Instruction (TargetAddress w) -> Instruction ()
+ppcConcretizeAddresses :: (MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> Instruction (TargetAddress w) -> Instruction ()
 ppcConcretizeAddresses _mem _addr i =
   case unI i of
     D.Instruction opc operands ->
@@ -143,14 +143,14 @@ ppcConcretizeAddresses _mem _addr i =
 -- wrapper).  Since the 'TaggedInstruction' doesn't need to modify the
 -- instruction, it can actually be generated in an architecture-independent way
 -- (i.e., not in an architecture-specific backend).
-ppcSymbolizeAddresses :: (MM.MemWidth w) => MM.Memory w -> RelAddress w -> Instruction () -> Instruction (TargetAddress w)
+ppcSymbolizeAddresses :: (MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> Instruction () -> Instruction (TargetAddress w)
 ppcSymbolizeAddresses _mem _addr i =
   case unI i of
     D.Instruction opc operands ->
       I (D.Instruction (coerce opc) (FC.fmapFC (\(D.Annotated _ operand) -> D.Annotated NoAddress operand) operands))
 
 -- | Classify jumps (and determine their targets, where possible)
-ppcJumpType :: (HasCallStack, MM.MemWidth w) => Instruction t -> MM.Memory w -> RelAddress w -> JumpType w
+ppcJumpType :: (HasCallStack, MM.MemWidth w) => Instruction t -> MM.Memory w -> ConcreteAddress w -> JumpType w
 ppcJumpType i _mem insnAddr =
   case toInst i of
     D.Instruction opc operands ->
@@ -224,9 +224,9 @@ ppcJumpType i _mem insnAddr =
 ppcModifyJumpTarget :: (HasCallStack, MM.MemWidth w)
                     => Instruction ()
                     -- ^ The instruction to modify
-                    -> RelAddress w
+                    -> ConcreteAddress w
                     -- ^ The address of the instruction
-                    -> RelAddress w
+                    -> ConcreteAddress w
                     -- ^ The new target address
                     -> Maybe [Instruction ()]
 ppcModifyJumpTarget i srcAddr targetAddr =
@@ -247,7 +247,7 @@ ppcModifyJumpTarget i srcAddr targetAddr =
 -- call error.  The limit of the branch is specified as @nBits@, which is the
 -- number of bits in the immediate field that will hold the offset.  Note that
 -- offsets are signed, so the range check has to account for that.
-newJumpOffset :: (HasCallStack, MM.MemWidth w) => Int -> RelAddress w -> RelAddress w -> Int32
+newJumpOffset :: (HasCallStack, MM.MemWidth w) => Int -> ConcreteAddress w -> ConcreteAddress w -> Int32
 newJumpOffset nBits srcAddr targetAddr
   | rawOff `mod` 4 /= 0 =
     error (printf "Invalid alignment for offset between src=%s and target=%s" (show srcAddr) (show targetAddr))

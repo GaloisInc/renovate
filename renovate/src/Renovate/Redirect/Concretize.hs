@@ -46,7 +46,7 @@ import           Renovate.Redirect.Monad
 -- invariant.
 concretize :: (Monad m, T.Traversable t, InstructionConstraints i a, KnownNat w, MM.MemWidth w, Typeable w)
            => LayoutStrategy
-           -> RelAddress w
+           -> ConcreteAddress w
            -- ^ The start address of the concretized (instrumented) blocks
            -> t (SymbolicPair i a w)
            -> RewriterT i a w m [ConcretePair i w]
@@ -105,7 +105,7 @@ these could be sentinels that require translation back to IP relative
 -- this transformation, but the idea might be worth considering.
 concretizeJumps :: (Monad m, InstructionConstraints i a, KnownNat w, MM.MemWidth w, Typeable w)
                 => ISA i a w
-                -> M.Map SymbolicAddress (RelAddress w)
+                -> M.Map SymbolicAddress (ConcreteAddress w)
                 -> AddressAssignedPair i a w
                 -> RewriterT i a w m (ConcretePair i w)
 concretizeJumps isa concreteAddressMap (LayoutPair cb (AddressAssignedBlock sb baddr) Modified) = do
@@ -127,8 +127,8 @@ concretizeJumps _isa _concreteAddressMap (LayoutPair cb _ Unmodified) = return (
 -- to 32 bit offset).
 mapJumpAddress :: forall m i a w
                 . (Monad m, InstructionConstraints i a, KnownNat w, Typeable w)
-               => M.Map SymbolicAddress (RelAddress w)
-               -> (TaggedInstruction i a, RelAddress w)
+               => M.Map SymbolicAddress (ConcreteAddress w)
+               -> (TaggedInstruction i a, ConcreteAddress w)
                -> RewriterT i a w m [i ()]
 mapJumpAddress concreteAddressMap (tagged, insnAddr) = do
   isa <- askISA

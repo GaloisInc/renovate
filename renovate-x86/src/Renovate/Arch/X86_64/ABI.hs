@@ -72,7 +72,7 @@ x64ClearRegister r =
 -- Arguments are passed in %rdi, %rsi, %rdx, %r10, %r8, %r9 (mmap uses all of them)
 --
 -- The return value is in %rax
-x64AllocateMemory :: (MM.MemWidth w) => Word32 -> RelAddress w -> [Instruction (TargetAddress w)]
+x64AllocateMemory :: (MM.MemWidth w) => Word32 -> ConcreteAddress w -> [Instruction (TargetAddress w)]
 x64AllocateMemory nBytes addr = [ noAddr $ makeInstr "push" [D.QWordReg D.RAX]
                                 , noAddr $ makeInstr "push" [D.QWordReg D.RDI]
                                 , noAddr $ makeInstr "push" [D.QWordReg D.RSI]
@@ -119,7 +119,7 @@ noAddr i = annotateInstr i NoAddress
 
 -- | Using RBX here because mov %rax has a strange encoding that isn't
 -- supported in the assembler yet.
-x64ComputeStackPointerOffset :: (MM.MemWidth w) => RelAddress w -> [Instruction (TargetAddress w)]
+x64ComputeStackPointerOffset :: (MM.MemWidth w) => ConcreteAddress w -> [Instruction (TargetAddress w)]
 x64ComputeStackPointerOffset memAddr =
   [ noAddr $ makeInstr "push" [D.QWordReg D.RBX]
   , noAddr $ makeInstr "mov" [D.QWordReg D.RBX, D.QWordImm (fromIntegral (absoluteAddress memAddr))]
@@ -137,7 +137,7 @@ x64ComputeStackPointerOffset memAddr =
 -- don't actually need them as long as we put this code before any
 -- other code in the function body (esp. before the function reserves
 -- stack space by modifying rsp).
-x64SaveReturnAddress :: (MM.MemWidth w) => RelAddress w -> [Instruction (TargetAddress w)]
+x64SaveReturnAddress :: (MM.MemWidth w) => ConcreteAddress w -> [Instruction (TargetAddress w)]
 x64SaveReturnAddress memAddr =
   [ noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (fromIntegral (absoluteAddress memAddr))]
   , noAddr $ makeInstr "mov" [D.QWordReg D.RSI, D.QWordReg D.RSP]
@@ -156,7 +156,7 @@ x64SaveReturnAddress memAddr =
 
 -- | Read the real return value into a register, read its offset
 -- shadow value into another register, then cmp + jmp
-x64CheckShadowStack :: (MM.MemWidth w) => RelAddress w -> [Instruction (TargetAddress w)]
+x64CheckShadowStack :: (MM.MemWidth w) => ConcreteAddress w -> [Instruction (TargetAddress w)]
 x64CheckShadowStack memAddr =
   [ noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (fromIntegral (absoluteAddress memAddr))]
   , noAddr $ makeInstr "mov" [D.QWordReg D.RSI, D.QWordReg D.RSP]

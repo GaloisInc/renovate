@@ -13,10 +13,10 @@ module Renovate.BasicBlock.Types (
   projectInstruction
   ) where
 
-import Data.Maybe ( isNothing )
-import Renovate.Address
-
+import           Data.Maybe ( isNothing )
 import qualified Data.Text.Prettyprint.Doc as PD
+
+import           Renovate.Address
 
 -- | A basic block is a list of instructions (whose sizes and specific
 -- information we can find from the ISA).  Basic blocks also have a
@@ -42,7 +42,7 @@ instance (PD.Pretty addr, PD.Pretty (i a)) => PD.Pretty (BasicBlock addr i a) wh
 -- 'MC.SegmentedAddr', as we need to create blocks that haven't yet
 -- been assigned to a segment, so we can't actually give them a
 -- 'MC.SegmentedAddr' (there is no segment for them to refer to).
-type ConcreteBlock i w = BasicBlock (RelAddress w) i ()
+type ConcreteBlock i w = BasicBlock (ConcreteAddress w) i ()
 
 -- | A wrapper around a normal instruction that includes an optional
 -- 'SymbolicAddress'.
@@ -96,7 +96,7 @@ type SymbolicBlock i a w = BasicBlock (SymbolicInfo w) (TaggedInstruction i) a
 -- bundles up a symbolic block and concrete address for that purpose.
 data AddressAssignedBlock i a w = AddressAssignedBlock
   { lbBlock :: SymbolicBlock i a w -- ^ The symbolic block
-  , lbAt    :: RelAddress w        -- ^ The concrete address for this block
+  , lbAt    :: ConcreteAddress w        -- ^ The concrete address for this block
   }
 
 -- | Address information for a symbolic block.
@@ -106,7 +106,7 @@ data AddressAssignedBlock i a w = AddressAssignedBlock
 -- address of the corresponding 'ConcreteBlock' for this symbolic
 -- block.
 data SymbolicInfo w = SymbolicInfo { symbolicAddress :: SymbolicAddress
-                                   , concreteAddress :: RelAddress w
+                                   , concreteAddress :: ConcreteAddress w
                                    }
                     deriving (Eq, Ord, Show)
 
