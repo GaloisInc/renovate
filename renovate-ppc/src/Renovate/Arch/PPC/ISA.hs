@@ -117,7 +117,7 @@ ppcMakeRelativeJumpTo srcAddr targetAddr
     -- Now we shift off two of the required zeros.
     shiftedOffset :: Int32
     shiftedOffset = fromIntegral offset `shiftR` 2
-    jumpInstr = D.Instruction D.B (D.Directbrtarget (D.BT shiftedOffset) D.:> D.Nil)
+    jumpInstr = D.Instruction D.B (D.Directbrtarget (D.BT shiftedOffset) D.:< D.Nil)
 
 ppcMakeSymbolicJump :: (MM.MemWidth w) => SymbolicAddress -> [TaggedInstruction Instruction (TargetAddress w)]
 ppcMakeSymbolicJump symAddr = [tagInstruction (Just symAddr) i]
@@ -125,7 +125,7 @@ ppcMakeSymbolicJump symAddr = [tagInstruction (Just symAddr) i]
     -- The jump has an invalid destination because it is just a stand-in; it
     -- will be rewritten with a real jump target when we concretize the
     -- instruction.
-    jmp = D.Instruction D.B (D.Directbrtarget (D.BT 0) D.:> D.Nil)
+    jmp = D.Instruction D.B (D.Directbrtarget (D.BT 0) D.:< D.Nil)
     i = annotateInstr (fromInst jmp) NoAddress
 
 -- | This function converts symbolic address references in operands back to
@@ -155,19 +155,19 @@ ppcJumpType i _mem insnAddr =
   case toInst i of
     D.Instruction opc operands ->
       case operands of
-        D.Directbrtarget (D.BT offset) D.:> D.Nil ->
+        D.Directbrtarget (D.BT offset) D.:< D.Nil ->
           RelativeJump Unconditional insnAddr (fromIntegral (offset `shiftL` 2))
-        D.Condbrtarget (D.CBT offset) D.:> _ D.:> D.Nil ->
+        D.Condbrtarget (D.CBT offset) D.:< _ D.:< D.Nil ->
           RelativeJump Conditional insnAddr (fromIntegral (offset `shiftL` 2))
-        D.Condbrtarget (D.CBT offset) D.:> D.Nil ->
+        D.Condbrtarget (D.CBT offset) D.:< D.Nil ->
           case opc of
             D.BCLalways ->
               RelativeJump Unconditional insnAddr (fromIntegral (offset `shiftL` 2))
             _ ->
               RelativeJump Conditional insnAddr (fromIntegral (offset `shiftL` 2))
-        D.Absdirectbrtarget _ D.:> D.Nil ->
+        D.Absdirectbrtarget _ D.:< D.Nil ->
           error ("Absolute jumps are not supported: " ++ showF opc)
-        D.Abscondbrtarget _ D.:> D.Nil ->
+        D.Abscondbrtarget _ D.:< D.Nil ->
           error ("Absolute jumps are not supported: " ++ showF opc)
         D.Nil ->
           case opc of
@@ -191,7 +191,7 @@ ppcJumpType i _mem insnAddr =
             D.BLR -> Return
             D.BLRL -> Return
             _ -> NoJump
-        (_ D.:> _) ->
+        (_ D.:< _) ->
           -- In this case, we handle all of the branches that don't need to inspect
           -- operands (because they are indirect)
           case opc of
@@ -233,12 +233,12 @@ ppcModifyJumpTarget i srcAddr targetAddr =
   case unI i of
     D.Instruction opc operands ->
       case operands of
-        D.Annotated a (D.Directbrtarget (D.BT _offset)) D.:> D.Nil ->
-          Just [I (D.Instruction opc (D.Annotated a (D.Directbrtarget (D.BT (newJumpOffset 26 srcAddr targetAddr `shiftR` 2))) D.:> D.Nil))]
-        D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:> cond D.:> D.Nil ->
-          Just [I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (newJumpOffset 16 srcAddr targetAddr `shiftR` 2))) D.:> cond D.:> D.Nil))]
-        D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:> D.Nil ->
-          Just [I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (newJumpOffset 16 srcAddr targetAddr `shiftR` 2))) D.:> D.Nil))]
+        D.Annotated a (D.Directbrtarget (D.BT _offset)) D.:< D.Nil ->
+          Just [I (D.Instruction opc (D.Annotated a (D.Directbrtarget (D.BT (newJumpOffset 26 srcAddr targetAddr `shiftR` 2))) D.:< D.Nil))]
+        D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< cond D.:< D.Nil ->
+          Just [I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (newJumpOffset 16 srcAddr targetAddr `shiftR` 2))) D.:< cond D.:< D.Nil))]
+        D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< D.Nil ->
+          Just [I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (newJumpOffset 16 srcAddr targetAddr `shiftR` 2))) D.:< D.Nil))]
         _ -> error ("Unexpected jump: " ++ ppcPrettyInstruction i)
 
 -- | Compute a new jump offset between the @srcAddr@ and @targetAddr@.
