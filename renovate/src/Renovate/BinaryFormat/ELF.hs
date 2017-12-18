@@ -307,7 +307,7 @@ doRewrite cfg mem strat = do
   -- removed all of the possibly dynamic sections and ensured that
   -- everything will line up.
   nextSegmentAddress <- withCurrentELF (segmentLayoutAddress instrumentationBase)
-  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral nextSegmentAddress :: Word64)
+--  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral nextSegmentAddress :: Word64)
   riSegmentVirtualAddress L..= Just (fromIntegral nextSegmentAddress)
 
 
@@ -376,7 +376,7 @@ doAnalysis cfg mem = do
   -- removed all of the possibly dynamic sections and ensured that
   -- everything will line up.
   nextSegmentAddress <- withCurrentELF (segmentLayoutAddress instrumentationBase)
-  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral nextSegmentAddress :: Word64)
+--  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral nextSegmentAddress :: Word64)
   riSegmentVirtualAddress L..= Just (fromIntegral nextSegmentAddress)
 
   analysisResult <- analyzeTextSection cfg mem entryPoint
@@ -591,7 +591,7 @@ appendHeaders :: (Show (E.ElfWordType w), Bits (E.ElfWordType w), Integral (E.El
 appendHeaders elf = do
   let shstrtabidx = nextSectionIndex elf
   let strtabidx = shstrtabidx + 1
-  traceM $ printf "shstrtabidx = %d" shstrtabidx
+--  traceM $ printf "shstrtabidx = %d" shstrtabidx
   let elfData = [ E.ElfDataSectionHeaders
                 , E.ElfDataSectionNameTable shstrtabidx
                 , E.ElfDataStrtab strtabidx
@@ -619,7 +619,7 @@ replaceSectionWithPadding :: Integral (E.ElfWordType w)
 replaceSectionWithPadding layout shouldReplace r
   | not (shouldReplace r) = return r
   | otherwise = do
-      traceM ("Overwriting section " ++ show (elfDataRegionName r))
+--      traceM ("Overwriting section " ++ show (elfDataRegionName r))
       riOverwrittenRegions L.%= ((elfDataRegionName r, fromIntegral sz):)
       return (E.ElfDataRaw (B.replicate paddingBytes 0))
   where
@@ -697,7 +697,7 @@ newInstrumentationSegment :: (Num (E.ElfWordType w), Show (E.ElfWordType w), Int
                           -> ElfRewriter w (E.ElfSectionIndex, E.ElfSegment w)
 newInstrumentationSegment startAddr bytes e = do
   let txtIdx = nextSectionIndex e
-  traceM ("New text section index: " ++ show txtIdx)
+--  traceM ("New text section index: " ++ show txtIdx)
   let sec = E.ElfSection { E.elfSectionName = C8.pack "brittle"
                        , E.elfSectionType = E.SHT_PROGBITS
                        , E.elfSectionFlags = E.shf_alloc .|. E.shf_execinstr
@@ -770,7 +770,7 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
   -- We use an irrefutable match on the entry point -- we are asserting that the
   -- entry point is mapped in the 'MM.Memory' object passed in.
   let Just entrySegOff = RA.concreteAsSegmentOff mem entryPoint
-  traceM ("instrumentTextSection entry point: " ++ show entryPoint)
+--  traceM ("instrumentTextSection entry point: " ++ show entryPoint)
   riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entrySegOff)
   let isa = rcISA cfg
       archInfo = rcArchInfo cfg
@@ -779,7 +779,7 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
       riBlockRecoveryDiagnostics L..= diags1
       C.throwM (BlockRecoveryFailure exn1 diags1)
     (Right blockInfo, diags1) -> do
-      traceM "Recovered blocks with macaw"
+--      traceM "Recovered blocks with macaw"
       riBlockRecoveryDiagnostics L..= diags1
       let blocks = R.biBlocks blockInfo
       riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
@@ -820,7 +820,7 @@ analyzeTextSection :: forall i a w arch b
                    -- ^ The entry point in the text section
                    -> ElfRewriter w b
 analyzeTextSection cfg mem entryPoint = do
-  traceM ("analyzeTextSection entry point: " ++ show entryPoint)
+--  traceM ("analyzeTextSection entry point: " ++ show entryPoint)
   riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
   let isa      = rcISA cfg
       archInfo = rcArchInfo cfg
@@ -829,7 +829,7 @@ analyzeTextSection cfg mem entryPoint = do
       riBlockRecoveryDiagnostics L..= diags1
       C.throwM (BlockRecoveryFailure exn1 diags1)
     (Right blockInfo, diags1) -> do
-      traceM "Recovered blocks with macaw"
+--      traceM "Recovered blocks with macaw"
       riBlockRecoveryDiagnostics L..= diags1
       let blocks = R.biBlocks blockInfo
       riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
