@@ -146,9 +146,14 @@ withElfConfig :: (C.MonadThrow m)
               -> m t
 withElfConfig e0 configs k =
   case (e0, withElf e0 E.elfMachine) of
-    (E.Elf32 _, mach) ->
-      -- No support for 32 bit architectures yet.  Should change with ARM
-      C.throwM (UnsupportedArchitecture mach)
+    (E.Elf32 e, E.EM_PPC) ->
+      case lookup Arch.PPC32 configs of
+        Nothing -> C.throwM (UnsupportedArchitecture E.EM_PPC)
+        Just (SomeConfig nr cfg)
+          | Just PC.Refl <- PC.testEquality nr (NR.knownNat @32) ->
+            withMemory e (k cfg e)
+          | otherwise -> error ("Invalid NatRepr for PPC32: " ++ show nr)
+    (E.Elf32 _, mach) -> C.throwM (UnsupportedArchitecture mach)
     (E.Elf64 e, E.EM_X86_64) ->
       case lookup Arch.X86_64 configs of
         Nothing -> C.throwM (UnsupportedArchitecture E.EM_X86_64)
@@ -156,6 +161,13 @@ withElfConfig e0 configs k =
           | Just PC.Refl <- PC.testEquality nr (NR.knownNat @64) ->
               withMemory e (k cfg e)
           | otherwise -> error ("Invalid NatRepr for X86_64: " ++ show nr)
+    (E.Elf64 e, E.EM_PPC64) ->
+      case lookup Arch.PPC64 configs of
+        Nothing -> C.throwM (UnsupportedArchitecture E.EM_PPC64)
+        Just (SomeConfig nr cfg)
+          | Just PC.Refl <- PC.testEquality nr (NR.knownNat @64) ->
+            withMemory e (k cfg e)
+          | otherwise -> error ("Invalid NatRepr for PPC64: " ++ show nr)
     (E.Elf64 _, mach) -> C.throwM (UnsupportedArchitecture mach)
 
 -- | Apply a rewriter to an ELF file using the chosen layout strategy.
