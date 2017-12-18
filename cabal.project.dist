@@ -11,6 +11,7 @@ packages: deps/elf-edit/
           deps/semmc/semmc/
           deps/semmc/semmc-ppc/
           deps/macaw-semmc/macaw-ppc/
+          deps/macaw-semmc/macaw-semmc/
           renovate/
           renovate-x86/
           renovate-ppc/
