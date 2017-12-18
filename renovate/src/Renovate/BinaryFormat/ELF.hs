@@ -231,7 +231,7 @@ withMemory :: forall w m a
            -> (MM.Memory w -> m a)
            -> m a
 withMemory e k =
-  case MM.memoryForElf (MM.LoadOptions MM.LoadBySection False) e of
+  case MM.memoryForElf (MM.LoadOptions MM.LoadBySegment False) e of
     Left err -> C.throwM (MemoryLoadError err)
     Right (_sim, mem) -> k mem
 
