@@ -18,6 +18,7 @@ import qualified Control.Monad.Catch as C
 import qualified Data.ByteString as B
 import           Data.Typeable ( Typeable )
 
+import qualified Data.ElfEdit as E
 import qualified Data.Parameterized.NatRepr as NR
 import qualified Data.Macaw.Architecture.Info as MM
 import qualified Data.Macaw.Memory as MM
@@ -43,6 +44,8 @@ data RenovateConfig i a w arch b =
                  , rcArchInfo      :: MM.ArchitectureInfo arch
                  , rcAssembler     :: forall m . (C.MonadThrow m) => i () -> m B.ByteString
                  , rcDisassembler :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, i ())
+                 , rcELFEntryPoints :: E.Elf w -> [MM.MemAddr w]
+                 -- ^ Extra entry points that can be discovered from ELF files
                  , rcAnalysis      :: ISA.ISA i a w -> MM.Memory w -> R.BlockInfo i w arch -> b
                  , rcRewriter      :: b -> ISA.ISA i a w -> MM.Memory w -> B.SymbolicBlock i a w -> RW.RewriteM i w (Maybe [B.TaggedInstruction i a])
                  }

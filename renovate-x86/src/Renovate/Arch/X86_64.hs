@@ -54,6 +54,7 @@ config analysis rewriter =
     , rcArchInfo      = X86.x86_64_linux_info
     , rcAssembler     = assemble
     , rcDisassembler  = disassemble
+    , rcELFEntryPoints = const []
     , rcAnalysis      = analysis
     , rcRewriter      = rewriter
     }

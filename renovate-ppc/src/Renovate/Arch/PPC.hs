@@ -1,4 +1,6 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeApplications #-}
 module Renovate.Arch.PPC (
   -- * Configuration
   config32,
@@ -23,6 +25,7 @@ module Renovate.Arch.PPC (
   InstructionDisassemblyFailure(..)
   ) where
 
+import           Data.Proxy ( Proxy(..) )
 import qualified Data.Macaw.AbsDomain.AbsState as MA
 import qualified Data.Macaw.CFG.Core as MC
 import qualified Data.Macaw.Memory as MM
@@ -33,7 +36,7 @@ import qualified Data.Macaw.PPC as MP
 import           Renovate
 import           Renovate.Arch.PPC.ISA
 
-config32 :: (MM.MemWidth w)
+config32 :: (MM.MemWidth w, w ~ 32)
          => (MC.ArchSegmentOff MP.PPC32 -> Maybe (MA.AbsValue 32 (BVType 32)))
          -> (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w MP.PPC32 -> a)
          -> (a -> ISA Instruction (TargetAddress w) w -> MM.Memory w -> SymbolicBlock Instruction (TargetAddress w) w
@@ -44,11 +47,12 @@ config32 tocMap analysis rewriter =
                  , rcArchInfo = MP.ppc32_linux_info tocMap
                  , rcAssembler = assemble
                  , rcDisassembler = disassemble
+                 , rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC32)
                  , rcAnalysis = analysis
                  , rcRewriter = rewriter
                  }
 
-config64 :: (MM.MemWidth w)
+config64 :: (MM.MemWidth w, w ~ 64)
          => (MC.ArchSegmentOff MP.PPC64 -> Maybe (MA.AbsValue 64 (BVType 64)))
          -> (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w MP.PPC64 -> a)
          -> (a -> ISA Instruction (TargetAddress w) w -> MM.Memory w -> SymbolicBlock Instruction (TargetAddress w) w
@@ -59,6 +63,7 @@ config64 tocMap analysis rewriter =
                  , rcArchInfo = MP.ppc64_linux_info tocMap
                  , rcAssembler = assemble
                  , rcDisassembler = disassemble
+                 , rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC64)
                  , rcAnalysis = analysis
                  , rcRewriter = rewriter
                  }

@@ -23,7 +23,6 @@ module Renovate.BinaryFormat.ELF (
   withMemory,
   rewriteElf,
   analyzeElf,
-  entryPoints,
   riSectionBaseAddress,
   riInitialBytes,
   RenovateConfig(..),
@@ -45,7 +44,7 @@ import qualified Data.ByteString.Char8 as C8
 import qualified Data.Foldable as F
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
-import           Data.Maybe ( catMaybes, maybeToList, listToMaybe )
+import           Data.Maybe ( catMaybes, maybeToList, listToMaybe, mapMaybe )
 import qualified Data.Vector as V
 import           Data.Monoid
 import qualified Data.Sequence as Seq
@@ -235,19 +234,6 @@ withMemory e k =
     Left err -> C.throwM (MemoryLoadError err)
     Right (_sim, mem) -> k mem
 
--- | Look up the entry point(s) for an ELF file.
---
--- There is always at least one entry point named by the ELF file
--- (usually the start instruction).  This function can also return
--- other entry points (e.g., symbols mentioned in the symbol table).
-entryPoints :: (MM.MemWidth w, Integral (E.ElfWordType w))
-            => MM.Memory w
-            -> E.Elf w
-            -> ElfRewriter w (MM.MemSegmentOff w, [MM.MemSegmentOff w])
-entryPoints mem elf = do
-  let Just entryPoint = MM.resolveAbsoluteAddr mem (fromIntegral (E.elfEntry elf))
-  return (entryPoint, [])
-
 findTextSection :: E.Elf w -> ElfRewriter w (E.ElfSection (E.ElfWordType w))
 findTextSection e = do
   case E.findSectionByName (C8.pack ".text") e of
@@ -293,7 +279,7 @@ doRewrite cfg mem strat = do
   -- We pull some information from the unmodified initial binary: the text
   -- section, the entry point(s), and original symbol table (if any).
   textSection <- withCurrentELF findTextSection
-  (entryPoint, _otherEntries) <- withCurrentELF (entryPoints mem)
+  -- (entryPoint, _otherEntries) <- withCurrentELF (entryPoints mem)
   symmap <- withCurrentELF (buildSymbolMap mem)
   mBaseSymtab <- withCurrentELF getBaseSymbolTable
 
@@ -321,14 +307,13 @@ doRewrite cfg mem strat = do
       dataAddr = RA.concreteFromAbsolute (fromIntegral newDataSectionBase)
       textSectionStartAddr = RA.concreteFromAbsolute (fromIntegral (E.elfSectionAddr textSection))
       textSectionEndAddr = RA.addressAddOffset mem textSectionStartAddr (fromIntegral ((E.elfSectionSize textSection)))
-      Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
 
   ( analysisResult
     , overwrittenBytes
     , instrumentedBytes
     , mNewData
     , newSyms ) <- instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr
-                                       (E.elfSectionData textSection) concEntryPoint strat layoutAddr dataAddr symmap
+                                       (E.elfSectionData textSection) strat layoutAddr dataAddr symmap
 
   (extraTextSecIdx, instrumentationSeg) <- withCurrentELF (newInstrumentationSegment nextSegmentAddress instrumentedBytes)
 
@@ -370,7 +355,7 @@ doAnalysis :: (ISA.InstructionConstraints i a,
            -> MM.Memory w
            -> ElfRewriter w b
 doAnalysis cfg mem = do
-  (entryPoint, _otherEntries) <- withCurrentELF (entryPoints mem)
+--  (entryPoint, _otherEntries) <- withCurrentELF (entryPoints mem)
 
   -- We need to compute our instrumentation address *after* we have
   -- removed all of the possibly dynamic sections and ensured that
@@ -379,7 +364,7 @@ doAnalysis cfg mem = do
 --  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral nextSegmentAddress :: Word64)
   riSegmentVirtualAddress L..= Just (fromIntegral nextSegmentAddress)
 
-  analysisResult <- analyzeTextSection cfg mem entryPoint
+  analysisResult <- analyzeTextSection cfg mem
   return analysisResult
 
 buildSymbolMap :: Integral (E.ElfWordType w)
@@ -721,6 +706,34 @@ newInstrumentationSegment startAddr bytes e = do
                        }
   return (E.ElfSectionIndex txtIdx, seg)
 
+-- | Architecture-specific entry point identification
+--
+-- Most architectures have a simple approach: take the entry point named in the
+-- ELF file (and any entry points identified by symbols) and just use those.
+-- PowerPC has special treatment because the ELF entry point value actually
+-- points to the address of the Table of Contents (TOC) entry for the entry
+-- point.
+findEntryPoints :: (MM.MemWidth w, Integral (E.ElfWordType w))
+                => RenovateConfig i a w arch b
+                -> E.Elf w
+                -> MM.Memory w
+                -> NEL.NonEmpty (MM.MemSegmentOff w)
+findEntryPoints cfg elf mem =
+  case E.elfMachine elf of
+    E.EM_PPC64 ->
+      let tocEntryAddr = E.elfEntry elf
+          Right addr = MM.readAddr mem MM.BigEndian (MM.absoluteAddr (MM.memWord (fromIntegral tocEntryAddr)))
+          Just entryPoint = MM.asSegmentOff mem addr
+      in entryPoint NEL.:| mapMaybe (MM.asSegmentOff mem) (rcELFEntryPoints cfg elf)
+    E.EM_PPC ->
+      let tocEntryAddr = E.elfEntry elf
+          Right addr = MM.readAddr mem MM.BigEndian (MM.absoluteAddr (MM.memWord (fromIntegral tocEntryAddr)))
+          Just entryPoint = MM.asSegmentOff mem addr
+      in entryPoint NEL.:| mapMaybe (MM.asSegmentOff mem) (rcELFEntryPoints cfg elf)
+    _ ->
+      let Just entryPoint = MM.asSegmentOff mem (MM.absoluteAddr (MM.memWord (fromIntegral (E.elfEntry elf))))
+      in entryPoint NEL.:| mapMaybe (MM.asSegmentOff mem) (rcELFEntryPoints cfg elf)
+
 
 -- | Apply the instrumentor to the given section (which should be the
 -- .text section), while laying out the instrumented version of the
@@ -745,6 +758,7 @@ instrumentTextSection :: forall i a w arch b
                        . (ISA.InstructionConstraints i a,
                           Typeable w,
                           KnownNat w,
+                          Integral (E.ElfWordType w),
                           R.ArchBits arch w)
                       => RenovateConfig i a w arch b
                       -> MM.Memory w
@@ -755,8 +769,6 @@ instrumentTextSection :: forall i a w arch b
                       -- ^ The address of the end of the text section
                       -> B.ByteString
                       -- ^ The bytes of the text section
-                      -> RA.ConcreteAddress w
-                      -- ^ The entry point in the text section
                       -> RE.LayoutStrategy
                       -- ^ The strategy to use for laying out instrumented blocks
                       -> RA.ConcreteAddress w
@@ -766,15 +778,16 @@ instrumentTextSection :: forall i a w arch b
                       -> RM.SymbolMap w
                       -- ^ meta data?
                       -> ElfRewriter w (b, B.ByteString, B.ByteString, Maybe B.ByteString, RM.NewSymbolsMap w)
-instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes entryPoint strat layoutAddr newGlobalBase symmap = do
+instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes strat layoutAddr newGlobalBase symmap = do
   -- We use an irrefutable match on the entry point -- we are asserting that the
   -- entry point is mapped in the 'MM.Memory' object passed in.
-  let Just entrySegOff = RA.concreteAsSegmentOff mem entryPoint
+--  let Just entrySegOff = RA.concreteAsSegmentOff mem entryPoint
 --  traceM ("instrumentTextSection entry point: " ++ show entryPoint)
-  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entrySegOff)
+--  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entrySegOff)
+  elfEntryPoints@(entryPoint NEL.:| _) <- withCurrentELF $ \e -> return (findEntryPoints cfg e mem)
   let isa = rcISA cfg
       archInfo = rcArchInfo cfg
-  case R.recoverBlocks isa (rcDisassembler cfg) archInfo mem (entrySegOff NEL.:| []) of
+  case R.recoverBlocks isa (rcDisassembler cfg) archInfo mem elfEntryPoints of
     (Left exn1, diags1) -> do
       riBlockRecoveryDiagnostics L..= diags1
       C.throwM (BlockRecoveryFailure exn1 diags1)
@@ -788,9 +801,11 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
         -- This pattern match is only here to deal with the existential
         -- quantification inside of RenovateConfig.
         RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } ->
-          let analysisResult = analysis isa mem blockInfo in
+          let analysisResult = analysis isa mem blockInfo
+              Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
+          in
           case RW.runRewriteM mem
-                              entryPoint
+                              concEntryPoint
                               newGlobalBase
                               cfgs
                               (RE.redirect isa textSectionStartAddr textSectionEndAddr (rewriter analysisResult isa mem) mem strat layoutAddr blocks symmap)
@@ -812,19 +827,19 @@ analyzeTextSection :: forall i a w arch b
                     . (ISA.InstructionConstraints i a,
                        Typeable w,
                        KnownNat w,
+                       Integral (E.ElfWordType w),
                        R.ArchBits arch w)
                    => RenovateConfig i a w arch b
                    -> MM.Memory w
                    -- ^ The memory space
-                   -> MM.MemSegmentOff w
-                   -- ^ The entry point in the text section
                    -> ElfRewriter w b
-analyzeTextSection cfg mem entryPoint = do
+analyzeTextSection cfg mem = do
+  elfEntryPoints <- withCurrentELF $ \e -> return (findEntryPoints cfg e mem)
 --  traceM ("analyzeTextSection entry point: " ++ show entryPoint)
-  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
+--  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
   let isa      = rcISA cfg
       archInfo = rcArchInfo cfg
-  case R.recoverBlocks isa (rcDisassembler cfg) archInfo mem (entryPoint NEL.:| []) of
+  case R.recoverBlocks isa (rcDisassembler cfg) archInfo mem elfEntryPoints of
     (Left exn1, diags1) -> do
       riBlockRecoveryDiagnostics L..= diags1
       C.throwM (BlockRecoveryFailure exn1 diags1)
@@ -885,8 +900,8 @@ riOverwrittenRegions = L.lens _riOverwrittenRegions (\ri v -> ri { _riOverwritte
 riAppendedSegments :: L.Simple L.Lens (RewriterInfo w) [(E.ElfSegmentType, Word16, Word64, Word64)]
 riAppendedSegments = L.lens _riAppendedSegments (\ri v -> ri { _riAppendedSegments = v })
 
-riEntryPointAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
-riEntryPointAddress = L.lens _riEntryPointAddress (\ri v -> ri { _riEntryPointAddress = v })
+-- riEntryPointAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
+-- riEntryPointAddress = L.lens _riEntryPointAddress (\ri v -> ri { _riEntryPointAddress = v })
 
 riSectionBaseAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
 riSectionBaseAddress = L.lens _riSectionBaseAddress (\ri v -> ri { _riSectionBaseAddress = v })
