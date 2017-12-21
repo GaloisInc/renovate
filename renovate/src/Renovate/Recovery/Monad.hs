@@ -14,6 +14,7 @@ module Renovate.Recovery.Monad (
   RecoveryT,
   runRecovery,
   runRecoveryT,
+  liftRecovery,
   throwError,
   logDiagnostic,
   askISA
@@ -24,6 +25,7 @@ import           Control.Arrow ( second )
 import qualified Control.Monad.Catch as E
 import qualified Control.Monad.Except as ET
 import qualified Control.Monad.RWS.Strict as RWS
+import           Control.Monad.Trans ( lift )
 import qualified Data.ByteString as B
 import qualified Data.Foldable as F
 import qualified Data.Functor.Identity as I
@@ -86,6 +88,9 @@ runRecoveryT isa decoder mem a = do
                       , reMemory = mem
                       , reDecoder = decoder
                       }
+
+liftRecovery :: (Monad m) => m a -> RecoveryT m i t w a
+liftRecovery = RecoveryT . lift . lift
 
 -- | Log a diagnostic in the 'RecoveryT' monad
 logDiagnostic :: (Monad m) => Diagnostic -> RecoveryT m i t w ()

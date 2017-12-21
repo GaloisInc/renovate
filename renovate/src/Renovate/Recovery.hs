@@ -15,6 +15,7 @@ import qualified GHC.Err.Located as L
 import qualified Control.Exception as E
 import qualified Control.Lens as L
 import qualified Control.Monad.Catch as C
+import           Control.Monad.ST ( stToIO, ST, RealWorld )
 import qualified Data.ByteString as B
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Foldable as F
@@ -49,8 +50,75 @@ data BlockInfo i w arch = BlockInfo
   , biDiscoveryFunInfo :: M.Map (ConcreteAddress w) (PU.Some (MC.DiscoveryFunInfo arch))
   }
 
+analyzeDiscoveredFunctions :: (MC.MemWidth (MC.ArchAddrWidth arch))
+                           => ISA i a (MC.ArchAddrWidth arch)
+                           -> (forall m . (C.MonadThrow m)  => B.ByteString -> m (Int, i ()))
+                           -> MC.Memory (MC.ArchAddrWidth arch)
+                           -> (MC.ArchSegmentOff arch -> ST RealWorld ())
+                           -> (MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i (MC.ArchAddrWidth arch) arch) -> IO ())
+                           -> MC.DiscoveryState arch
+                           -> IO (MC.DiscoveryState arch)
+analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback info =
+  case M.lookupMin (info L.^. MC.unexploredFunctions) of
+    Nothing -> return info
+    Just (addr, rsn) -> do
+      (info', _) <- stToIO (MC.analyzeFunction blockCallback addr rsn info)
+      (ebi, _diags) <- blockInfo isa dis1 mem info'
+      funcCallback addr ebi
+      analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback info'
+
+cfgFromAddrsWith :: (MC.MemWidth (MC.ArchAddrWidth arch))
+                 => ISA i a (MC.ArchAddrWidth arch)
+                 -> (forall m . (C.MonadThrow m)  => B.ByteString -> m (Int, i ()))
+                 -> (MC.ArchSegmentOff arch -> ST RealWorld ())
+                 -> (MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i (MC.ArchAddrWidth arch) arch) -> IO ())
+                 -> MC.ArchitectureInfo arch
+                 -> MC.Memory (MC.ArchAddrWidth arch)
+                 -> MC.SymbolAddrMap (MC.ArchAddrWidth arch)
+                 -> [MC.ArchSegmentOff arch]
+                 -> [(MC.ArchSegmentOff arch, MC.ArchSegmentOff arch)]
+                 -> IO (MC.DiscoveryState arch)
+cfgFromAddrsWith isa dis1 blockCallback funcCallback archInfo mem symbols initAddrs memWords = do
+  let s1 = MC.markAddrsAsFunction MC.InitAddr initAddrs s0
+  s2 <- analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback s1
+  let s3 = MC.exploreMemPointers memWords s2
+  analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback s3
+  where
+    s0 = MC.emptyDiscoveryState mem symbols archInfo
+
+blockInfo :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch)))
+          => ISA i a (MC.RegAddrWidth (MC.ArchReg arch))
+          -> (forall m . (C.MonadThrow m) => B.ByteString -> m (Int, i ()))
+          -> MC.Memory (MC.RegAddrWidth (MC.ArchReg arch))
+          -> MC.DiscoveryState arch
+          -> IO (Either C.SomeException (BlockInfo i (MC.RegAddrWidth (MC.ArchReg arch)) arch), [Diagnostic])
+blockInfo isa dis1 mem di = runRecoveryT isa dis1 mem $ do
+  blocks <- catMaybes <$> mapM (buildBlock isa dis1 mem (S.fromList (mapMaybe (concreteFromSegmentOff mem) (F.toList absoluteBlockStarts))))
+                               (F.toList absoluteBlockStarts)
+  let insertBlocks cb m = M.adjust (cb:) (basicBlockAddress cb) m
+  let funcBlocks = foldr insertBlocks M.empty blocks
+  return BlockInfo { biBlocks = blocks
+                   , biFunctionEntries = mapMaybe (concreteFromSegmentOff mem) funcEntries
+                   , biFunctionBlocks = funcBlocks
+                   , biDiscoveryFunInfo = infos
+                   }
+  where
+    absoluteBlockStarts = S.fromList [ entry
+                                     | PU.Some dfi <- M.elems (di L.^. MC.funInfo)
+                                     , entry <- M.keys (dfi L.^. MC.parsedBlocks)
+                                     ]
+    funcEntries = [ MC.discoveredFunAddr dfi
+                  | PU.Some dfi <- MC.exploredFunctions di
+                  ]
+    infos = M.fromList [ (concAddr, val)
+                       | (segOff, val) <- M.toList (di L.^. MC.funInfo)
+                       , Just concAddr <- return (concreteFromSegmentOff mem segOff)
+                       ]
+
 recoverBlocks :: (ArchBits arch w)
-              => ISA i a w
+              => (MC.ArchSegmentOff arch -> ST RealWorld ())
+              -> (MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i w arch) -> IO ())
+              -> ISA i a w
               -> (forall m . (C.MonadThrow m)  => B.ByteString -> m (Int, i ()))
               -- ^ A function to try to disassemble a single
               -- instruction from a bytestring, returning the number
@@ -59,32 +127,10 @@ recoverBlocks :: (ArchBits arch w)
               -> MC.Memory w
               -> NEL.NonEmpty (MC.MemSegmentOff w)
               -- ^ A list of entry points in the memory space
-              -> (Either E.SomeException (BlockInfo i w arch), [Diagnostic])
-recoverBlocks isa dis1 archInfo mem entries = runRecovery isa dis1 mem $ do
-   let di = MC.cfgFromAddrs archInfo mem MC.emptySymbolAddrMap (F.toList entries) []
-       absoluteBlockStarts = S.fromList [ entry
-                                        | PU.Some dfi <- M.elems (di  L.^. MC.funInfo)
-                                        , entry       <- {- trace (show (pretty dfi)) $ -} M.keys  (dfi L.^. MC.parsedBlocks)
-                                        ]
-       funcEntries = [ MC.discoveredFunAddr dfi
-                     | PU.Some dfi <- MC.exploredFunctions di
-                     ]
-       infos = M.fromList [ (concAddr, val)
-                          | (segOff, val) <- M.toList (di L.^. MC.funInfo)
-                          , Just concAddr <- return (concreteFromSegmentOff mem segOff)
-                          ]
-   -- traceM ("unexplored functions: " ++ show (di L.^. MC.unexploredFunctions))
-   -- traceM ("explored functions: " ++ show [pretty i | PU.Some i <- MC.exploredFunctions di])
-   -- traceM ("Discovered block starts: " ++ show absoluteBlockStarts)
-   blocks <- catMaybes <$> mapM (buildBlock isa dis1 mem (S.fromList (mapMaybe (concreteFromSegmentOff mem) (F.toList absoluteBlockStarts))))
-                                (F.toList absoluteBlockStarts)
-   let funcBlocks        = foldr insertBlocks M.empty blocks
-       insertBlocks cb m = M.adjust (cb:) (basicBlockAddress cb) m
-   return BlockInfo { biBlocks           = blocks
-                    , biFunctionEntries  = mapMaybe (concreteFromSegmentOff mem) funcEntries
-                    , biFunctionBlocks   = funcBlocks
-                    , biDiscoveryFunInfo = infos
-                    }
+              -> IO (Either E.SomeException (BlockInfo i w arch), [Diagnostic])
+recoverBlocks blockCallback funcCallback isa dis1 archInfo mem entries = do
+  di <- cfgFromAddrsWith isa dis1 blockCallback funcCallback archInfo mem MC.emptySymbolAddrMap (F.toList entries) []
+  blockInfo isa dis1 mem di
 
 -- | Build our representation of a basic block from a provided block
 -- start address
@@ -92,7 +138,7 @@ recoverBlocks isa dis1 archInfo mem entries = runRecovery isa dis1 mem $ do
 -- The block starts are obtained from Macaw.  We disassemble from the
 -- start address until we hit a terminator instruction or the start of
 -- another basic block.
-buildBlock :: (L.HasCallStack, MC.MemWidth w)
+buildBlock :: (L.HasCallStack, MC.MemWidth w, Monad m)
            => ISA i a w
            -> (B.ByteString -> Maybe (Int, i ()))
            -- ^ The function to pull a single instruction off of the
@@ -103,7 +149,7 @@ buildBlock :: (L.HasCallStack, MC.MemWidth w)
            -- ^ The set of all basic block entry points
            -> MC.MemSegmentOff w
            -- ^ The address to start disassembling this block from
-           -> Recovery i a w (Maybe (ConcreteBlock i w))
+           -> RecoveryT m i a w (Maybe (ConcreteBlock i w))
 buildBlock isa dis1 mem absStarts segAddr
   | Just concAddr <- concreteFromSegmentOff mem segAddr = do
       case MC.addrContentsAfter mem (MC.relativeSegmentAddr segAddr) of

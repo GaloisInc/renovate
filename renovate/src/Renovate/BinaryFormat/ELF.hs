@@ -37,6 +37,7 @@ import qualified Control.Lens as L
 import           Control.Monad ( guard, when )
 import qualified Control.Monad.Catch as C
 import qualified Control.Monad.Catch.Pure as P
+import qualified Control.Monad.IO.Class as IO
 import qualified Control.Monad.State.Strict as S
 import           Data.Bits ( Bits, (.|.) )
 import qualified Data.ByteString as B
@@ -189,9 +190,8 @@ rewriteElf :: (ISA.InstructionConstraints i a,
            -- (including statically-allocated data)
            -> RE.LayoutStrategy
            -- ^ The layout strategy for blocks in the new binary
-           -> Either C.SomeException (E.Elf w, b, RewriterInfo w)
-rewriteElf cfg e mem strat =
-  P.runCatch $ do
+           -> IO (E.Elf w, b, RewriterInfo w) -- (Either C.SomeException (E.Elf w, b, RewriterInfo w))
+rewriteElf cfg e mem strat = do
     (analysisResult, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
     return (_riELF ri, analysisResult, ri)
   where
@@ -209,9 +209,8 @@ analyzeElf :: (ISA.InstructionConstraints i a,
            -> MM.Memory w
            -- ^ A representation of the contents of memory of the ELF file
            -- (including statically-allocated data)
-           -> Either C.SomeException (b, [RM.Diagnostic])
-analyzeElf cfg e mem =
-  P.runCatch $ do
+           -> IO (b, [RM.Diagnostic])
+analyzeElf cfg e mem = do
     (b, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
     return (b, _riBlockRecoveryDiagnostics ri)
   where
@@ -787,7 +786,8 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
   elfEntryPoints@(entryPoint NEL.:| _) <- withCurrentELF $ \e -> return (findEntryPoints cfg e mem)
   let isa = rcISA cfg
       archInfo = rcArchInfo cfg
-  case R.recoverBlocks isa (rcDisassembler cfg) archInfo mem elfEntryPoints of
+  recRes <- IO.liftIO (R.recoverBlocks (rcBlockCallback cfg) (rcFunctionCallback cfg) isa (rcDisassembler cfg) archInfo mem elfEntryPoints)
+  case recRes of
     (Left exn1, diags1) -> do
       riBlockRecoveryDiagnostics L..= diags1
       C.throwM (BlockRecoveryFailure exn1 diags1)
@@ -839,7 +839,8 @@ analyzeTextSection cfg mem = do
 --  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
   let isa      = rcISA cfg
       archInfo = rcArchInfo cfg
-  case R.recoverBlocks isa (rcDisassembler cfg) archInfo mem elfEntryPoints of
+  recRes <- IO.liftIO (R.recoverBlocks (rcBlockCallback cfg) (rcFunctionCallback cfg) isa (rcDisassembler cfg) archInfo mem elfEntryPoints)
+  case recRes of -- R.recoverBlocks isa (rcDisassembler cfg) archInfo mem elfEntryPoints of
     (Left exn1, diags1) -> do
       riBlockRecoveryDiagnostics L..= diags1
       C.throwM (BlockRecoveryFailure exn1 diags1)
@@ -870,10 +871,11 @@ data ElfRewriteException = RewrittenTextSectionSizeMismatch Int Int
 deriving instance Show ElfRewriteException
 instance C.Exception ElfRewriteException
 
-newtype ElfRewriter w a = ElfRewriter { unElfRewrite :: S.StateT (RewriterInfo w) P.Catch a }
+newtype ElfRewriter w a = ElfRewriter { unElfRewrite :: S.StateT (RewriterInfo w) IO a }
                           deriving (Monad,
                                     Functor,
                                     Applicative,
+                                    IO.MonadIO,
                                     P.MonadThrow,
                                     S.MonadState (RewriterInfo w))
 

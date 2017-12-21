@@ -14,12 +14,15 @@ module Renovate.Config (
 
 import           GHC.TypeLits ( KnownNat )
 
+import qualified Control.Exception as X
 import qualified Control.Monad.Catch as C
+import           Control.Monad.ST ( ST, RealWorld )
 import qualified Data.ByteString as B
 import           Data.Typeable ( Typeable )
 
 import qualified Data.ElfEdit as E
 import qualified Data.Parameterized.NatRepr as NR
+import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Architecture.Info as MM
 import qualified Data.Macaw.Memory as MM
 
@@ -46,6 +49,8 @@ data RenovateConfig i a w arch b =
                  , rcDisassembler :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, i ())
                  , rcELFEntryPoints :: E.Elf w -> [MM.MemAddr w]
                  -- ^ Extra entry points that can be discovered from ELF files
+                 , rcBlockCallback :: MC.ArchSegmentOff arch -> ST RealWorld ()
+                 , rcFunctionCallback :: MC.ArchSegmentOff arch -> Either X.SomeException (R.BlockInfo i w arch) -> IO ()
                  , rcAnalysis      :: ISA.ISA i a w -> MM.Memory w -> R.BlockInfo i w arch -> b
                  , rcRewriter      :: b -> ISA.ISA i a w -> MM.Memory w -> B.SymbolicBlock i a w -> RW.RewriteM i w (Maybe [B.TaggedInstruction i a])
                  }
