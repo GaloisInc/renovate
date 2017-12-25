@@ -18,6 +18,7 @@ module Renovate.Arch.X86_64 (
   instrOpcode,
   instrOperands,
   -- * Types
+  X86.X86_64,
   Instruction,
   TargetAddress,
   Value,
