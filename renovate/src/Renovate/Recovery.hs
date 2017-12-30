@@ -34,6 +34,7 @@ import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
 import           Renovate.Recovery.Monad
+import           Renovate.Redirect.Monad ( SymbolMap )
 
 type ArchBits arch w = (w ~ MC.RegAddrWidth (MC.ArchReg arch),
                         MC.ArchConstraints arch,
@@ -125,12 +126,26 @@ recoverBlocks :: (ArchBits arch w)
               -- of bytes consumed and the instruction if successful
               -> MC.ArchitectureInfo arch
               -> MC.Memory w
+              -> SymbolMap w
               -> NEL.NonEmpty (MC.MemSegmentOff w)
               -- ^ A list of entry points in the memory space
               -> IO (Either E.SomeException (BlockInfo i w arch), [Diagnostic])
-recoverBlocks blockCallback funcCallback isa dis1 archInfo mem entries = do
-  di <- cfgFromAddrsWith isa dis1 blockCallback funcCallback archInfo mem MC.emptySymbolAddrMap (F.toList entries) []
+recoverBlocks blockCallback funcCallback isa dis1 archInfo mem symmap entries = do
+  sam <- toMacawSymbolMap mem symmap
+  di <- cfgFromAddrsWith isa dis1 blockCallback funcCallback archInfo mem sam (F.toList entries) []
   blockInfo isa dis1 mem di
+
+toMacawSymbolMap :: (MC.MemWidth w) => MC.Memory w -> SymbolMap w -> IO (MC.SymbolAddrMap w)
+toMacawSymbolMap mem sm =
+  case MC.symbolAddrMap (M.mapKeys toSegOff sm) of
+    Left err -> error err
+    Right sm' -> return sm'
+  where
+    toSegOff concAddr =
+      case concreteAsSegmentOff mem concAddr of
+        Nothing -> error ("Invalid concrete address: " ++ show concAddr)
+        Just so -> so
+
 
 -- | Build our representation of a basic block from a provided block
 -- start address

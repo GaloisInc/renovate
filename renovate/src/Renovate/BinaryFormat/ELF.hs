@@ -195,7 +195,9 @@ rewriteElf cfg e mem strat = do
     (analysisResult, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
     return (_riELF ri, analysisResult, ri)
   where
-    act = doRewrite cfg mem strat
+    act = do
+      symmap <- withCurrentELF (buildSymbolMap mem)
+      doRewrite cfg mem symmap strat
 
 analyzeElf :: (ISA.InstructionConstraints i a,
                E.ElfWidthConstraints w,
@@ -214,7 +216,9 @@ analyzeElf cfg e mem = do
     (b, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
     return (b, _riBlockRecoveryDiagnostics ri)
   where
-    act = doAnalysis cfg mem
+    act = do
+      symmap <- withCurrentELF (buildSymbolMap mem)
+      doAnalysis cfg mem symmap
 
 withElf :: E.SomeElf E.Elf -> (forall w . E.Elf w -> a) -> a
 withElf e k =
@@ -272,14 +276,14 @@ doRewrite :: (ISA.InstructionConstraints i a,
               R.ArchBits arch w)
           => RenovateConfig i a w arch b
           -> MM.Memory w
+          -> RM.SymbolMap w
           -> RE.LayoutStrategy
           -> ElfRewriter w b
-doRewrite cfg mem strat = do
+doRewrite cfg mem symmap strat = do
   -- We pull some information from the unmodified initial binary: the text
   -- section, the entry point(s), and original symbol table (if any).
   textSection <- withCurrentELF findTextSection
   -- (entryPoint, _otherEntries) <- withCurrentELF (entryPoints mem)
-  symmap <- withCurrentELF (buildSymbolMap mem)
   mBaseSymtab <- withCurrentELF getBaseSymbolTable
 
   -- Remove (and pad out) the sections whose size could change if we
@@ -352,8 +356,9 @@ doAnalysis :: (ISA.InstructionConstraints i a,
                R.ArchBits arch w)
            => RenovateConfig i a w arch b
            -> MM.Memory w
+           -> RM.SymbolMap w
            -> ElfRewriter w b
-doAnalysis cfg mem = do
+doAnalysis cfg mem symmap = do
 --  (entryPoint, _otherEntries) <- withCurrentELF (entryPoints mem)
 
   -- We need to compute our instrumentation address *after* we have
@@ -363,7 +368,7 @@ doAnalysis cfg mem = do
 --  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral nextSegmentAddress :: Word64)
   riSegmentVirtualAddress L..= Just (fromIntegral nextSegmentAddress)
 
-  analysisResult <- analyzeTextSection cfg mem
+  analysisResult <- analyzeTextSection cfg mem symmap
   return analysisResult
 
 buildSymbolMap :: Integral (E.ElfWordType w)
@@ -786,7 +791,7 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
   elfEntryPoints@(entryPoint NEL.:| _) <- withCurrentELF $ \e -> return (findEntryPoints cfg e mem)
   let isa = rcISA cfg
       archInfo = rcArchInfo cfg
-  recRes <- IO.liftIO (R.recoverBlocks (rcBlockCallback cfg) (rcFunctionCallback cfg) isa (rcDisassembler cfg) archInfo mem elfEntryPoints)
+  recRes <- IO.liftIO (R.recoverBlocks (rcBlockCallback cfg) (rcFunctionCallback cfg) isa (rcDisassembler cfg) archInfo mem symmap elfEntryPoints)
   case recRes of
     (Left exn1, diags1) -> do
       riBlockRecoveryDiagnostics L..= diags1
@@ -832,14 +837,15 @@ analyzeTextSection :: forall i a w arch b
                    => RenovateConfig i a w arch b
                    -> MM.Memory w
                    -- ^ The memory space
+                   -> RM.SymbolMap w
                    -> ElfRewriter w b
-analyzeTextSection cfg mem = do
+analyzeTextSection cfg mem symmap = do
   elfEntryPoints <- withCurrentELF $ \e -> return (findEntryPoints cfg e mem)
 --  traceM ("analyzeTextSection entry point: " ++ show entryPoint)
 --  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
   let isa      = rcISA cfg
       archInfo = rcArchInfo cfg
-  recRes <- IO.liftIO (R.recoverBlocks (rcBlockCallback cfg) (rcFunctionCallback cfg) isa (rcDisassembler cfg) archInfo mem elfEntryPoints)
+  recRes <- IO.liftIO (R.recoverBlocks (rcBlockCallback cfg) (rcFunctionCallback cfg) isa (rcDisassembler cfg) archInfo mem symmap elfEntryPoints)
   case recRes of -- R.recoverBlocks isa (rcDisassembler cfg) archInfo mem elfEntryPoints of
     (Left exn1, diags1) -> do
       riBlockRecoveryDiagnostics L..= diags1
