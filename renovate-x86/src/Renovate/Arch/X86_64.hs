@@ -17,6 +17,7 @@ module Renovate.Arch.X86_64 (
   -- * Utilities
   instrOpcode,
   instrOperands,
+  toFlexInst,
   -- * Types
   X86.X86_64,
   Instruction,
@@ -33,7 +34,7 @@ import qualified Data.Macaw.X86.ArchTypes as X86
 import           Renovate
 import           Renovate.Arch.X86_64.ABI
 import           Renovate.Arch.X86_64.ISA
-import           Renovate.Arch.X86_64.Internal ( Value, Instruction, TargetAddress, AssemblyFailure(..), DisassemblyFailure(..) )
+import           Renovate.Arch.X86_64.Internal ( Value, Instruction, TargetAddress, AssemblyFailure(..), DisassemblyFailure(..), toFlexInst )
 
 -- | The configuration for an x86_64 rewriter
 --
