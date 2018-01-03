@@ -233,9 +233,14 @@ withMemory :: forall w m a
            -> (MM.Memory w -> m a)
            -> m a
 withMemory e k =
-  case MM.memoryForElf (MM.LoadOptions MM.LoadBySegment False) e of
+  case MM.memoryForElf loadOpts e of
     Left err -> C.throwM (MemoryLoadError err)
     Right (_sim, mem) -> k mem
+  where
+    loadOpts = MM.LoadOptions { MM.loadStyle = MM.LoadBySegment
+                              , MM.includeBSS = False
+                              , MM.loadRegionIndex = 0
+                              }
 
 findTextSection :: E.Elf w -> ElfRewriter w (E.ElfSection (E.ElfWordType w))
 findTextSection e = do
