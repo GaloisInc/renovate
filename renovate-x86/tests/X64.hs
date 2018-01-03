@@ -108,10 +108,9 @@ testBlockRecovery :: (R.InstructionConstraints i a,
                   -> E.Elf w
                   -> MM.Memory w
                   -> T.Assertion
-testBlockRecovery rc elf mem =
-  case R.analyzeElf rc elf mem of
-    Left exn                -> T.assertFailure (show exn)
-    Right ((status,msgs),_) -> T.assertBool (unlines ("Analysis Failed:":msgs)) status
+testBlockRecovery rc elf mem = do
+  ((status, msgs), _) <- R.analyzeElf rc elf mem
+  T.assertBool (unlines ("Analysis Failed:" : msgs)) status
 
 withELF :: FilePath -> (E.Elf 64 -> IO ()) -> IO ()
 withELF fp k = do
