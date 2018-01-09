@@ -75,7 +75,7 @@ cfgFromAddrsWith :: (MC.MemWidth (MC.ArchAddrWidth arch))
                  -> (MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i (MC.ArchAddrWidth arch) arch) -> IO ())
                  -> MC.ArchitectureInfo arch
                  -> MC.Memory (MC.ArchAddrWidth arch)
-                 -> MC.SymbolAddrMap (MC.ArchAddrWidth arch)
+                 -> MC.AddrSymMap (MC.ArchAddrWidth arch)
                  -> [MC.ArchSegmentOff arch]
                  -> [(MC.ArchSegmentOff arch, MC.ArchSegmentOff arch)]
                  -> IO (MC.DiscoveryState arch)
@@ -135,11 +135,8 @@ recoverBlocks blockCallback funcCallback isa dis1 archInfo mem symmap entries = 
   di <- cfgFromAddrsWith isa dis1 blockCallback funcCallback archInfo mem sam (F.toList entries) []
   blockInfo isa dis1 mem di
 
-toMacawSymbolMap :: (MC.MemWidth w) => MC.Memory w -> SymbolMap w -> IO (MC.SymbolAddrMap w)
-toMacawSymbolMap mem sm =
-  case MC.symbolAddrMap (M.mapKeys toSegOff sm) of
-    Left err -> error err
-    Right sm' -> return sm'
+toMacawSymbolMap :: (MC.MemWidth w) => MC.Memory w -> SymbolMap w -> IO (MC.AddrSymMap w)
+toMacawSymbolMap mem sm = return (M.mapKeys toSegOff sm)
   where
     toSegOff concAddr =
       case concreteAsSegmentOff mem concAddr of
