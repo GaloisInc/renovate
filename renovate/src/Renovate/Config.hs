@@ -82,6 +82,12 @@ data RenovateConfig i a w arch b =
                  -- ^ The base address to start laying out new code
                  , rcDataLayoutBase :: Word64
                  -- ^ The base address to start laying out new data
+                 , rcUpdateSymbolTable :: Bool
+                 -- ^ True if the symbol table should be updated; this is a
+                 -- temporary measure.  Our current method for updating the
+                 -- symbol table does not work for PowerPC, so we don't want to
+                 -- do it there.  Long term, we want to figure out how to update
+                 -- PowerPC safely.
                  }
 
 -- | Compose a list of instrumentation functions into a single

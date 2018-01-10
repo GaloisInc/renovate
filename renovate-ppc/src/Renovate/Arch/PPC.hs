@@ -52,6 +52,7 @@ config32 tocMap analysis rewriter =
                  , rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC32)
                  , rcAnalysis = analysis
                  , rcRewriter = rewriter
+                 , rcUpdateSymbolTable = False
                  -- See Note [Layout Addresses]
                  , rcCodeLayoutBase = 0x20000000
                  , rcDataLayoutBase = 0x30000000
@@ -73,6 +74,7 @@ config64 tocMap analysis rewriter =
                  , rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC64)
                  , rcAnalysis = analysis
                  , rcRewriter = rewriter
+                 , rcUpdateSymbolTable = False
                  -- See Note [Layout Addresses]
                  , rcCodeLayoutBase = 0x20000000
                  , rcDataLayoutBase = 0x30000000

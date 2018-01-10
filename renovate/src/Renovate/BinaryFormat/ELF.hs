@@ -303,7 +303,8 @@ doRewrite cfg mem symmap strat = do
   let layoutAddr = RA.concreteFromAbsolute (fromIntegral nextSegmentAddress)
       -- FIXME: This is wrong; it doesn't account for the required alignment we
       -- need.  That is a big challenge because it depends on how much code we
-      -- generate.
+      -- generate.  Maybe we can do something with congruence where we waste up
+      -- to a page of space to maintain alignment.
       dataAddr = RA.concreteFromAbsolute (fromIntegral (rcDataLayoutBase cfg))
       textSectionStartAddr = RA.concreteFromAbsolute (fromIntegral (E.elfSectionAddr textSection))
       textSectionEndAddr = RA.addressAddOffset mem textSectionStartAddr (fromIntegral ((E.elfSectionSize textSection)))
@@ -334,10 +335,11 @@ doRewrite cfg mem symmap strat = do
   newProgramHeaderSeg <- withCurrentELF (newProgramHeaderSegment baseAddr)
   modifyCurrentELF (appendSegment newProgramHeaderSeg)
   case mBaseSymtab of
-    Nothing -> return ()
-    Just baseSymtab -> do
-      newSymtab <- withCurrentELF (buildNewSymbolTable (E.elfSectionIndex textSection) extraTextSecIdx layoutAddr newSyms baseSymtab)
-      modifyCurrentELF (appendDataRegion (E.ElfDataSymtab newSymtab))
+    Just baseSymtab
+      | rcUpdateSymbolTable cfg -> do
+          newSymtab <- withCurrentELF (buildNewSymbolTable (E.elfSectionIndex textSection) extraTextSecIdx layoutAddr newSyms baseSymtab)
+          modifyCurrentELF (appendDataRegion (E.ElfDataSymtab newSymtab))
+    _ -> return ()
   modifyCurrentELF appendHeaders
 
   -- Now overwrite the original code (in the .text segment) with the

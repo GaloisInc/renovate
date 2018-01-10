@@ -60,6 +60,7 @@ config analysis rewriter =
     , rcELFEntryPoints = const []
     , rcAnalysis      = analysis
     , rcRewriter      = rewriter
+    , rcUpdateSymbolTable = True
     -- See Note [Layout Addresses]
     , rcCodeLayoutBase = 0x800000
     , rcDataLayoutBase = 0xa00000
