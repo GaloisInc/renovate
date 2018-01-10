@@ -81,17 +81,6 @@ debug = flip trace
 pageAlignment :: Word32
 pageAlignment = 0x1000
 
--- | The first address we would place our instrumentation at.
---
--- This is arbitrary (and not necessarily always correct, if there is
--- a huge data section).  The normal .text section is at 0x400000,
--- while data is at 0x600000.
-instrumentationBase :: Word32
-instrumentationBase = 0x800000
-
-newDataSectionBase :: Word32
-newDataSectionBase  = 0xa00000
-
 -- | Statistics gathered and diagnostics generated during the
 -- rewriting phase.
 data RewriterInfo w =
@@ -300,7 +289,7 @@ doRewrite cfg mem symmap strat = do
   -- We need to compute our instrumentation address *after* we have
   -- removed all of the possibly dynamic sections and ensured that
   -- everything will line up.
-  nextSegmentAddress <- withCurrentELF (segmentLayoutAddress instrumentationBase)
+  nextSegmentAddress <- withCurrentELF (segmentLayoutAddress (rcCodeLayoutBase cfg))
 --  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral nextSegmentAddress :: Word64)
   riSegmentVirtualAddress L..= Just (fromIntegral nextSegmentAddress)
 
@@ -312,7 +301,10 @@ doRewrite cfg mem symmap strat = do
   -- (instrumentedBytes), which will be placed at the address computed
   -- above.
   let layoutAddr = RA.concreteFromAbsolute (fromIntegral nextSegmentAddress)
-      dataAddr = RA.concreteFromAbsolute (fromIntegral newDataSectionBase)
+      -- FIXME: This is wrong; it doesn't account for the required alignment we
+      -- need.  That is a big challenge because it depends on how much code we
+      -- generate.
+      dataAddr = RA.concreteFromAbsolute (fromIntegral (rcDataLayoutBase cfg))
       textSectionStartAddr = RA.concreteFromAbsolute (fromIntegral (E.elfSectionAddr textSection))
       textSectionEndAddr = RA.addressAddOffset mem textSectionStartAddr (fromIntegral ((E.elfSectionSize textSection)))
 
@@ -335,7 +327,7 @@ doRewrite cfg mem symmap strat = do
   case mNewData of
     Nothing -> return ()
     Just newData -> do
-      dataSegAddr <- withCurrentELF (segmentLayoutAddress newDataSectionBase)
+      dataSegAddr <- withCurrentELF (segmentLayoutAddress (rcDataLayoutBase cfg))
       newDataSeg <- withCurrentELF (newDataSegment dataSegAddr newData)
       modifyCurrentELF (appendSegment newDataSeg)
   baseAddr            <- withCurrentELF findBaseAddr
@@ -369,7 +361,7 @@ doAnalysis cfg mem symmap = do
   -- We need to compute our instrumentation address *after* we have
   -- removed all of the possibly dynamic sections and ensured that
   -- everything will line up.
-  nextSegmentAddress <- withCurrentELF (segmentLayoutAddress instrumentationBase)
+  nextSegmentAddress <- withCurrentELF (segmentLayoutAddress (rcCodeLayoutBase cfg))
 --  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral nextSegmentAddress :: Word64)
   riSegmentVirtualAddress L..= Just (fromIntegral nextSegmentAddress)
 
@@ -647,9 +639,8 @@ elfDataRegionName r =
 -- virtual address for the segment will be divisible by the executable
 -- alignment (0x20000), but they will be congruent (i.e., have the
 -- same remainder).
-segmentLayoutAddress :: Num (E.ElfWordType w)
-                     => Integral (E.ElfWordType w)
-                     => Word32
+segmentLayoutAddress :: (Num (E.ElfWordType w), Integral (E.ElfWordType w))
+                     => Word64
                      -> E.Elf w
                      -> ElfRewriter w (E.ElfWordType w)
 segmentLayoutAddress segBaseAddr e = do

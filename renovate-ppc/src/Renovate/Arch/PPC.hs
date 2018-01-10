@@ -52,6 +52,9 @@ config32 tocMap analysis rewriter =
                  , rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC32)
                  , rcAnalysis = analysis
                  , rcRewriter = rewriter
+                 -- See Note [Layout Addresses]
+                 , rcCodeLayoutBase = 0x20000000
+                 , rcDataLayoutBase = 0x30000000
                  }
 
 config64 :: (MM.MemWidth w, w ~ 64)
@@ -70,4 +73,15 @@ config64 tocMap analysis rewriter =
                  , rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC64)
                  , rcAnalysis = analysis
                  , rcRewriter = rewriter
+                 -- See Note [Layout Addresses]
+                 , rcCodeLayoutBase = 0x20000000
+                 , rcDataLayoutBase = 0x30000000
                  }
+
+{- Note [Layout Addresses]
+
+In PowerPC (at least in the v1 ABI for PowerPC 64), everything seems to start
+around address 0x10000000.  We choose addresses far from there for our new code
+and data.
+
+-}
