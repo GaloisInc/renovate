@@ -50,7 +50,7 @@ compactLayout startAddr strat blocks = do
                              -- the heap and we avoid sorting the input
                              -- blocklist.
            then return mempty
-           else buildAddressHeap startAddr (fmap lpOrig blocks)
+           else buildAddressHeap startAddr blocks
 
   -- Augment all symbolic blocks such that fallthrough behavior is explicitly
   -- represented with symbolic unconditional jumps.
@@ -243,7 +243,7 @@ appendUnconditionalJump isa symSucIdx cb sb =
 
 buildAddressHeap :: (MM.MemWidth w, Foldable t, Monad m)
                  => ConcreteAddress w
-                 -> t (ConcreteBlock i w)
+                 -> t (SymbolicPair i a w)
                  -> RewriterT i a w m (AddressHeap w)
 buildAddressHeap startAddr blocks = do
   isa <- askISA
@@ -259,15 +259,19 @@ buildAddressHeap startAddr blocks = do
 --
 -- We actually insert the negation of the available space into the heap so that
 -- extracting the minimum value yields the largest block possible.
+--
+-- NOTE: We only add blocks that have been *modified*.  If a block is
+-- unmodified, overwriting it would throw away code, as we don't lay out
+-- duplicates of unmodified blocks.
 addOriginalBlock :: (MM.MemWidth w)
                  => ISA i a w
                  -> MM.Memory w
                  -> Word64
                  -> AddressHeap w
-                 -> ConcreteBlock i w
+                 -> SymbolicPair i a w
                  -> AddressHeap w
-addOriginalBlock isa mem jumpSize h cb
-  | bsize > jumpSize =
+addOriginalBlock isa mem jumpSize h (LayoutPair cb _ status)
+  | bsize > jumpSize && status == Modified =
     H.insert (H.Entry (Down spaceSize) addr) h
   | otherwise = h
   where
