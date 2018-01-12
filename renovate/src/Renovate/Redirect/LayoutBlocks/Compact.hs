@@ -103,7 +103,7 @@ assignConcreteAddress :: (Monad m, MM.MemWidth w)
                       -> RewriterT i a w m (AddressAssignedPair i a w)
 assignConcreteAddress assignedAddrs (LayoutPair cb sb Modified) = do
   case M.lookup (basicBlockAddress sb) assignedAddrs of
-    Nothing -> L.error $ printf "Expected an assigned address for symbolic block %d (derived from concrete block %d)"
+    Nothing -> L.error $ printf "Expected an assigned address for symbolic block %s (derived from concrete block %s)"
                                 (show (basicBlockAddress sb))
                                 (show (basicBlockAddress cb))
     Just addr -> return (LayoutPair cb (AddressAssignedBlock sb addr) Modified)

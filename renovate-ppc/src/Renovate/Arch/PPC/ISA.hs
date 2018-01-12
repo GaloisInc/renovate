@@ -104,9 +104,9 @@ ppcMakePadding nBytes
 ppcMakeRelativeJumpTo :: (MM.MemWidth w) => ConcreteAddress w -> ConcreteAddress w -> [Instruction ()]
 ppcMakeRelativeJumpTo srcAddr targetAddr
   | offset `mod` 4 /= 0 =
-    error (printf "Unaligned jump with source=%d and target=%d" (show srcAddr) (show targetAddr))
+    error (printf "Unaligned jump with source=%s and target=%s" (show srcAddr) (show targetAddr))
   | offset >= 2 ^ (25 :: Int) =
-    error (printf "Jump target is too far away with source=%d and target=%d" (show srcAddr) (show targetAddr))
+    error (printf "Jump target is too far away with source=%s and target=%s" (show srcAddr) (show targetAddr))
   | otherwise = [fromInst jumpInstr]
   where
     -- We are limited to 24 + 2 bits of offset, where the low two bits must be zero.
