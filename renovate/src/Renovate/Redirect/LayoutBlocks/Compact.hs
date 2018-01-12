@@ -61,7 +61,7 @@ compactLayout startAddr strat blocks = do
   mem     <- askMem
   let (modifiedBlocks, unmodifiedBlocks) = L.partition (\b -> lpStatus b == Modified)
                                                        (F.toList blocks)
-  blocks' <- reifyFallthroughSuccessors mem modifiedBlocks
+  blocks' <- reifyFallthroughSuccessors mem modifiedBlocks blocks
 
   -- Either, a) Sort all of the instrumented blocks by size
   --         b) Randomize the order of the blocks.
@@ -170,13 +170,17 @@ allocateBlockAddress isa mem (newTextAddr, h, m) sb =
 -- unconditional jumps).
 --
 -- A block has fallthrough behavior if it does not end in an unconditional jump.
-reifyFallthroughSuccessors :: (Traversable t, Monad m, MM.MemWidth w)
+reifyFallthroughSuccessors :: (Traversable t, Monad m, MM.MemWidth w, Traversable t')
                            => MM.Memory w
                            -> t (SymbolicPair i a w)
+                           -- ^ The modified blocks
+                           -> t' (SymbolicPair i a w)
+                           -- ^ All blocks (which we need to compute the fallthrough address index)
                            -> RewriterT i a w m (t (SymbolicPair i a w))
-reifyFallthroughSuccessors mem blocks = T.traverse (addExplicitFallthrough mem symSuccIdx) blocks
+reifyFallthroughSuccessors mem modifiedBlocks allBlocks =
+  T.traverse (addExplicitFallthrough mem symSuccIdx) modifiedBlocks
   where
-    blist0 = F.toList (fmap lpNew blocks)
+    blist0 = F.toList (fmap lpNew allBlocks)
     symSuccs | length blist0 > 1 = zip blist0 (tail blist0)
              | otherwise = []
     -- An index mapping the symbolic address of a symbolic basic block to the
