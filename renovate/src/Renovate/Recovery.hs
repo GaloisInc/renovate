@@ -96,7 +96,7 @@ blockInfo :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch)))
 blockInfo isa dis1 mem di = runRecoveryT isa dis1 mem $ do
   blocks <- catMaybes <$> mapM (buildBlock isa dis1 mem (S.fromList (mapMaybe (concreteFromSegmentOff mem) (F.toList absoluteBlockStarts))))
                                (F.toList absoluteBlockStarts)
-  let insertBlocks cb m = M.adjust (cb:) (basicBlockAddress cb) m
+  let insertBlocks cb m = M.alter (Just . maybe [cb] (cb:)) (basicBlockAddress cb) m
   let funcBlocks = foldr insertBlocks M.empty blocks
   return BlockInfo { biBlocks = blocks
                    , biFunctionEntries = mapMaybe (concreteFromSegmentOff mem) funcEntries
