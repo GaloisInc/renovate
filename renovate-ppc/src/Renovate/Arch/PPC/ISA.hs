@@ -255,7 +255,7 @@ newJumpOffset nBits srcAddr targetAddr
     error (printf "Jump offset too large between src=%s and target=%s" (show srcAddr) (show targetAddr))
   | otherwise = fromIntegral rawOff
   where
-    rawOff = srcAddr `addressDiff` targetAddr
+    rawOff = targetAddr `addressDiff` srcAddr
 
 -- | Convert the 'Instruction' wrapper to the base instruction type, dropping
 -- annotations.
