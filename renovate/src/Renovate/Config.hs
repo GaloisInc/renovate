@@ -66,10 +66,10 @@ data RenovateConfig i a w arch b =
                  , rcDisassembler :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, i ())
                  , rcELFEntryPoints :: E.Elf w -> [MM.MemAddr w]
                  -- ^ Extra entry points that can be discovered from ELF files
-                 , rcBlockCallback :: MC.ArchSegmentOff arch -> ST RealWorld ()
+                 , rcBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
                  -- ^ A callback called for each discovered block; the argument
                  -- is the address of the discovered block
-                 , rcFunctionCallback :: MC.ArchSegmentOff arch -> Either X.SomeException (R.BlockInfo i w arch) -> IO ()
+                 , rcFunctionCallback :: Maybe (MC.ArchSegmentOff arch -> Either X.SomeException (R.BlockInfo i w arch) -> IO ())
                  -- ^ A callback called for each discovered function.  The
                  -- arguments are the address of the discovered function and the
                  -- recovery info (a summary of the information returned by
