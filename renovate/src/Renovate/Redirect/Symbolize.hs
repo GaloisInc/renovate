@@ -13,6 +13,7 @@ import qualified Data.Foldable as F
 import qualified Data.Map as M
 import qualified Data.Traversable as T
 import           Data.Typeable ( Typeable )
+import           Text.Printf ( printf )
 
 import           Prelude
 
@@ -70,20 +71,20 @@ symbolizeJumps symAddrMap (cb, symAddr) = do
   isa <- askISA
   mem <- askMem
   let addOff = addressAddOffset mem
-  insns <- T.forM (instructionAddresses isa mem cb) $ \(i, addr) -> do
+  insns <- T.forM (instructionAddresses isa mem cb) $ \iaddr@(i, addr) -> do
     case isaJumpType isa i mem addr of
       AbsoluteJump _ target -> do
-        symTarget <- lookupSymbolicAddress target
+        symTarget <- lookupSymbolicAddress isa iaddr target
         return $ tag (isaSymbolizeAddresses isa mem addr (promoteJump isa i)) (Just symTarget)
       RelativeJump _ _ offset -> do
-        symTarget <- lookupSymbolicAddress (addr `addOff` offset)
+        symTarget <- lookupSymbolicAddress isa iaddr (addr `addOff` offset)
         return $ tag (isaSymbolizeAddresses isa mem addr (promoteJump isa i)) (Just symTarget)
       IndirectJump _ ->
         -- We do not know the destination of indirect jumps, so we
         -- can't tag them (or rewrite them later)
         return $ tag (isaSymbolizeAddresses isa mem addr (promoteJump isa i)) Nothing
       DirectCall _ offset -> do
-        symTarget <- lookupSymbolicAddress (addr `addOff` offset)
+        symTarget <- lookupSymbolicAddress isa iaddr (addr `addOff` offset)
         return $ tag (isaSymbolizeAddresses isa mem addr i) (Just symTarget)
       IndirectCall ->
         return $ tag (isaSymbolizeAddresses isa mem addr i) Nothing
@@ -100,7 +101,7 @@ symbolizeJumps symAddrMap (cb, symAddr) = do
       let Just [pj] = isaModifyJumpTarget isa i concAddr concAddr
       in pj
     concAddr = basicBlockAddress cb
-    lookupSymbolicAddress target =
+    lookupSymbolicAddress isa (i, addr) target =
       case M.lookup target symAddrMap of
         Just saddr -> return saddr
         Nothing -> do
@@ -108,7 +109,7 @@ symbolizeJumps symAddrMap (cb, symAddr) = do
           -- traceM ("symAddrs:  \n" ++ show (PD.vcat ((\(k, a) -> PD.pretty (show k) PD.<+> PD.pretty "=>" PD.<+> PD.pretty a) <$>
           --                                       (M.toList symAddrMap))))
           let err :: Diagnostic
-              err = NoSymbolicAddressForTarget target "symbolizeJumps"
+              err = NoSymbolicAddressForTarget (printf "%s:%s" (show addr) (isaPrettyInstruction isa i)) target "symbolizeJumps"
           logDiagnostic err
           throwError err
 

@@ -18,7 +18,7 @@ import           Renovate.Address
 
 -- | The types of diagnostic messages that can be generated during rewriting or
 -- recovery.
-data Diagnostic = forall w. MC.MemWidth w => NoSymbolicAddressForTarget (ConcreteAddress w) String
+data Diagnostic = forall w. MC.MemWidth w => NoSymbolicAddressForTarget String (ConcreteAddress w) String
                   -- ^ A concrete address was expected to have a
                   -- symbolic equivalent, but it did not.  The string
                   -- describes the context in which the address was
