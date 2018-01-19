@@ -157,7 +157,10 @@ ppcJumpType i _mem insnAddr =
       case operands of
         D.Directbrtarget (D.BT offset) D.:< D.Nil ->
           RelativeJump Unconditional insnAddr (fromIntegral (offset `shiftL` 2))
-        D.Condbrtarget (D.CBT offset) D.:< _ D.:< D.Nil ->
+        -- GBC has an extra argument generalizing to include a branch hint
+        D.Condbrtarget (D.CBT offset) D.:< _crbit D.:< _bh D.:< D.Nil ->
+          RelativeJump Conditional insnAddr (fromIntegral (offset `shiftL` 2))
+        D.Condbrtarget (D.CBT offset) D.:< _crbit D.:< D.Nil ->
           RelativeJump Conditional insnAddr (fromIntegral (offset `shiftL` 2))
         D.Condbrtarget (D.CBT offset) D.:< D.Nil ->
           case opc of
@@ -168,6 +171,8 @@ ppcJumpType i _mem insnAddr =
         D.Absdirectbrtarget _ D.:< D.Nil ->
           error ("Absolute jumps are not supported: " ++ showF opc)
         D.Abscondbrtarget _ D.:< D.Nil ->
+          error ("Absolute jumps are not supported: " ++ showF opc)
+        D.Abscondbrtarget _ D.:< _ D.:< _ D.:< D.Nil ->
           error ("Absolute jumps are not supported: " ++ showF opc)
         D.Nil ->
           case opc of
@@ -197,10 +202,13 @@ ppcJumpType i _mem insnAddr =
           case opc of
             -- Conditional branch through the CTR register
             D.BCCTR -> IndirectJump Conditional
+            D.GBCCTR -> IndirectJump Conditional
             -- This is a call because it is setting the link register and could
             -- return to the next instruction
             D.BCCTRL -> IndirectCall
             D.BCL -> IndirectCall
+            D.GBCL -> IndirectCall
+            D.GBCCTRL -> IndirectCall
             -- Syscall
             D.SC -> IndirectCall
             -- Traps
@@ -208,6 +216,9 @@ ppcJumpType i _mem insnAddr =
             D.TWI -> IndirectCall
             D.TD -> IndirectCall
             D.TDI -> IndirectCall
+            -- Returns with extra operands
+            D.GBCLR -> Return
+            D.GBCLRL -> Return
             _ -> NoJump
 
 -- | Given a jump instruction and a new target address, update the jump
