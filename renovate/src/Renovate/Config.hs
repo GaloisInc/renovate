@@ -69,11 +69,12 @@ data RenovateConfig i a w arch b =
                  , rcBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
                  -- ^ A callback called for each discovered block; the argument
                  -- is the address of the discovered block
-                 , rcFunctionCallback :: Maybe (MC.ArchSegmentOff arch -> Either X.SomeException (R.BlockInfo i w arch) -> IO ())
+                 , rcFunctionCallback :: Maybe (Int, MC.ArchSegmentOff arch -> Either X.SomeException (R.BlockInfo i w arch) -> IO ())
                  -- ^ A callback called for each discovered function.  The
                  -- arguments are the address of the discovered function and the
                  -- recovery info (a summary of the information returned by
-                 -- macaw)
+                 -- macaw).  The 'Int' is the number of iterations before
+                 -- calling the function callback.
                  , rcAnalysis      :: ISA.ISA i a w -> MM.Memory w -> R.BlockInfo i w arch -> b
                  -- ^ An analysis to run over the code discovered by macaw, generating a summary of type @b@
                  , rcRewriter      :: b -> ISA.ISA i a w -> MM.Memory w -> B.SymbolicBlock i a w -> RW.RewriteM i w (Maybe [B.TaggedInstruction i a])

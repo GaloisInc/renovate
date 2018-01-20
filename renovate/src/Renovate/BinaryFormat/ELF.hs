@@ -791,12 +791,12 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
       archInfo = rcArchInfo cfg
   recRes <- IO.liftIO (R.recoverBlocks (rcBlockCallback cfg) (rcFunctionCallback cfg) isa (rcDisassembler cfg) archInfo mem symmap elfEntryPoints)
   case recRes of
-    (Left exn1, diags1) -> do
-      riBlockRecoveryDiagnostics L..= diags1
-      C.throwM (BlockRecoveryFailure exn1 diags1)
-    (Right blockInfo, diags1) -> do
+    Left exn1 -> do
+      riBlockRecoveryDiagnostics L..= []
+      C.throwM (BlockRecoveryFailure exn1 [])
+    Right blockInfo -> do
 --      traceM "Recovered blocks with macaw"
-      riBlockRecoveryDiagnostics L..= diags1
+      riBlockRecoveryDiagnostics L..= []
       let blocks = R.biBlocks blockInfo
       riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
       let cfgs = FR.recoverFunctions isa mem blockInfo
@@ -845,12 +845,12 @@ analyzeTextSection cfg mem symmap = do
       archInfo = rcArchInfo cfg
   recRes <- IO.liftIO (R.recoverBlocks (rcBlockCallback cfg) (rcFunctionCallback cfg) isa (rcDisassembler cfg) archInfo mem symmap elfEntryPoints)
   case recRes of -- R.recoverBlocks isa (rcDisassembler cfg) archInfo mem elfEntryPoints of
-    (Left exn1, diags1) -> do
-      riBlockRecoveryDiagnostics L..= diags1
-      C.throwM (BlockRecoveryFailure exn1 diags1)
-    (Right blockInfo, diags1) -> do
+    Left exn1 -> do
+      riBlockRecoveryDiagnostics L..= []
+      C.throwM (BlockRecoveryFailure exn1 [])
+    Right blockInfo -> do
 --      traceM "Recovered blocks with macaw"
-      riBlockRecoveryDiagnostics L..= diags1
+      riBlockRecoveryDiagnostics L..= []
       let blocks = R.biBlocks blockInfo
       riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
       return $! (rcAnalysis cfg) isa mem blockInfo

@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -56,28 +57,27 @@ analyzeDiscoveredFunctions :: (MC.MemWidth (MC.ArchAddrWidth arch))
                            -> (forall m . (C.MonadThrow m)  => B.ByteString -> m (Int, i ()))
                            -> MC.Memory (MC.ArchAddrWidth arch)
                            -> Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
-                           -> Maybe (MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i (MC.ArchAddrWidth arch) arch) -> IO ())
+                           -> Maybe (Int, MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i (MC.ArchAddrWidth arch) arch) -> IO ())
                            -> MC.DiscoveryState arch
+                           -> Int
+                           -- ^ Iteration count
                            -> IO (MC.DiscoveryState arch)
-analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback info =
+analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback info !iterations =
   case M.lookupMin (info L.^. MC.unexploredFunctions) of
     Nothing -> return info
     Just (addr, rsn) -> do
       (info', _) <- stToIO (MC.analyzeFunction (fromMaybe (const (return ())) blockCallback) addr rsn info)
       case funcCallback of
-        Nothing -> return ()
-        Just fcb -> do
-          (ebi, _diags) <- blockInfo isa dis1 mem info'
-          fcb addr ebi
-      analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback info'
-
--- FIXME: Change the callback to only construct the block info if there is actually a callback.
+        Just (freq, fcb)
+          | iterations `mod` freq == 0 -> fcb addr (blockInfo isa dis1 mem info')
+        _ -> return ()
+      analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback info' (iterations + 1)
 
 cfgFromAddrsWith :: (MC.MemWidth (MC.ArchAddrWidth arch))
                  => ISA i a (MC.ArchAddrWidth arch)
                  -> (forall m . (C.MonadThrow m)  => B.ByteString -> m (Int, i ()))
                  -> Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
-                 -> Maybe (MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i (MC.ArchAddrWidth arch) arch) -> IO ())
+                 -> Maybe (Int, MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i (MC.ArchAddrWidth arch) arch) -> IO ())
                  -> MC.ArchitectureInfo arch
                  -> MC.Memory (MC.ArchAddrWidth arch)
                  -> MC.AddrSymMap (MC.ArchAddrWidth arch)
@@ -86,21 +86,21 @@ cfgFromAddrsWith :: (MC.MemWidth (MC.ArchAddrWidth arch))
                  -> IO (MC.DiscoveryState arch)
 cfgFromAddrsWith isa dis1 blockCallback funcCallback archInfo mem symbols initAddrs memWords = do
   let s1 = MC.markAddrsAsFunction MC.InitAddr initAddrs s0
-  s2 <- analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback s1
+  s2 <- analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback s1 0
   let s3 = MC.exploreMemPointers memWords s2
-  analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback s3
+  analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback s3 0
   where
     s0 = MC.emptyDiscoveryState mem symbols archInfo
 
-blockInfo :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch)))
+blockInfo :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch)), C.MonadThrow m)
           => ISA i a (MC.RegAddrWidth (MC.ArchReg arch))
-          -> (forall m . (C.MonadThrow m) => B.ByteString -> m (Int, i ()))
+          -> (B.ByteString -> Maybe (Int, i ()))
           -> MC.Memory (MC.RegAddrWidth (MC.ArchReg arch))
           -> MC.DiscoveryState arch
-          -> IO (Either C.SomeException (BlockInfo i (MC.RegAddrWidth (MC.ArchReg arch)) arch), [Diagnostic])
-blockInfo isa dis1 mem di = runRecoveryT isa dis1 mem $ do
-  blocks <- catMaybes <$> mapM (buildBlock isa dis1 mem (S.fromList (mapMaybe (concreteFromSegmentOff mem) (F.toList absoluteBlockStarts))))
-                               (F.toList absoluteBlockStarts)
+          -> m (BlockInfo i (MC.RegAddrWidth (MC.ArchReg arch)) arch)
+blockInfo isa dis1 mem di = do
+  let blockBuilder = buildBlock isa dis1 mem (S.fromList (mapMaybe (concreteFromSegmentOff mem) (F.toList absoluteBlockStarts)))
+  blocks <- catMaybes <$> mapM blockBuilder (F.toList absoluteBlockStarts)
   let insertBlocks cb m = M.alter (Just . maybe [cb] (cb:)) (basicBlockAddress cb) m
   let funcBlocks = foldr insertBlocks M.empty blocks
   return BlockInfo { biBlocks = blocks
@@ -123,7 +123,7 @@ blockInfo isa dis1 mem di = runRecoveryT isa dis1 mem $ do
 
 recoverBlocks :: (ArchBits arch w)
               => Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
-              -> Maybe (MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i w arch) -> IO ())
+              -> Maybe (Int, MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i w arch) -> IO ())
               -> ISA i a w
               -> (forall m . (C.MonadThrow m)  => B.ByteString -> m (Int, i ()))
               -- ^ A function to try to disassemble a single
@@ -134,11 +134,11 @@ recoverBlocks :: (ArchBits arch w)
               -> SymbolMap w
               -> NEL.NonEmpty (MC.MemSegmentOff w)
               -- ^ A list of entry points in the memory space
-              -> IO (Either E.SomeException (BlockInfo i w arch), [Diagnostic])
+              -> IO (Either E.SomeException (BlockInfo i w arch))
 recoverBlocks blockCallback funcCallback isa dis1 archInfo mem symmap entries = do
   sam <- toMacawSymbolMap mem symmap
   di <- cfgFromAddrsWith isa dis1 blockCallback funcCallback archInfo mem sam (F.toList entries) []
-  blockInfo isa dis1 mem di
+  return (blockInfo isa dis1 mem di)
 
 toMacawSymbolMap :: (MC.MemWidth w) => MC.Memory w -> SymbolMap w -> IO (MC.AddrSymMap w)
 toMacawSymbolMap mem sm = return (M.mapKeys toSegOff sm)
@@ -155,7 +155,7 @@ toMacawSymbolMap mem sm = return (M.mapKeys toSegOff sm)
 -- The block starts are obtained from Macaw.  We disassemble from the
 -- start address until we hit a terminator instruction or the start of
 -- another basic block.
-buildBlock :: (L.HasCallStack, MC.MemWidth w, Monad m)
+buildBlock :: (L.HasCallStack, MC.MemWidth w, C.MonadThrow m)
            => ISA i a w
            -> (B.ByteString -> Maybe (Int, i ()))
            -- ^ The function to pull a single instruction off of the
@@ -166,7 +166,7 @@ buildBlock :: (L.HasCallStack, MC.MemWidth w, Monad m)
            -- ^ The set of all basic block entry points
            -> MC.MemSegmentOff w
            -- ^ The address to start disassembling this block from
-           -> RecoveryT m i a w (Maybe (ConcreteBlock i w))
+           -> m (Maybe (ConcreteBlock i w))
 buildBlock isa dis1 mem absStarts segAddr
   | Just concAddr <- concreteFromSegmentOff mem segAddr = do
       case MC.addrContentsAfter mem (MC.relativeSegmentAddr segAddr) of
