@@ -50,7 +50,7 @@ compactLayout startAddr strat blocks = do
                              -- the heap and we avoid sorting the input
                              -- blocklist.
            then return mempty
-           else buildAddressHeap startAddr (fmap lpOrig blocks)
+           else buildAddressHeap startAddr blocks
 
   -- Augment all symbolic blocks such that fallthrough behavior is explicitly
   -- represented with symbolic unconditional jumps.
@@ -61,7 +61,7 @@ compactLayout startAddr strat blocks = do
   mem     <- askMem
   let (modifiedBlocks, unmodifiedBlocks) = L.partition (\b -> lpStatus b == Modified)
                                                        (F.toList blocks)
-  blocks' <- reifyFallthroughSuccessors mem modifiedBlocks
+  blocks' <- reifyFallthroughSuccessors mem modifiedBlocks blocks
 
   -- Either, a) Sort all of the instrumented blocks by size
   --         b) Randomize the order of the blocks.
@@ -103,7 +103,7 @@ assignConcreteAddress :: (Monad m, MM.MemWidth w)
                       -> RewriterT i a w m (AddressAssignedPair i a w)
 assignConcreteAddress assignedAddrs (LayoutPair cb sb Modified) = do
   case M.lookup (basicBlockAddress sb) assignedAddrs of
-    Nothing -> L.error $ printf "Expected an assigned address for symbolic block %d (derived from concrete block %d)"
+    Nothing -> L.error $ printf "Expected an assigned address for symbolic block %s (derived from concrete block %s)"
                                 (show (basicBlockAddress sb))
                                 (show (basicBlockAddress cb))
     Just addr -> return (LayoutPair cb (AddressAssignedBlock sb addr) Modified)
@@ -170,13 +170,17 @@ allocateBlockAddress isa mem (newTextAddr, h, m) sb =
 -- unconditional jumps).
 --
 -- A block has fallthrough behavior if it does not end in an unconditional jump.
-reifyFallthroughSuccessors :: (Traversable t, Monad m, MM.MemWidth w)
+reifyFallthroughSuccessors :: (Traversable t, Monad m, MM.MemWidth w, Traversable t')
                            => MM.Memory w
                            -> t (SymbolicPair i a w)
+                           -- ^ The modified blocks
+                           -> t' (SymbolicPair i a w)
+                           -- ^ All blocks (which we need to compute the fallthrough address index)
                            -> RewriterT i a w m (t (SymbolicPair i a w))
-reifyFallthroughSuccessors mem blocks = T.traverse (addExplicitFallthrough mem symSuccIdx) blocks
+reifyFallthroughSuccessors mem modifiedBlocks allBlocks =
+  T.traverse (addExplicitFallthrough mem symSuccIdx) modifiedBlocks
   where
-    blist0 = F.toList (fmap lpNew blocks)
+    blist0 = F.toList (fmap lpNew allBlocks)
     symSuccs | length blist0 > 1 = zip blist0 (tail blist0)
              | otherwise = []
     -- An index mapping the symbolic address of a symbolic basic block to the
@@ -243,7 +247,7 @@ appendUnconditionalJump isa symSucIdx cb sb =
 
 buildAddressHeap :: (MM.MemWidth w, Foldable t, Monad m)
                  => ConcreteAddress w
-                 -> t (ConcreteBlock i w)
+                 -> t (SymbolicPair i a w)
                  -> RewriterT i a w m (AddressHeap w)
 buildAddressHeap startAddr blocks = do
   isa <- askISA
@@ -259,15 +263,19 @@ buildAddressHeap startAddr blocks = do
 --
 -- We actually insert the negation of the available space into the heap so that
 -- extracting the minimum value yields the largest block possible.
+--
+-- NOTE: We only add blocks that have been *modified*.  If a block is
+-- unmodified, overwriting it would throw away code, as we don't lay out
+-- duplicates of unmodified blocks.
 addOriginalBlock :: (MM.MemWidth w)
                  => ISA i a w
                  -> MM.Memory w
                  -> Word64
                  -> AddressHeap w
-                 -> ConcreteBlock i w
+                 -> SymbolicPair i a w
                  -> AddressHeap w
-addOriginalBlock isa mem jumpSize h cb
-  | bsize > jumpSize =
+addOriginalBlock isa mem jumpSize h (LayoutPair cb _ status)
+  | bsize > jumpSize && status == Modified =
     H.insert (H.Entry (Down spaceSize) addr) h
   | otherwise = h
   where

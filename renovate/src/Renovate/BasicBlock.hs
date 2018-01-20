@@ -15,6 +15,7 @@ module Renovate.BasicBlock (
   instructionStreamSize,
   instructionAddresses,
   instructionAddresses',
+  terminatorType,
   TaggedInstruction,
   tag,
   tagInstruction,
@@ -101,3 +102,14 @@ computeRewrittenJumpSize isa mem addr jmp =
   case isaModifyJumpTarget isa (isaConcretizeAddresses isa mem addr jmp) addr addr of
     Nothing -> L.error ("computeRewrittenJumpSize: Not a jump: " ++ isaPrettyInstruction isa jmp)
     Just ji -> sum (map (fromIntegral . isaInstructionSize isa) ji)
+
+-- | Return the 'JumpType' of the terminator instruction (if any)
+--
+-- If the block is empty, it will return 'NoJump'.
+terminatorType :: (MC.MemWidth w) => ISA i a w -> MC.Memory w -> ConcreteBlock i w -> JumpType w
+terminatorType isa mem b =
+  case instructionAddresses isa mem b of
+    [] -> NoJump
+    insns ->
+      let (termInsn, addr) = last insns
+      in isaJumpType isa termInsn mem addr

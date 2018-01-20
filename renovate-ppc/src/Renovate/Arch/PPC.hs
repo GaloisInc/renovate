@@ -47,11 +47,15 @@ config32 tocMap analysis rewriter =
                  , rcArchInfo = MP.ppc32_linux_info tocMap
                  , rcAssembler = assemble
                  , rcDisassembler = disassemble
-                 , rcBlockCallback = \_ -> return ()
-                 , rcFunctionCallback = \_ _ -> return ()
+                 , rcBlockCallback = Nothing
+                 , rcFunctionCallback = Nothing
                  , rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC32)
                  , rcAnalysis = analysis
                  , rcRewriter = rewriter
+                 , rcUpdateSymbolTable = False
+                 -- See Note [Layout Addresses]
+                 , rcCodeLayoutBase = 0x10080000
+                 , rcDataLayoutBase = 0x100a0000
                  }
 
 config64 :: (MM.MemWidth w, w ~ 64)
@@ -65,9 +69,22 @@ config64 tocMap analysis rewriter =
                  , rcArchInfo = MP.ppc64_linux_info tocMap
                  , rcAssembler = assemble
                  , rcDisassembler = disassemble
-                 , rcBlockCallback = \_ -> return ()
-                 , rcFunctionCallback = \_ _ -> return ()
+                 , rcBlockCallback = Nothing
+                 , rcFunctionCallback = Nothing
                  , rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC64)
                  , rcAnalysis = analysis
                  , rcRewriter = rewriter
+                 , rcUpdateSymbolTable = False
+                 -- See Note [Layout Addresses]
+                 , rcCodeLayoutBase = 0x10080000
+                 , rcDataLayoutBase = 0x100a0000
                  }
+
+{- Note [Layout Addresses]
+
+In PowerPC (at least in the v1 ABI for PowerPC 64), everything seems to start
+around address 0x10000000.  We choose addresses far from there for our new code
+and data.  Note that we can't go too far, as we need to be able to jump with a
+single branch where we only have 24 bits of offset available.
+
+-}

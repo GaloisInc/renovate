@@ -29,7 +29,6 @@ module Renovate.Arch.X86_64 (
 
 import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.X86 as X86
-import qualified Data.Macaw.X86.ArchTypes as X86
 
 import           Renovate
 import           Renovate.Arch.X86_64.ABI
@@ -56,9 +55,27 @@ config analysis rewriter =
     , rcArchInfo      = X86.x86_64_linux_info
     , rcAssembler     = assemble
     , rcDisassembler  = disassemble
-    , rcBlockCallback = \_ -> return ()
-    , rcFunctionCallback = \_ _ -> return ()
+    , rcBlockCallback = Nothing
+    , rcFunctionCallback = Nothing
     , rcELFEntryPoints = const []
     , rcAnalysis      = analysis
     , rcRewriter      = rewriter
+    , rcUpdateSymbolTable = True
+    -- See Note [Layout Addresses]
+    , rcCodeLayoutBase = 0x800000
+    , rcDataLayoutBase = 0xa00000
     }
+
+{- Note [Layout Addresses]
+
+The addresses chosen are somewhat arbitrary, but we choose them to try to be far
+from the normal addresses in a typical binary.
+
+In a non-position independent executable (-fno-PIE), the .text section starts at
+0x400000, while the data starts at 0x600000.
+
+In a position indepenent executable, the .text section starts at approximately
+0xe00 (i.e., near 0x0).  Either way, our chosen values are pretty far and should
+not overlap.
+
+-}

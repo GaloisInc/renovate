@@ -20,7 +20,7 @@ import qualified Data.ByteString as B
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Foldable as F
 import qualified Data.Map as M
-import           Data.Maybe ( catMaybes, mapMaybe )
+import           Data.Maybe ( catMaybes, fromMaybe, mapMaybe )
 import qualified Data.Set as S
 
 import qualified Data.Macaw.Architecture.Info as MC
@@ -55,24 +55,29 @@ analyzeDiscoveredFunctions :: (MC.MemWidth (MC.ArchAddrWidth arch))
                            => ISA i a (MC.ArchAddrWidth arch)
                            -> (forall m . (C.MonadThrow m)  => B.ByteString -> m (Int, i ()))
                            -> MC.Memory (MC.ArchAddrWidth arch)
-                           -> (MC.ArchSegmentOff arch -> ST RealWorld ())
-                           -> (MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i (MC.ArchAddrWidth arch) arch) -> IO ())
+                           -> Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
+                           -> Maybe (MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i (MC.ArchAddrWidth arch) arch) -> IO ())
                            -> MC.DiscoveryState arch
                            -> IO (MC.DiscoveryState arch)
 analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback info =
   case M.lookupMin (info L.^. MC.unexploredFunctions) of
     Nothing -> return info
     Just (addr, rsn) -> do
-      (info', _) <- stToIO (MC.analyzeFunction blockCallback addr rsn info)
-      (ebi, _diags) <- blockInfo isa dis1 mem info'
-      funcCallback addr ebi
+      (info', _) <- stToIO (MC.analyzeFunction (fromMaybe (const (return ())) blockCallback) addr rsn info)
+      case funcCallback of
+        Nothing -> return ()
+        Just fcb -> do
+          (ebi, _diags) <- blockInfo isa dis1 mem info'
+          fcb addr ebi
       analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback info'
+
+-- FIXME: Change the callback to only construct the block info if there is actually a callback.
 
 cfgFromAddrsWith :: (MC.MemWidth (MC.ArchAddrWidth arch))
                  => ISA i a (MC.ArchAddrWidth arch)
                  -> (forall m . (C.MonadThrow m)  => B.ByteString -> m (Int, i ()))
-                 -> (MC.ArchSegmentOff arch -> ST RealWorld ())
-                 -> (MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i (MC.ArchAddrWidth arch) arch) -> IO ())
+                 -> Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
+                 -> Maybe (MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i (MC.ArchAddrWidth arch) arch) -> IO ())
                  -> MC.ArchitectureInfo arch
                  -> MC.Memory (MC.ArchAddrWidth arch)
                  -> MC.AddrSymMap (MC.ArchAddrWidth arch)
@@ -96,7 +101,7 @@ blockInfo :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch)))
 blockInfo isa dis1 mem di = runRecoveryT isa dis1 mem $ do
   blocks <- catMaybes <$> mapM (buildBlock isa dis1 mem (S.fromList (mapMaybe (concreteFromSegmentOff mem) (F.toList absoluteBlockStarts))))
                                (F.toList absoluteBlockStarts)
-  let insertBlocks cb m = M.adjust (cb:) (basicBlockAddress cb) m
+  let insertBlocks cb m = M.alter (Just . maybe [cb] (cb:)) (basicBlockAddress cb) m
   let funcBlocks = foldr insertBlocks M.empty blocks
   return BlockInfo { biBlocks = blocks
                    , biFunctionEntries = mapMaybe (concreteFromSegmentOff mem) funcEntries
@@ -117,8 +122,8 @@ blockInfo isa dis1 mem di = runRecoveryT isa dis1 mem $ do
                        ]
 
 recoverBlocks :: (ArchBits arch w)
-              => (MC.ArchSegmentOff arch -> ST RealWorld ())
-              -> (MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i w arch) -> IO ())
+              => Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
+              -> Maybe (MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i w arch) -> IO ())
               -> ISA i a w
               -> (forall m . (C.MonadThrow m)  => B.ByteString -> m (Int, i ()))
               -- ^ A function to try to disassemble a single

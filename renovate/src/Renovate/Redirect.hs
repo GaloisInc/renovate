@@ -79,8 +79,13 @@ redirect isa textStart textEnd instrumentor mem strat layoutAddr blocks symmap =
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
     -- We only want to instrument blocks that live in the .text
-    case textStart <= basicBlockAddress cb && basicBlockAddress cb < textEnd of
-     True  ->  do
+    --
+    -- Also, see Note [PIC Jump Tables]
+    case and [ textStart <= basicBlockAddress cb
+             , basicBlockAddress cb < textEnd
+             , isRelocatableTerminatorType (terminatorType isa mem cb)
+             ] of
+     True ->  do
        insns' <- lift $ instrumentor sb
        case insns' of
          Nothing      -> return (LayoutPair cb sb Unmodified)
@@ -93,6 +98,12 @@ redirect isa textStart textEnd instrumentor mem strat layoutAddr blocks symmap =
   where
   toPair (LayoutPair cb sb Modified)   = (cb, Just sb)
   toPair (LayoutPair cb _  Unmodified) = (cb, Nothing)
+
+isRelocatableTerminatorType :: JumpType w -> Bool
+isRelocatableTerminatorType jt =
+  case jt of
+    IndirectJump {} -> False
+    _ -> True
 
 {- Note [Redirection]
 
@@ -144,5 +155,22 @@ to tweak the instructions later on.
 
 Note that we aren't going to be aggressively rewriting jumps in the
 uninstrumented code at all.
+
+-}
+
+{- Note [PIC Jump Tables]
+
+We do not allow users to rewrite blocks that end in an indirect jump (*not* an
+indirect call).  This restriction is currently in place to preserve correctness.
+In position-independent executables, these jumps are relative to the instruction
+pointer.  If we rewrite the block, the address of the jump will change, but we
+will not have updated the offset, which would break the binary.
+
+The easiest fix is to prohibit these blocks from being rewritten at all, which
+will preserve the IP.
+
+In the future, we will attempt to rewrite patterns of indirect jump that we can
+recognize, which will involve updating jump tables and verifying that we have
+not broken anything else.
 
 -}
