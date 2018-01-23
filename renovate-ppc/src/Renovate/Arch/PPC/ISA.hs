@@ -250,6 +250,8 @@ ppcModifyJumpTarget i srcAddr targetAddr =
           Just [I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (newJumpOffset 16 srcAddr targetAddr `shiftR` 2))) D.:< cond D.:< D.Nil))]
         D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< D.Nil ->
           Just [I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (newJumpOffset 16 srcAddr targetAddr `shiftR` 2))) D.:< D.Nil))]
+        D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< cond D.:< imm D.:< D.Nil ->
+          Just [I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (newJumpOffset 16 srcAddr targetAddr `shiftR` 2))) D.:< cond D.:< imm D.:< D.Nil))]
         _ -> error ("Unexpected jump: " ++ ppcPrettyInstruction i)
 
 -- | Compute a new jump offset between the @srcAddr@ and @targetAddr@.
