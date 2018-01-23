@@ -101,8 +101,13 @@ blockInfo :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch)), C.MonadThrow m)
 blockInfo isa dis1 mem di = do
   let blockBuilder = buildBlock isa dis1 mem (S.fromList (mapMaybe (concreteFromSegmentOff mem) (F.toList absoluteBlockStarts)))
   blocks <- catMaybes <$> mapM blockBuilder (F.toList absoluteBlockStarts)
-  let insertBlocks cb m = M.alter (Just . maybe [cb] (cb:)) (basicBlockAddress cb) m
-  let funcBlocks = foldr insertBlocks M.empty blocks
+  let addBlock m b = M.insert (basicBlockAddress b) b m
+  let blockIndex = F.foldl' addBlock M.empty blocks
+  let funcBlocks = M.fromList [ (funcAddr, mapMaybe (\a -> M.lookup a blockIndex) blockAddrs)
+                              | PU.Some dfi <- M.elems (di L.^. MC.funInfo)
+                              , Just funcAddr <- [concreteFromSegmentOff mem (MC.discoveredFunAddr dfi)]
+                              , let blockAddrs = mapMaybe (concreteFromSegmentOff mem) (M.keys (dfi L.^. MC.parsedBlocks))
+                              ]
   return BlockInfo { biBlocks = blocks
                    , biFunctionEntries = mapMaybe (concreteFromSegmentOff mem) funcEntries
                    , biFunctionBlocks = funcBlocks
