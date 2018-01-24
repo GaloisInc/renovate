@@ -307,7 +307,7 @@ doRewrite cfg mem symmap strat = do
       -- to a page of space to maintain alignment.
       dataAddr = RA.concreteFromAbsolute (fromIntegral (rcDataLayoutBase cfg))
       textSectionStartAddr = RA.concreteFromAbsolute (fromIntegral (E.elfSectionAddr textSection))
-      textSectionEndAddr = RA.addressAddOffset mem textSectionStartAddr (fromIntegral ((E.elfSectionSize textSection)))
+      textSectionEndAddr = RA.addressAddOffset textSectionStartAddr (fromIntegral ((E.elfSectionSize textSection)))
 
   ( analysisResult
     , overwrittenBytes

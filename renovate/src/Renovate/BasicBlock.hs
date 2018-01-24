@@ -41,9 +41,9 @@ import           Renovate.ISA
 -- We cannot simply make a @Map a Address@ because two identical
 -- instructions could easily occur within the same 'BasicBlock', to
 -- say nothing of the entire program.
-instructionAddresses :: (MC.MemWidth w) => ISA i a w -> MC.Memory w -> ConcreteBlock i w -> [(i (), ConcreteAddress w)]
-instructionAddresses isa mem bb =
-  instructionAddresses' isa mem id (basicBlockAddress bb) (basicBlockInstructions bb)
+instructionAddresses :: (MC.MemWidth w) => ISA i a w -> ConcreteBlock i w -> [(i (), ConcreteAddress w)]
+instructionAddresses isa bb =
+  instructionAddresses' isa id (basicBlockAddress bb) (basicBlockInstructions bb)
 
 -- | Compute the addresses of each instruction in a list, given a
 -- concrete start address.
@@ -53,15 +53,14 @@ instructionAddresses isa mem bb =
 -- 'concretize').
 instructionAddresses' :: (MC.MemWidth w)
                       => ISA i a w
-                      -> MC.Memory w
                       -> (x -> i ())
                       -> ConcreteAddress w
                       -> [x]
                       -> [(x, ConcreteAddress w)]
-instructionAddresses' isa mem accessor startAddr insns =
+instructionAddresses' isa accessor startAddr insns =
   snd $ T.mapAccumL computeAddress startAddr insns
   where
-    addressAddOffset' = addressAddOffset mem
+    addressAddOffset' = addressAddOffset
     computeAddress addr instr =
       let absAddr = addr `addressAddOffset'` fromIntegral (isaInstructionSize isa (accessor instr))
       in (absAddr, (instr, addr))
@@ -108,7 +107,7 @@ computeRewrittenJumpSize isa mem addr jmp =
 -- If the block is empty, it will return 'NoJump'.
 terminatorType :: (MC.MemWidth w) => ISA i a w -> MC.Memory w -> ConcreteBlock i w -> JumpType w
 terminatorType isa mem b =
-  case instructionAddresses isa mem b of
+  case instructionAddresses isa b of
     [] -> NoJump
     insns ->
       let (termInsn, addr) = last insns

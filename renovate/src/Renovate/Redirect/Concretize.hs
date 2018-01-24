@@ -110,7 +110,7 @@ concretizeJumps :: (Monad m, InstructionConstraints i a, KnownNat w, MM.MemWidth
                 -> RewriterT i a w m (ConcretePair i w)
 concretizeJumps isa concreteAddressMap (LayoutPair cb (AddressAssignedBlock sb baddr) Modified) = do
   mem <- askMem
-  let insnAddrs = instructionAddresses' isa mem (isaConcretizeAddresses isa mem baddr . projectInstruction) baddr (basicBlockInstructions sb)
+  let insnAddrs = instructionAddresses' isa (isaConcretizeAddresses isa mem baddr . projectInstruction) baddr (basicBlockInstructions sb)
   concretizedInstrs <- T.traverse (mapJumpAddress concreteAddressMap) insnAddrs
   let sb' = sb { basicBlockAddress = baddr
                , basicBlockInstructions = concat concretizedInstrs

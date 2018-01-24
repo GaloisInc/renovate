@@ -122,9 +122,7 @@ lookupEntryAddress = RWS.asks envEntryAddress
 newGlobalVar :: (MM.MemWidth w) => String -> Word32 -> RewriteM i w (A.ConcreteAddress w)
 newGlobalVar name size = do
   addr <- RWS.gets nextGlobalAddress
-  mem  <- RWS.asks envMemory
-  let addOff = A.addressAddOffset mem
-  RWS.modify' $ \s -> s { nextGlobalAddress = addr `addOff` fromIntegral size
+  RWS.modify' $ \s -> s { nextGlobalAddress = addr `A.addressAddOffset` fromIntegral size
                         , newGlobals = M.insert name addr (newGlobals s)
                         }
   return addr

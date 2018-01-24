@@ -144,7 +144,7 @@ allocateBlockAddress isa mem (newTextAddr, h, m) sb =
       | size < fromIntegral sbSize -> allocateNewTextAddr
       | otherwise -> allocateFromHeap size addr h'
   where
-    addOff = addressAddOffset mem
+    addOff = addressAddOffset
 
     sbSize = symbolicBlockSize isa mem newTextAddr sb
 
@@ -251,10 +251,9 @@ buildAddressHeap :: (MM.MemWidth w, Foldable t, Monad m)
                  -> RewriterT i a w m (AddressHeap w)
 buildAddressHeap startAddr blocks = do
   isa <- askISA
-  mem <- askMem
   let dummyJump = isaMakeRelativeJumpTo  isa startAddr startAddr
       jumpSize = fromIntegral $ sum (map (isaInstructionSize isa) dummyJump)
-  return $ F.foldl' (addOriginalBlock isa mem jumpSize) H.empty blocks
+  return $ F.foldl' (addOriginalBlock isa jumpSize) H.empty blocks
 
 -- | Add the available space in a 'ConcreteBlock' to the heap
 --
@@ -269,12 +268,11 @@ buildAddressHeap startAddr blocks = do
 -- duplicates of unmodified blocks.
 addOriginalBlock :: (MM.MemWidth w)
                  => ISA i a w
-                 -> MM.Memory w
                  -> Word64
                  -> AddressHeap w
                  -> SymbolicPair i a w
                  -> AddressHeap w
-addOriginalBlock isa mem jumpSize h (LayoutPair cb _ status)
+addOriginalBlock isa jumpSize h (LayoutPair cb _ status)
   | bsize > jumpSize && status == Modified =
     H.insert (H.Entry (Down spaceSize) addr) h
   | otherwise = h
@@ -282,8 +280,7 @@ addOriginalBlock isa mem jumpSize h (LayoutPair cb _ status)
     bsize     = concreteBlockSize isa cb
     spaceSize :: Int
     spaceSize = fromIntegral (bsize - jumpSize)
-    addOff    = addressAddOffset mem
-    addr      = basicBlockAddress cb `addOff` fromIntegral jumpSize
+    addr      = basicBlockAddress cb `addressAddOffset` fromIntegral jumpSize
 
 randomOrder :: RandomSeed -> [a] -> [a]
 randomOrder seed initial = runST $ do

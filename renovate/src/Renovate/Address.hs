@@ -94,11 +94,10 @@ absoluteAddress (ConcreteAddress memAddr) = absAddr
 -- Since all of our 'ConcreteAddress'es are absolute, this is always legal.
 -- Note, we could wrap, and that isn't really checked.
 addressAddOffset :: (MM.MemWidth w)
-                 => MM.Memory w
-                 -> ConcreteAddress w
+                 => ConcreteAddress w
                  -> MM.MemWord w
                  -> ConcreteAddress w
-addressAddOffset _mem (ConcreteAddress memAddr) memWord =
+addressAddOffset (ConcreteAddress memAddr) memWord =
   ConcreteAddress (MM.incAddr (fromIntegral memWord) memAddr)
 
 -- | Compute the distance between two 'ConcreteAddress'es

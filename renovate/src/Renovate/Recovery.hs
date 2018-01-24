@@ -180,7 +180,7 @@ buildBlock isa dis1 mem absStarts segAddr
         _ -> C.throwM (NoByteRegionAtAddress (MC.relativeSegmentAddr segAddr))
   | otherwise = return Nothing
   where
-    addOff       = addressAddOffset  mem
+    addOff       = addressAddOffset
     go blockAbsAddr insnAddr bs insns = do
       case dis1 bs of
         -- Actually, we should probably never hit this case.  We

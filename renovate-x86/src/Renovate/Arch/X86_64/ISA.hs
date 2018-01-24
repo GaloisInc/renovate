@@ -227,7 +227,7 @@ ripToAbs mem iStartAddr i ref =
     D.IP_Offset_64 _seg disp -> absoluteDisplacement mem iEndAddr disp
     _ -> NoAddress
   where
-    addOff   = addressAddOffset mem
+    addOff   = addressAddOffset
     iEndAddr = iStartAddr `addOff` fromIntegral (x64Size i)
 
 absoluteDisplacement :: (MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> D.Displacement -> TargetAddress w
@@ -237,7 +237,7 @@ absoluteDisplacement mem endAddr disp =
     D.Disp8  d       -> AbsoluteAddress (endAddr `addOff` fromIntegral d) -- (Address (fromIntegral d + fromIntegral endAddr))
     D.Disp32 d       -> AbsoluteAddress (endAddr `addOff` fromIntegral d) -- (Address (fromIntegral (d + fromIntegral endAddr)))
   where
-  addOff = addressAddOffset mem
+  addOff = addressAddOffset
 
 -- Needs to convert all Disp8 IP relative references to Disp32
 x64SymbolizeAddresses :: (MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> Instruction () -> Instruction (TargetAddress w)
@@ -308,7 +308,7 @@ absToRip mem iStartAddr i a ref =
     _ -> Nothing
   where
     iEndAddr = iStartAddr `addOff` fromIntegral (x64Size i)
-    addOff   = addressAddOffset mem
+    addOff   = addressAddOffset
 
 -- ipDisplacement :: Word64 -> D.Displacement -> D.Displacement
 -- ipDisplacement iEndAddr disp =

@@ -70,8 +70,8 @@ symbolizeJumps :: forall i a w m
 symbolizeJumps symAddrMap (cb, symAddr) = do
   isa <- askISA
   mem <- askMem
-  let addOff = addressAddOffset mem
-  insns <- T.forM (instructionAddresses isa mem cb) $ \iaddr@(i, addr) -> do
+  let addOff = addressAddOffset
+  insns <- T.forM (instructionAddresses isa cb) $ \iaddr@(i, addr) -> do
     case isaJumpType isa i mem addr of
       AbsoluteJump _ target -> do
         symTarget <- lookupSymbolicAddress isa iaddr target

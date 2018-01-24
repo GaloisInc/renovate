@@ -232,6 +232,8 @@ ppcJumpType i _mem insnAddr =
 -- the right of the jump offset.  'newJumpOffset' checks the alignment
 -- requirement and the range.  When we construct the operand, we shift off the
 -- two zero bits.
+--
+-- See Note [Conditional Branch Restrictions]
 ppcModifyJumpTarget :: (HasCallStack, MM.MemWidth w)
                     => Instruction ()
                     -- ^ The instruction to modify
@@ -245,14 +247,65 @@ ppcModifyJumpTarget i srcAddr targetAddr =
     D.Instruction opc operands ->
       case operands of
         D.Annotated a (D.Directbrtarget (D.BT _offset)) D.:< D.Nil ->
-          Just [I (D.Instruction opc (D.Annotated a (D.Directbrtarget (D.BT (newJumpOffset 26 srcAddr targetAddr `shiftR` 2))) D.:< D.Nil))]
+          case newJumpOffset 26 srcAddr targetAddr of
+            Left err -> error err
+            Right off ->
+              Just [I (D.Instruction opc (D.Annotated a (D.Directbrtarget (D.BT (off `shiftR` 2))) D.:< D.Nil))]
         D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< cond D.:< D.Nil ->
-          Just [I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (newJumpOffset 16 srcAddr targetAddr `shiftR` 2))) D.:< cond D.:< D.Nil))]
+          case conditionalJumpOffset 16 srcAddr targetAddr of
+            Left err -> error err
+            Right (off, suffix) ->
+              let newJump = I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (off `shiftR` 2))) D.:< cond D.:< D.Nil))
+              in Just (newJump : suffix)
         D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< D.Nil ->
-          Just [I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (newJumpOffset 16 srcAddr targetAddr `shiftR` 2))) D.:< D.Nil))]
+          case conditionalJumpOffset 16 srcAddr targetAddr of
+            Left err -> error err
+            Right (off, suffix) ->
+              let newJump = I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (off `shiftR` 2))) D.:< D.Nil))
+              in Just (newJump : suffix)
         D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< cond D.:< imm D.:< D.Nil ->
-          Just [I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (newJumpOffset 16 srcAddr targetAddr `shiftR` 2))) D.:< cond D.:< imm D.:< D.Nil))]
+          case conditionalJumpOffset 16 srcAddr targetAddr of
+            Left err -> error err
+            Right (off, suffix) ->
+              let newJump = I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (off `shiftR` 2))) D.:< cond D.:< imm D.:< D.Nil))
+              in Just (newJump : suffix)
         _ -> error ("Unexpected jump: " ++ ppcPrettyInstruction i)
+
+-- | Try to compute the offset for a jump during concretization of a conditional branch
+--
+-- If the offset is sufficiently close, generate a direct conditional jump
+-- offset (i.e., a 16 bit offset) and no program suffix.
+--
+-- If the offset is too far to fit into a conditional jump, generate a
+-- conditional branch into a small generated instruction sequence that acts as
+-- suffix to the block.  The suffix uses unconditional branches to enable longer
+-- jumps (up to +/- 32MB).
+--
+-- If the jump is still too far, return an error.
+--
+-- See Note [Conditional Branch Restrictions] for details on the problem and construction
+conditionalJumpOffset :: (MM.MemWidth w)
+                      => Int
+                      -- ^ The number of bits available for the jump offset
+                      -> ConcreteAddress w
+                      -- ^ The source address of the jump
+                      -> ConcreteAddress w
+                      -- ^ The target address of the jump
+                      -> Either String (Int32, [Instruction ()])
+conditionalJumpOffset nBits srcAddr targetAddr =
+  case newJumpOffset nBits srcAddr targetAddr of
+    -- If we have enough bits to support the needed jump, just jump directly
+    Right i -> Right (i, [])
+    -- Otherwise, construct a suffix according to Note [Conditional Branch Restrictions]
+    -- and have the conditional jump jump forward by 8 bytes
+    Left _ ->
+      case newJumpOffset 26 (srcAddr `addressAddOffset` 8) targetAddr of
+        Right i ->
+          let suffix = [ I (D.Instruction D.B (D.Annotated () (D.Directbrtarget (D.BT (8 `shiftR` 2))) D.:< D.Nil))
+                       , I (D.Instruction D.B (D.Annotated () (D.Directbrtarget (D.BT (i `shiftR` 2))) D.:< D.Nil))
+                       ]
+          in Right (8, suffix)
+        Left err -> Left err
 
 -- | Compute a new jump offset between the @srcAddr@ and @targetAddr@.
 --
@@ -260,13 +313,13 @@ ppcModifyJumpTarget i srcAddr targetAddr =
 -- call error.  The limit of the branch is specified as @nBits@, which is the
 -- number of bits in the immediate field that will hold the offset.  Note that
 -- offsets are signed, so the range check has to account for that.
-newJumpOffset :: (HasCallStack, MM.MemWidth w) => Int -> ConcreteAddress w -> ConcreteAddress w -> Int32
+newJumpOffset :: (HasCallStack, MM.MemWidth w) => Int -> ConcreteAddress w -> ConcreteAddress w -> Either String Int32
 newJumpOffset nBits srcAddr targetAddr
   | rawOff `mod` 4 /= 0 =
-    error (printf "Invalid alignment for offset between src=%s and target=%s" (show srcAddr) (show targetAddr))
+    Left (printf "Invalid alignment for offset between src=%s and target=%s" (show srcAddr) (show targetAddr))
   | rawOff >= 2^(nBits - 1) || rawOff <= negate (2^(nBits - 1)) =
-    error (printf "Jump offset too large between src=%s and target=%s" (show srcAddr) (show targetAddr))
-  | otherwise = fromIntegral rawOff
+    Left (printf "Jump offset too large between src=%s and target=%s" (show srcAddr) (show targetAddr))
+  | otherwise = Right (fromIntegral rawOff)
   where
     rawOff = targetAddr `addressDiff` srcAddr
 
@@ -298,3 +351,41 @@ annotateInstr (I i) a =
     D.Instruction opc operands ->
       I (D.Instruction (coerce opc) (FC.fmapFC (\(D.Annotated _ op) -> D.Annotated a op) operands))
 
+{- Note [Conditional Branch Restrictions]
+
+On PowerPC, conditional branches only have 16 bits of offset (14 physical, two
+implied), which is only enough to jump within a 64kb region.  This isn't enough
+for very reasonable binaries, and the rewriter fails when trying to rewrite the
+jumps directly.
+
+The fix is to change the code sequence we generate to incorporate some
+unconditional jumps, which have 26 bits of offset (24 bits physical) available.
+
+Assume we have the following original instruction sequence where the jump is out
+of range for a conditional branch:
+
+#+BEGIN_SRC asm
+bdnz cr3,<target>
+#+END_SRC
+
+We can rewrite this to do the actual jumping through longer unconditional jumps:
+
+#+BEGIN_SRC asm
+bdnz cr3,8
+b 8
+b <target>
+#+END_SRC
+
+There are two cases:
+
+1. We take the conditional branch
+
+   In this case, we skip to the ~b <target>~ instruction, which does an
+   unconditional jump with a longer range.
+
+2. We don't take the conditional branch and need to fall through
+
+   In this case, we fall through to a ~b 8~ instruction, which then jumps past
+   our jump from case (1) and to the natural fallthrough
+
+-}
