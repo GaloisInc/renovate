@@ -70,36 +70,33 @@ symbolizeJumps :: forall i a w m
 symbolizeJumps symAddrMap (cb, symAddr) = do
   isa <- askISA
   mem <- askMem
-  let addOff = addressAddOffset
+  let lookupSymAddr ca = M.lookup ca symAddrMap
   insns <- T.forM (instructionAddresses isa cb) $ \iaddr@(i, addr) -> do
     case isaJumpType isa i mem addr of
       AbsoluteJump _ target -> do
         symTarget <- lookupSymbolicAddress isa iaddr target
-        return $ tag (isaSymbolizeAddresses isa mem addr (promoteJump isa i)) (Just symTarget)
+        return $ isaSymbolizeAddresses isa mem lookupSymAddr addr (Just symTarget) i
       RelativeJump _ _ offset -> do
-        symTarget <- lookupSymbolicAddress isa iaddr (addr `addOff` offset)
-        return $ tag (isaSymbolizeAddresses isa mem addr (promoteJump isa i)) (Just symTarget)
+        symTarget <- lookupSymbolicAddress isa iaddr (addr `addressAddOffset` offset)
+        return $ isaSymbolizeAddresses isa mem lookupSymAddr addr (Just symTarget) i
       IndirectJump _ ->
         -- We do not know the destination of indirect jumps, so we
         -- can't tag them (or rewrite them later)
-        return $ tag (isaSymbolizeAddresses isa mem addr (promoteJump isa i)) Nothing
+        return $ isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
       DirectCall _ offset -> do
-        symTarget <- lookupSymbolicAddress isa iaddr (addr `addOff` offset)
-        return $ tag (isaSymbolizeAddresses isa mem addr i) (Just symTarget)
+        symTarget <- lookupSymbolicAddress isa iaddr (addr `addressAddOffset` offset)
+        return $ isaSymbolizeAddresses isa mem lookupSymAddr addr (Just symTarget) i
       IndirectCall ->
-        return $ tag (isaSymbolizeAddresses isa mem addr i) Nothing
+        return $ isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
       Return ->
-        return $ tag (isaSymbolizeAddresses isa mem addr i) Nothing
-      NoJump -> return $ tag (isaSymbolizeAddresses isa mem addr i) Nothing
+        return $ isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
+      NoJump -> return $ isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
   return (cb, BasicBlock { basicBlockAddress = SymbolicInfo { symbolicAddress = symAddr
                                                             , concreteAddress = concAddr
                                                             }
-                         , basicBlockInstructions = insns
+                         , basicBlockInstructions = concat insns
                          })
   where
-    promoteJump isa i =
-      let Just [pj] = isaModifyJumpTarget isa i concAddr concAddr
-      in pj
     concAddr = basicBlockAddress cb
     lookupSymbolicAddress isa (i, addr) target =
       case M.lookup target symAddrMap of

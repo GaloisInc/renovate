@@ -90,12 +90,23 @@ data JumpType w = RelativeJump JumpCondition (ConcreteAddress w) (MM.MemWord w)
 data ISA (i :: * -> *) a w =
   ISA { isaInstructionSize :: forall t . i t -> Word8
         -- ^ Compute the size of an instruction in bytes
-      , isaSymbolizeAddresses :: MM.Memory w -> ConcreteAddress w -> i () -> i a
-        -- ^ Abstract instructions and annotate them. The contract is
-        -- that this function can change the opcode, but the selected
-        -- instruction must never change sizes. That is, for all
-        -- concrete addresses, the chosen instruction must have the
-        -- same size.
+      , isaSymbolizeAddresses :: MM.Memory w
+                              -> (ConcreteAddress w -> Maybe SymbolicAddress)
+                              -> ConcreteAddress w
+                              -> Maybe SymbolicAddress
+                              -> i ()
+                              -> [TaggedInstruction i a]
+        -- ^ Abstract instructions and annotate them. The contract is that this
+        -- function can change the opcode, but the selected instruction must
+        -- never change sizes later (during concretization). That is, for all
+        -- concrete addresses, the chosen instruction must have the same size.
+        --
+        -- * The 'ConcreteAddress' is the address of the instruction
+        --
+        -- * The 'SymbolicAddress' (if any) is the direct jump target (possibly conditional) if any
+        --
+        -- NOTE: This function is allowed to return larger instructions now and,
+        -- in fact, may return extra instructions.
       , isaConcretizeAddresses :: MM.Memory w -> ConcreteAddress w -> i a -> i ()
         -- ^ Remove the annotation, with possible post-processing.
       , isaJumpType :: forall t . i t -> MM.Memory w -> ConcreteAddress w -> JumpType w
@@ -113,11 +124,15 @@ data ISA (i :: * -> *) a w =
         -- ^ Create a relative jump from the first 'ConcreteAddress'
         -- to the second.  This will call error if the range is too
         -- far (probably more than 2GB).
-      , isaModifyJumpTarget :: i () -> ConcreteAddress w -> ConcreteAddress w -> Maybe [i ()]
+      , isaModifyJumpTarget :: i () -> ConcreteAddress w -> ConcreteAddress w -> Maybe (i ())
         -- ^ Modify the given jump instruction, rather than creating
         -- an entirely new one.  This differs from
         -- 'isaMakeRelativeJumpTo' in that it preserves the jump type
         -- (e.g., the type of conditional jump).
+        --
+        -- NOTE: This function must not change the size of the instruction, as
+        -- it is called after code layout is done, so we cannot re-arrange
+        -- anything.
       , isaMakePadding :: Word64 -> [i ()]
         -- ^ Make the given number of bytes of padding instructions.
         -- The semantics of the instruction stream should either be

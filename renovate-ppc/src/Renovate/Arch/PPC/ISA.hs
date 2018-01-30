@@ -1,4 +1,5 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module Renovate.Arch.PPC.ISA (
   isa,
@@ -143,11 +144,49 @@ ppcConcretizeAddresses _mem _addr i =
 -- wrapper).  Since the 'TaggedInstruction' doesn't need to modify the
 -- instruction, it can actually be generated in an architecture-independent way
 -- (i.e., not in an architecture-specific backend).
-ppcSymbolizeAddresses :: (MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> Instruction () -> Instruction (TargetAddress w)
-ppcSymbolizeAddresses _mem _addr i =
-  case unI i of
-    D.Instruction opc operands ->
-      I (D.Instruction (coerce opc) (FC.fmapFC (\(D.Annotated _ operand) -> D.Annotated NoAddress operand) operands))
+--
+-- We rewrite all conditional branches into the sequence described in Note
+-- [Conditional Branch Restrictions] to allow us flexibility in code layout.
+-- Unconditional branches are left alone (though they are tagged with a symbolic
+-- address, if requested).
+--
+-- Note that the long unconditional jump we add has a dummy target, as the real
+-- target is specified through the symbolic target.
+ppcSymbolizeAddresses :: (MM.MemWidth w)
+                      => MM.Memory w
+                      -> (ConcreteAddress w -> Maybe SymbolicAddress)
+                      -> ConcreteAddress w
+                      -> Maybe SymbolicAddress
+                      -> Instruction ()
+                      -> [TaggedInstruction Instruction (TargetAddress w)]
+ppcSymbolizeAddresses _mem lookupSymAddr insnAddr mSymbolicTarget i =
+  case mSymbolicTarget of
+    Nothing ->
+      case unI i of
+        D.Instruction opc operands ->
+          let newInsn = D.Instruction (coerce opc) (FC.fmapFC annotateNull operands)
+          in [tagInstruction Nothing (I newInsn)]
+    Just _symbolicTarget ->
+      case unI i of
+        D.Instruction opc operands ->
+          case operands of
+            D.Annotated _ (D.Condbrtarget _) D.:< rest ->
+              let fallthroughAddr = insnAddr `addressAddOffset` 4
+                  newCondbr = D.Instruction (coerce opc) (D.Annotated NoAddress (D.Condbrtarget (D.CBT (8 `shiftR` 2))) D.:< FC.fmapFC annotateNull rest)
+                  fallthrough = D.Instruction D.B (D.Annotated NoAddress (D.Directbrtarget (D.BT 0)) D.:< D.Nil)
+                  longBr = D.Instruction D.B (D.Annotated NoAddress (D.Directbrtarget (D.BT 0)) D.:< D.Nil)
+              in case lookupSymAddr fallthroughAddr of
+                Nothing -> error ("No block for fallthrough address " ++ show fallthroughAddr)
+                Just symFallthrough ->
+                  [ tagInstruction Nothing (I newCondbr)
+                  , tagInstruction (Just symFallthrough) (I fallthrough)
+                  , tagInstruction mSymbolicTarget (I longBr)
+                  ]
+            _ ->
+              let newInsn = D.Instruction (coerce opc) (FC.fmapFC annotateNull operands)
+              in [ tagInstruction mSymbolicTarget (I newInsn) ]
+  where
+    annotateNull (D.Annotated _ operand) = D.Annotated NoAddress operand
 
 -- | Classify jumps (and determine their targets, where possible)
 ppcJumpType :: (HasCallStack, MM.MemWidth w) => Instruction t -> MM.Memory w -> ConcreteAddress w -> JumpType w
@@ -243,71 +282,34 @@ ppcModifyJumpTarget :: (HasCallStack, MM.MemWidth w)
                     -- ^ The address of the instruction
                     -> ConcreteAddress w
                     -- ^ The new target address
-                    -> Maybe [Instruction ()]
+                    -> Maybe (Instruction ())
 ppcModifyJumpTarget i srcAddr targetAddr =
   case unI i of
     D.Instruction opc operands ->
       case operands of
+        D.Annotated a (D.Calltarget (D.BT _offset)) D.:< D.Nil ->
+          case newJumpOffset 26 srcAddr targetAddr of
+            Left err -> error err
+            Right off -> Just (I (D.Instruction opc (D.Annotated a (D.Calltarget (D.BT (off `shiftR` 2))) D.:< D.Nil)))
         D.Annotated a (D.Directbrtarget (D.BT _offset)) D.:< D.Nil ->
           case newJumpOffset 26 srcAddr targetAddr of
             Left err -> error err
-            Right off ->
-              Just [I (D.Instruction opc (D.Annotated a (D.Directbrtarget (D.BT (off `shiftR` 2))) D.:< D.Nil))]
-        D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< cond D.:< D.Nil ->
-          case conditionalJumpOffset 16 srcAddr targetAddr of
-            Left err -> error err
-            Right (off, suffix) ->
-              let newJump = I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (off `shiftR` 2))) D.:< cond D.:< D.Nil))
-              in Just (newJump : suffix)
+            Right off -> Just (I (D.Instruction opc (D.Annotated a (D.Directbrtarget (D.BT (off `shiftR` 2))) D.:< D.Nil)))
         D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< D.Nil ->
-          case conditionalJumpOffset 16 srcAddr targetAddr of
+          case newJumpOffset 16 srcAddr targetAddr of
             Left err -> error err
-            Right (off, suffix) ->
-              let newJump = I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (off `shiftR` 2))) D.:< D.Nil))
-              in Just (newJump : suffix)
+            Right off ->
+              Just (I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (off `shiftR` 2))) D.:< D.Nil)))
+        D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< cond D.:< D.Nil ->
+          case newJumpOffset 16 srcAddr targetAddr of
+            Left err -> error err
+            Right off -> Just (I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (off `shiftR` 2))) D.:< cond D.:< D.Nil)))
         D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< cond D.:< imm D.:< D.Nil ->
-          case conditionalJumpOffset 16 srcAddr targetAddr of
+          case newJumpOffset 16 srcAddr targetAddr of
             Left err -> error err
-            Right (off, suffix) ->
-              let newJump = I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (off `shiftR` 2))) D.:< cond D.:< imm D.:< D.Nil))
-              in Just (newJump : suffix)
+            Right off ->
+              Just (I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (off `shiftR` 2))) D.:< cond D.:< imm D.:< D.Nil)))
         _ -> error ("Unexpected jump: " ++ ppcPrettyInstruction i)
-
--- | Try to compute the offset for a jump during concretization of a conditional branch
---
--- If the offset is sufficiently close, generate a direct conditional jump
--- offset (i.e., a 16 bit offset) and no program suffix.
---
--- If the offset is too far to fit into a conditional jump, generate a
--- conditional branch into a small generated instruction sequence that acts as
--- suffix to the block.  The suffix uses unconditional branches to enable longer
--- jumps (up to +/- 32MB).
---
--- If the jump is still too far, return an error.
---
--- See Note [Conditional Branch Restrictions] for details on the problem and construction
-conditionalJumpOffset :: (MM.MemWidth w)
-                      => Int
-                      -- ^ The number of bits available for the jump offset
-                      -> ConcreteAddress w
-                      -- ^ The source address of the jump
-                      -> ConcreteAddress w
-                      -- ^ The target address of the jump
-                      -> Either String (Int32, [Instruction ()])
-conditionalJumpOffset nBits srcAddr targetAddr =
-  case newJumpOffset nBits srcAddr targetAddr of
-    -- If we have enough bits to support the needed jump, just jump directly
-    Right i -> Right (i, [])
-    -- Otherwise, construct a suffix according to Note [Conditional Branch Restrictions]
-    -- and have the conditional jump jump forward by 8 bytes
-    Left _ ->
-      case newJumpOffset 26 (srcAddr `addressAddOffset` 8) targetAddr of
-        Right i ->
-          let suffix = [ I (D.Instruction D.B (D.Annotated () (D.Directbrtarget (D.BT (8 `shiftR` 2))) D.:< D.Nil))
-                       , I (D.Instruction D.B (D.Annotated () (D.Directbrtarget (D.BT (i `shiftR` 2))) D.:< D.Nil))
-                       ]
-          in Right (8, suffix)
-        Left err -> Left err
 
 -- | Compute a new jump offset between the @srcAddr@ and @targetAddr@.
 --

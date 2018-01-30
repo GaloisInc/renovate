@@ -113,7 +113,7 @@ concretizeJumps isa concreteAddressMap (LayoutPair cb (AddressAssignedBlock sb b
   let insnAddrs = instructionAddresses' isa (isaConcretizeAddresses isa mem baddr . projectInstruction) baddr (basicBlockInstructions sb)
   concretizedInstrs <- T.traverse (mapJumpAddress concreteAddressMap) insnAddrs
   let sb' = sb { basicBlockAddress = baddr
-               , basicBlockInstructions = concat concretizedInstrs
+               , basicBlockInstructions = concretizedInstrs
                }
   return (LayoutPair cb sb' Modified)
 concretizeJumps _isa _concreteAddressMap (LayoutPair cb _ Unmodified) = return (LayoutPair cb cb Unmodified)
@@ -129,7 +129,7 @@ mapJumpAddress :: forall m i a w
                 . (Monad m, InstructionConstraints i a, KnownNat w, Typeable w)
                => M.Map SymbolicAddress (ConcreteAddress w)
                -> (TaggedInstruction i a, ConcreteAddress w)
-               -> RewriterT i a w m [i ()]
+               -> RewriterT i a w m (i ())
 mapJumpAddress concreteAddressMap (tagged, insnAddr) = do
   isa <- askISA
   mem <- askMem
@@ -142,13 +142,13 @@ mapJumpAddress concreteAddressMap (tagged, insnAddr) = do
                 err = InstructionIsNotJump (show i)
             logDiagnostic err
             throwError err
-          Just insns -> return insns
+          Just insn -> return insn
       | otherwise -> do
           let err :: Diagnostic
               err = NoConcreteAddressForSymbolicTarget symAddr "concretizeJumps"
           logDiagnostic err
           throwError err
-    Nothing -> return [isaConcretizeAddresses isa mem insnAddr i]
+    Nothing -> return (isaConcretizeAddresses isa mem insnAddr i)
   where
     i = projectInstruction tagged
 

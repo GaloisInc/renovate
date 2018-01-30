@@ -97,10 +97,16 @@ symbolicBlockSize isa mem addr sb = basicInstSize + fromIntegral jumpSizes
     (standardInstructions, jumpsToRewrite) = L.partition hasNoSymbolicTarget (basicBlockInstructions sb)
 
 computeRewrittenJumpSize :: (L.HasCallStack) => ISA i a w -> MC.Memory w -> ConcreteAddress w -> i a -> Int
-computeRewrittenJumpSize isa mem addr jmp =
-  case isaModifyJumpTarget isa (isaConcretizeAddresses isa mem addr jmp) addr addr of
-    Nothing -> L.error ("computeRewrittenJumpSize: Not a jump: " ++ isaPrettyInstruction isa jmp)
-    Just ji -> sum (map (fromIntegral . isaInstructionSize isa) ji)
+computeRewrittenJumpSize isa mem addr jmp
+  | Just jmp' <- isaModifyJumpTarget isa concJmp addr addr
+  , origSize == isaInstructionSize isa jmp' = fromIntegral origSize
+  | Just _jmp' <- isaModifyJumpTarget isa concJmp addr addr =
+      error ("computeRewrittenJumpSize: Jump changes sizes: " ++ isaPrettyInstruction isa jmp)
+  | otherwise =
+      error ("computeRewrittenJumpSize: Jump cannot be modified: " ++ isaPrettyInstruction isa jmp)
+  where
+    origSize = isaInstructionSize isa jmp
+    concJmp = isaConcretizeAddresses isa mem addr jmp
 
 -- | Return the 'JumpType' of the terminator instruction (if any)
 --

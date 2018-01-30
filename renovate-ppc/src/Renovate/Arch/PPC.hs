@@ -54,8 +54,8 @@ config32 tocMap analysis rewriter =
                  , rcRewriter = rewriter
                  , rcUpdateSymbolTable = False
                  -- See Note [Layout Addresses]
-                 , rcCodeLayoutBase = 0x10080000
-                 , rcDataLayoutBase = 0x100a0000
+                 , rcCodeLayoutBase = 0x10100000
+                 , rcDataLayoutBase = 0x20000000
                  }
 
 config64 :: (MM.MemWidth w, w ~ 64)
@@ -76,8 +76,8 @@ config64 tocMap analysis rewriter =
                  , rcRewriter = rewriter
                  , rcUpdateSymbolTable = False
                  -- See Note [Layout Addresses]
-                 , rcCodeLayoutBase = 0x10080000
-                 , rcDataLayoutBase = 0x100a0000
+                 , rcCodeLayoutBase = 0x10100000
+                 , rcDataLayoutBase = 0x20000000
                  }
 
 {- Note [Layout Addresses]
