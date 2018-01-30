@@ -155,6 +155,8 @@ ppcJumpType i _mem insnAddr =
   case toInst i of
     D.Instruction opc operands ->
       case operands of
+        D.Calltarget (D.BT offset) D.:< D.Nil ->
+          DirectCall insnAddr (fromIntegral (offset `shiftL` 2))
         D.Directbrtarget (D.BT offset) D.:< D.Nil ->
           RelativeJump Unconditional insnAddr (fromIntegral (offset `shiftL` 2))
         -- GBC has an extra argument generalizing to include a branch hint
