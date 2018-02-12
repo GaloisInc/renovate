@@ -2,6 +2,8 @@
 -- | This module is the entry point for binary code redirection
 module Renovate.Redirect (
   redirect,
+  Redirection(..),
+  checkRedirection,
   LayoutStrategy(..),
   Diagnostic(..),
   ConcreteBlock,
@@ -72,7 +74,7 @@ redirect :: (Monad m, InstructionConstraints i a, KnownNat w, MM.MemWidth w, Typ
          -> [ConcreteBlock i w]
          -- ^ The original basic blocks
          -> SymbolMap w
-         -> m (Either E.SomeException ([ConcreteBlock i w], [ConcreteBlock i w]), NewSymbolsMap w, [Diagnostic])
+         -> m (Redirection (Either E.SomeException) w ([ConcreteBlock i w], [ConcreteBlock i w]))
 redirect isa textStart textEnd instrumentor mem strat layoutAddr blocks symmap = runRewriterT isa mem symmap $ do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress) (F.toList blocks)))))
   baseSymBlocks <- symbolizeBasicBlocks (L.sortBy (comparing basicBlockAddress) blocks)
@@ -96,8 +98,8 @@ redirect isa textStart textEnd instrumentor mem strat layoutAddr blocks symmap =
   let sorter = L.sortBy (comparing basicBlockAddress)
   return $ (sorter *** sorter . catMaybes) (unzip (map toPair (F.toList redirectedBlocks)))
   where
-  toPair (LayoutPair cb sb Modified)   = (cb, Just sb)
-  toPair (LayoutPair cb _  Unmodified) = (cb, Nothing)
+    toPair (LayoutPair cb sb Modified)   = (cb, Just sb)
+    toPair (LayoutPair cb _  Unmodified) = (cb, Nothing)
 
 isRelocatableTerminatorType :: JumpType w -> Bool
 isRelocatableTerminatorType jt =

@@ -18,6 +18,8 @@ module Renovate.Redirect.Monad (
   RewriterT,
   SymbolMap,
   NewSymbolsMap,
+  Redirection(..),
+  checkRedirection,
   runRewriter,
   runRewriterT,
   throwError,
@@ -111,18 +113,47 @@ initialState =  RewriterState
   , rwsNewSymbolsMap         = mempty
   }
 
+data Redirection f w a =
+  Redirection { rdBlocks :: f a
+              , rdNewSymbols :: NewSymbolsMap w
+              , rdDiagnostics :: [Diagnostic]
+              }
+
+checkRedirection :: Redirection (Either E.SomeException) w a
+                 -> Either E.SomeException (Redirection I.Identity w a)
+checkRedirection r =
+  case rdBlocks r of
+    Left exn -> Left exn
+    Right a ->
+      Right Redirection { rdBlocks = I.Identity a
+                        , rdNewSymbols = rdNewSymbols r
+                        , rdDiagnostics = rdDiagnostics r
+                        }
+
 -- | A wrapper around 'runReaderT' with 'I.Identity' as the base 'Monad'
-runRewriter :: ISA i t w -> MM.Memory w -> SymbolMap w -> Rewriter i t w a -> (Either E.SomeException a, NewSymbolsMap w, [Diagnostic])
+runRewriter :: ISA i t w
+            -> MM.Memory w
+            -> SymbolMap w
+            -> Rewriter i t w a
+            -> Redirection (Either E.SomeException ) w a
 runRewriter isa mem symmap a = I.runIdentity (runRewriterT isa mem symmap a)
 
 -- | Run a 'RewriterT' computation.
 --
 -- It returns *all* diagnostics that occur before an exception is
 -- thrown.
-runRewriterT :: (Monad m) => ISA i t w -> MM.Memory w -> SymbolMap w -> RewriterT i t w m a -> m (Either E.SomeException a, NewSymbolsMap w, [Diagnostic])
+runRewriterT :: (Monad m)
+             => ISA i t w
+             -> MM.Memory w
+             -> SymbolMap w
+             -> RewriterT i t w m a
+             -> m (Redirection (Either E.SomeException) w a)
 runRewriterT isa mem symmap a = do
   (a', s, w) <- RWS.runRWST (ET.runExceptT (unRewriterT a)) (RewriterEnv isa mem symmap) initialState
-  return $! (a', rwsNewSymbolsMap s, F.toList (diagnosticMessages w))
+  return Redirection { rdBlocks = a'
+                     , rdNewSymbols = rwsNewSymbolsMap s
+                     , rdDiagnostics = F.toList (diagnosticMessages w)
+                     }
 
 -- | Log a diagnostic in the 'RewriterT' monad
 logDiagnostic :: (Monad m) => Diagnostic -> RewriterT i t w m ()
