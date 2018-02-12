@@ -118,7 +118,7 @@ allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth w)
 allocateSymbolicBlockAddresses startAddr h0 blocksBySize = do
   isa <- askISA
   mem <- askMem
-  let (_, _, m) = F.foldl' (allocateBlockAddress isa mem) (startAddr, h0, M.empty) blocksBySize
+  (_, _, m) <- F.foldlM (allocateBlockAddress isa mem) (startAddr, h0, M.empty) blocksBySize
   return m
 
 -- | Allocate an address for the given symbolic block.
@@ -131,18 +131,20 @@ allocateSymbolicBlockAddresses startAddr h0 blocksBySize = do
 -- Note that the 'SymbolicBlock' at this stage must have been augmented with its
 -- final unconditional jump to preserve fallthrough control flow (we rely on the
 -- size of the block to be correct).
-allocateBlockAddress :: (MM.MemWidth w)
+allocateBlockAddress :: (MM.MemWidth w, Monad m)
                      => ISA i a w
                      -> MM.Memory w
                      -> (ConcreteAddress w, AddressHeap w, M.Map (SymbolicInfo w) (ConcreteAddress w))
                      -> SymbolicBlock i a w
-                     -> (ConcreteAddress w, AddressHeap w, M.Map (SymbolicInfo w) (ConcreteAddress w))
+                     -> RewriterT i a w m (ConcreteAddress w, AddressHeap w, M.Map (SymbolicInfo w) (ConcreteAddress w))
 allocateBlockAddress isa mem (newTextAddr, h, m) sb =
   case H.viewMin h of
-    Nothing -> allocateNewTextAddr
+    Nothing -> return allocateNewTextAddr
     Just (H.Entry (Down size) addr, h')
-      | size < fromIntegral sbSize -> allocateNewTextAddr
-      | otherwise -> allocateFromHeap size addr h'
+      | size < fromIntegral sbSize -> return allocateNewTextAddr
+      | otherwise -> do
+          recordResuedBytes size
+          return (allocateFromHeap size addr h')
   where
     addOff = addressAddOffset
 

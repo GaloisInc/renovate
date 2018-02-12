@@ -17,6 +17,7 @@ module Renovate.Redirect (
 import           GHC.TypeLits ( KnownNat )
 
 import           Control.Arrow ( (***) )
+import           Control.Monad ( when )
 import qualified Control.Monad.Catch as E
 import           Control.Monad.Trans ( lift )
 import           Data.Maybe ( catMaybes )
@@ -92,7 +93,10 @@ redirect isa textStart textEnd instrumentor mem strat layoutAddr blocks symmap =
        case insns' of
          Nothing      -> return (LayoutPair cb sb Unmodified)
          Just insns'' -> return (LayoutPair cb sb { basicBlockInstructions = insns'' } Modified)
-     False -> return (LayoutPair cb sb Unmodified)
+     False -> do
+       when (not (isRelocatableTerminatorType (terminatorType isa mem cb))) $ do
+         recordUnrelocatableTermBlock
+       return (LayoutPair cb sb Unmodified)
   concretizedBlocks <- concretize strat layoutAddr transformedBlocks
   redirectedBlocks <- redirectOriginalBlocks concretizedBlocks
   let sorter = L.sortBy (comparing basicBlockAddress)

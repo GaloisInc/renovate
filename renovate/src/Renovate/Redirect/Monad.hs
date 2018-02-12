@@ -30,6 +30,9 @@ module Renovate.Redirect.Monad (
   askSymbolMap,
   putNewSymbolsMap,
   getNewSymbolsMap,
+  recordUnrelocatableTermBlock,
+  recordUnrelocatableSize,
+  recordResuedBytes,
   ) where
 
 
@@ -73,6 +76,12 @@ data RewriterEnv i t w = RewriterEnv
 data RewriterState w = RewriterState
   { rwsSymbolicAddressSource :: !Word64
   , rwsNewSymbolsMap         :: !(NewSymbolsMap w)
+  , rwsUnrelocatableTerm     :: !Int
+  -- ^ Count of blocks unrelocatable due to ending in an IP-relative indirect jump
+  , rwsUnrelocatableSize     :: !Int
+  -- ^ Count of blocks unrelocatable due to being too small to redirect
+  , rwsReusedBytes           :: !Int
+  -- ^ Count of bytes re-used by the compact layout strategy
   }
   deriving (Show)
 
@@ -111,12 +120,18 @@ initialState :: RewriterState w
 initialState =  RewriterState
   { rwsSymbolicAddressSource = 0
   , rwsNewSymbolsMap         = mempty
+  , rwsUnrelocatableTerm     = 0
+  , rwsUnrelocatableSize     = 0
+  , rwsReusedBytes           = 0
   }
 
 data Redirection f w a =
   Redirection { rdBlocks :: f a
               , rdNewSymbols :: NewSymbolsMap w
               , rdDiagnostics :: [Diagnostic]
+              , rdUnrelocatableTerm :: Int
+              , rdSmallBlock :: Int
+              , rdReusedBytes :: Int
               }
 
 checkRedirection :: Redirection (Either E.SomeException) w a
@@ -128,6 +143,9 @@ checkRedirection r =
       Right Redirection { rdBlocks = I.Identity a
                         , rdNewSymbols = rdNewSymbols r
                         , rdDiagnostics = rdDiagnostics r
+                        , rdUnrelocatableTerm = rdUnrelocatableTerm r
+                        , rdSmallBlock = rdSmallBlock r
+                        , rdReusedBytes = rdReusedBytes r
                         }
 
 -- | A wrapper around 'runReaderT' with 'I.Identity' as the base 'Monad'
@@ -153,6 +171,9 @@ runRewriterT isa mem symmap a = do
   return Redirection { rdBlocks = a'
                      , rdNewSymbols = rwsNewSymbolsMap s
                      , rdDiagnostics = F.toList (diagnosticMessages w)
+                     , rdUnrelocatableTerm = rwsUnrelocatableTerm s
+                     , rdSmallBlock = rwsUnrelocatableSize s
+                     , rdReusedBytes = rwsReusedBytes s
                      }
 
 -- | Log a diagnostic in the 'RewriterT' monad
@@ -189,3 +210,18 @@ getNewSymbolsMap :: Monad m => RewriterT i t w m (NewSymbolsMap w)
 getNewSymbolsMap = do
   s <- RWS.get
   return $! rwsNewSymbolsMap s
+
+recordUnrelocatableTermBlock :: (Monad m) => RewriterT i t w m ()
+recordUnrelocatableTermBlock = do
+  s <- RWS.get
+  RWS.put $! s { rwsUnrelocatableTerm = rwsUnrelocatableTerm s + 1 }
+
+recordUnrelocatableSize :: (Monad m) => RewriterT i t w m ()
+recordUnrelocatableSize = do
+  s <- RWS.get
+  RWS.put $! s { rwsUnrelocatableSize = rwsUnrelocatableSize s + 1 }
+
+recordResuedBytes :: (Monad m) => Int -> RewriterT i t w m ()
+recordResuedBytes nBytes = do
+  s <- RWS.get
+  RWS.put $! s { rwsReusedBytes = rwsReusedBytes s + nBytes }

@@ -52,6 +52,7 @@ redirectBlock input@(LayoutPair origBlock instrBlock Modified) = do
   -- probably fit very well in the top-level redirect loop
   case origBlockSize < jmpSize of
     True -> do
+      recordUnrelocatableSize
       logDiagnostic $ BlockTooSmallForRedirection origBlockSize jmpSize (basicBlockAddress origBlock)
                         (show origBlock ++ " |-> " ++ show instrBlock)
       return input
