@@ -175,12 +175,13 @@ buildBlock isa dis1 mem absStarts segAddr
   | Just concAddr <- concreteFromSegmentOff mem segAddr = do
       case MC.addrContentsAfter mem (MC.relativeSegmentAddr segAddr) of
         Left err -> C.throwM (MemoryError err)
-        Right [MC.ByteRegion bs] -> Just <$> go concAddr concAddr bs []
+        Right [MC.ByteRegion bs] -> Just <$> go concAddr concAddr (S.lookupGT concAddr absStarts) bs []
         _ -> C.throwM (NoByteRegionAtAddress (MC.relativeSegmentAddr segAddr))
   | otherwise = return Nothing
   where
     addOff       = addressAddOffset
-    go blockAbsAddr insnAddr bs insns = do
+    isJustAnd    = maybe False
+    go blockAbsAddr insnAddr stopAddr bs insns = do
       case dis1 bs of
         -- Actually, we should probably never hit this case.  We
         -- should have hit a terminator instruction or end of block
@@ -189,17 +190,24 @@ buildBlock isa dis1 mem absStarts segAddr
                                      , basicBlockInstructions = reverse insns
                                      }
         Just (bytesRead, i)
+          -- We have parsed an instruction that crosses a block boundary. We
+          -- should probably give up -- this executable is too wonky.
+          | isJustAnd (nextAddr>) stopAddr -> do
+            C.throwM OverlappingBlocks
+
           -- The next instruction we would decode starts another
           -- block, OR the instruction we just decoded is a
           -- terminator, so end the block and stop decoding
-          | S.member (insnAddr `addOff` fromIntegral bytesRead) absStarts ||
+          | isJustAnd (nextAddr==) stopAddr ||
             isaJumpType isa i mem insnAddr /= NoJump -> do
             return BasicBlock { basicBlockAddress      = blockAbsAddr
                               , basicBlockInstructions = reverse (i : insns)
                               }
 
           -- Otherwise, we just keep decoding
-          | otherwise -> go blockAbsAddr (insnAddr `addOff` fromIntegral bytesRead) (B.drop bytesRead bs) (i : insns)
+          | otherwise -> go blockAbsAddr nextAddr stopAddr (B.drop bytesRead bs) (i : insns)
+          where
+          nextAddr = insnAddr `addOff` fromIntegral bytesRead
 
 
 {- Note [Unaligned Instructions]
