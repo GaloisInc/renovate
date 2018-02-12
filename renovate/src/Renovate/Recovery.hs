@@ -27,7 +27,6 @@ import qualified Data.Set as S
 import qualified Data.Macaw.Architecture.Info as MC
 import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Discovery as MC
-import qualified Data.Macaw.Memory as MC
 import qualified Data.Macaw.Types as MC
 import qualified Data.Parameterized.Some as PU
 
