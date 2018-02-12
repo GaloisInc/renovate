@@ -48,6 +48,8 @@ redirectBlock input@(LayoutPair origBlock instrBlock Modified) = do
   let origBlockSize = concreteBlockSize isa origBlock
       jmpInsns = isaMakeRelativeJumpTo isa (basicBlockAddress origBlock) (basicBlockAddress instrBlock)
       jmpSize = instructionStreamSize isa jmpInsns
+  -- FIXME: Can we do this check at a higher level and earlier? It would
+  -- probably fit very well in the top-level redirect loop
   case origBlockSize < jmpSize of
     True -> do
       logDiagnostic $ BlockTooSmallForRedirection origBlockSize jmpSize (basicBlockAddress origBlock)
