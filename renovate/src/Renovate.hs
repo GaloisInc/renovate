@@ -75,6 +75,9 @@ module Renovate
   RW.RewriteSite(..),
   E.SomeBlocks(..),
   E.RewriterInfo(..),
+  E.riSmallBlockCount,
+  E.riReusedByteCount,
+  E.riUnrelocatableTerm,
   D.Diagnostic(..),
   D.Diagnostics(..),
   -- * Constraints
