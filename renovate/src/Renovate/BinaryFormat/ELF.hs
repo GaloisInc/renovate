@@ -194,7 +194,7 @@ rewriteElf :: (ISA.InstructionConstraints i a,
            -- (including statically-allocated data)
            -> RE.LayoutStrategy
            -- ^ The layout strategy for blocks in the new binary
-           -> IO (E.Elf w, b, RewriterInfo w) -- (Either C.SomeException (E.Elf w, b, RewriterInfo w))
+           -> IO (E.Elf w, b, RewriterInfo w)
 rewriteElf cfg e mem strat = do
     (analysisResult, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
     return (_riELF ri, analysisResult, ri)
