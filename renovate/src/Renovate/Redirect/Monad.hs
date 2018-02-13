@@ -125,6 +125,8 @@ initialState =  RewriterState
   , rwsReusedBytes           = 0
   }
 
+-- | A type wrapping up the results of the 'Rewriter' Monad (runnable by
+-- 'runRewriter' and 'runRewriterT').
 data Redirection f w a =
   Redirection { rdBlocks :: f a
               , rdNewSymbols :: NewSymbolsMap w
@@ -134,6 +136,10 @@ data Redirection f w a =
               , rdReusedBytes :: Int
               }
 
+-- | Try to unwrap a 'Redirection'
+--
+-- If the 'Redirection' contains a 'Left', turn the whole thing into a 'Left'.
+-- Otherwise, unwrap the 'Either' into an 'I.Identity'
 checkRedirection :: Redirection (Either E.SomeException) w a
                  -> Either E.SomeException (Redirection I.Identity w a)
 checkRedirection r =
