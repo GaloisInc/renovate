@@ -78,6 +78,7 @@ module Renovate
   E.riSmallBlockCount,
   E.riReusedByteCount,
   E.riUnrelocatableTerm,
+  E.riInstrumentationSites,
   D.Diagnostic(..),
   D.Diagnostics(..),
   -- * Constraints

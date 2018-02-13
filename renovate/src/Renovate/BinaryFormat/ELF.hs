@@ -29,6 +29,7 @@ module Renovate.BinaryFormat.ELF (
   riSmallBlockCount,
   riReusedByteCount,
   riUnrelocatableTerm,
+  riInstrumentationSites,
   RenovateConfig(..),
   RewriterInfo(..),
   SomeBlocks(..)
@@ -105,7 +106,7 @@ data RewriterInfo w =
                , _riBlockRecoveryDiagnostics :: [RD.Diagnostic]
                , _riRedirectionDiagnostics :: [RD.Diagnostic]
                , _riRecoveredBlocks :: Maybe SomeBlocks
-               , _riInstrumentationInfo :: Maybe (RW.RewriteInfo w)
+               , _riInstrumentationSites :: [RW.RewriteSite w]
                , _riELF :: E.Elf w
                , _riSmallBlockCount :: Int
                -- ^ The number of blocks that were too small to rewrite
@@ -837,7 +838,7 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
                   let I.Identity (overwrittenBlocks, instrumentationBlocks) = RE.rdBlocks redir
                   let newSyms = RE.rdNewSymbols redir
                   riRedirectionDiagnostics L..= RE.rdDiagnostics rres
-                  riInstrumentationInfo L..= Just info
+                  riInstrumentationSites L..= RW.infoSites info
                   riReusedByteCount L..= RE.rdReusedBytes redir
                   riSmallBlockCount L..= RE.rdSmallBlock redir
                   riUnrelocatableTerm L..= RE.rdUnrelocatableTerm redir
@@ -915,7 +916,7 @@ emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
                                    , _riBlockRecoveryDiagnostics = []
                                    , _riRedirectionDiagnostics   = []
                                    , _riRecoveredBlocks          = Nothing
-                                   , _riInstrumentationInfo      = Nothing
+                                   , _riInstrumentationSites     = []
                                    , _riELF                      = e
                                    , _riSmallBlockCount          = 0
                                    , _riReusedByteCount          = 0
@@ -949,8 +950,8 @@ riRedirectionDiagnostics = GL.field @"_riRedirectionDiagnostics"
 riRecoveredBlocks :: L.Simple L.Lens (RewriterInfo w) (Maybe SomeBlocks)
 riRecoveredBlocks = GL.field @"_riRecoveredBlocks"
 
-riInstrumentationInfo :: L.Simple L.Lens (RewriterInfo w) (Maybe (RW.RewriteInfo w))
-riInstrumentationInfo = GL.field @"_riInstrumentationInfo"
+riInstrumentationSites :: L.Simple L.Lens (RewriterInfo w) [RW.RewriteSite w]
+riInstrumentationSites = GL.field @"_riInstrumentationSites"
 
 riSmallBlockCount :: L.Simple L.Lens (RewriterInfo w) Int
 riSmallBlockCount = GL.field @"_riSmallBlockCount"
