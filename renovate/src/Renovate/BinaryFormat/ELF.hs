@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -25,11 +26,15 @@ module Renovate.BinaryFormat.ELF (
   analyzeElf,
   riSectionBaseAddress,
   riInitialBytes,
+  riSmallBlockCount,
+  riReusedByteCount,
+  riUnrelocatableTerm,
   RenovateConfig(..),
   RewriterInfo(..),
   SomeBlocks(..)
   ) where
 
+import           GHC.Generics ( Generic )
 import           GHC.TypeLits ( KnownNat )
 
 import           Control.Applicative
@@ -44,6 +49,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C8
 import qualified Data.Foldable as F
 import qualified Data.Functor.Identity as I
+import qualified Data.Generics.Product as GL
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
 import           Data.Maybe ( catMaybes, maybeToList, listToMaybe, mapMaybe )
@@ -101,7 +107,15 @@ data RewriterInfo w =
                , _riRecoveredBlocks :: Maybe SomeBlocks
                , _riInstrumentationInfo :: Maybe (RW.RewriteInfo w)
                , _riELF :: E.Elf w
+               , _riSmallBlockCount :: Int
+               -- ^ The number of blocks that were too small to rewrite
+               , _riReusedByteCount :: Int
+               -- ^ The number of bytes re-used in the base program by the compact layout strategy
+               , _riUnrelocatableTerm :: Int
+               -- ^ The number of blocks that could not be relocated because
+               -- they end with an IP-relative jump
                }
+  deriving (Generic)
 
 data SomeBlocks = forall i a w
                 . (MM.MemWidth w, ISA.InstructionConstraints i a)
@@ -824,6 +838,9 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
                   let newSyms = RE.rdNewSymbols redir
                   riRedirectionDiagnostics L..= RE.rdDiagnostics rres
                   riInstrumentationInfo L..= Just info
+                  riReusedByteCount L..= RE.rdReusedBytes redir
+                  riSmallBlockCount L..= RE.rdSmallBlock redir
+                  riUnrelocatableTerm L..= RE.rdUnrelocatableTerm redir
                   let allBlocks = overwrittenBlocks ++ instrumentationBlocks
                   case cfg of
                     RenovateConfig { rcAssembler = asm } -> do
@@ -900,34 +917,46 @@ emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
                                    , _riRecoveredBlocks          = Nothing
                                    , _riInstrumentationInfo      = Nothing
                                    , _riELF                      = e
+                                   , _riSmallBlockCount          = 0
+                                   , _riReusedByteCount          = 0
+                                   , _riUnrelocatableTerm        = 0
                                    }
 
 riSegmentVirtualAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
-riSegmentVirtualAddress = L.lens _riSegmentVirtualAddress (\ri v -> ri { _riSegmentVirtualAddress = v })
+riSegmentVirtualAddress = GL.field @"_riSegmentVirtualAddress"
 
 riOverwrittenRegions :: L.Simple L.Lens (RewriterInfo w) [(String, Word64)]
-riOverwrittenRegions = L.lens _riOverwrittenRegions (\ri v -> ri { _riOverwrittenRegions = v })
+riOverwrittenRegions = GL.field @"_riOverwrittenRegions"
 
 riAppendedSegments :: L.Simple L.Lens (RewriterInfo w) [(E.ElfSegmentType, Word16, Word64, Word64)]
-riAppendedSegments = L.lens _riAppendedSegments (\ri v -> ri { _riAppendedSegments = v })
+riAppendedSegments = GL.field @"_riAppendedSegments"
 
 -- riEntryPointAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
--- riEntryPointAddress = L.lens _riEntryPointAddress (\ri v -> ri { _riEntryPointAddress = v })
+-- riEntryPointAddress = GL.field @"_riEntryPointAddress"
 
 riSectionBaseAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
-riSectionBaseAddress = L.lens _riSectionBaseAddress (\ri v -> ri { _riSectionBaseAddress = v })
+riSectionBaseAddress = GL.field @"_riSectionBaseAddress"
 
 riInitialBytes :: L.Simple L.Lens (RewriterInfo w) (Maybe B.ByteString)
-riInitialBytes = L.lens _riInitialBytes (\ri v -> ri { _riInitialBytes = v })
+riInitialBytes = GL.field @"_riInitialBytes"
 
 riBlockRecoveryDiagnostics :: L.Simple L.Lens (RewriterInfo w) [RD.Diagnostic]
-riBlockRecoveryDiagnostics = L.lens _riBlockRecoveryDiagnostics (\ri v -> ri { _riBlockRecoveryDiagnostics = v })
+riBlockRecoveryDiagnostics = GL.field @"_riBlockRecoveryDiagnostics"
 
 riRedirectionDiagnostics :: L.Simple L.Lens (RewriterInfo w) [RD.Diagnostic]
-riRedirectionDiagnostics = L.lens _riRedirectionDiagnostics (\ri v -> ri { _riRedirectionDiagnostics = v })
+riRedirectionDiagnostics = GL.field @"_riRedirectionDiagnostics"
 
 riRecoveredBlocks :: L.Simple L.Lens (RewriterInfo w) (Maybe SomeBlocks)
-riRecoveredBlocks = L.lens _riRecoveredBlocks (\ri v -> ri { _riRecoveredBlocks = v })
+riRecoveredBlocks = GL.field @"_riRecoveredBlocks"
 
 riInstrumentationInfo :: L.Simple L.Lens (RewriterInfo w) (Maybe (RW.RewriteInfo w))
-riInstrumentationInfo = L.lens _riInstrumentationInfo (\ri v -> ri { _riInstrumentationInfo = v })
+riInstrumentationInfo = GL.field @"_riInstrumentationInfo"
+
+riSmallBlockCount :: L.Simple L.Lens (RewriterInfo w) Int
+riSmallBlockCount = GL.field @"_riSmallBlockCount"
+
+riReusedByteCount :: L.Simple L.Lens (RewriterInfo w) Int
+riReusedByteCount = GL.field @"_riReusedByteCount"
+
+riUnrelocatableTerm :: L.Simple L.Lens (RewriterInfo w) Int
+riUnrelocatableTerm = GL.field @"_riUnrelocatableTerm"
