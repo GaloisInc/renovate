@@ -48,7 +48,7 @@ test-suite renovate-x86-tests
                  macaw-x86,
                  bytestring,
                  containers,
-                 tasty >= 0.10 && < 0.12,
+                 tasty >= 0.10 && < 2,
                  filemanip >= 0.3.6 && < 0.4,
                  elf-edit,
                  filepath,
