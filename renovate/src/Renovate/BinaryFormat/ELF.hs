@@ -830,18 +830,6 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
                       (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks
                       let newDataBytes = mkNewDataSection newGlobalBase info
                       return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
-            -- ((Left exn2, _newSyms, diags2), _info) -> do
-            --   riRedirectionDiagnostics L..= diags2
-            --   C.throwM (RewriterFailure exn2 diags2)
-            -- ((Right (overwrittenBlocks, instrumentationBlocks), newSyms, diags2), info) -> do
-            --   riRedirectionDiagnostics L..= diags2
-            --   riInstrumentationInfo L..= Just info
-            --   let allBlocks = overwrittenBlocks ++ instrumentationBlocks
-            --   case cfg of
-            --     RenovateConfig { rcAssembler = asm } -> do
-            --       (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks
-            --       let newDataBytes = mkNewDataSection newGlobalBase info
-            --       return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
 
 analyzeTextSection :: forall i a w arch b
                     . (ISA.InstructionConstraints i a,
