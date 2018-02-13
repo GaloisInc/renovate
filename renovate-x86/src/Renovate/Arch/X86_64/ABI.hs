@@ -55,10 +55,10 @@ x64CallerSaveRegisters :: [Value]
 x64CallerSaveRegisters = [ D.QWordReg D.RCX
                          , D.QWordReg D.RSI
                          , D.QWordReg D.RDI
-                         , D.QWordReg (D.reg64 8)
-                         , D.QWordReg (D.reg64 9)
-                         , D.QWordReg (D.reg64 10)
-                         , D.QWordReg (D.reg64 11)
+                         , D.QWordReg (D.Reg64 8)
+                         , D.QWordReg (D.Reg64 9)
+                         , D.QWordReg (D.Reg64 10)
+                         , D.QWordReg (D.Reg64 11)
                          ]
 
 x64ClearRegister :: Value -> Instruction (TargetAddress w)
