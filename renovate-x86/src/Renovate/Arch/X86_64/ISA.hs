@@ -258,7 +258,7 @@ x64SymbolizeAddresses mem _lookup insnAddr mSymbolicTarget xi@(XI ii)
   where
     newInsn = XI (ii { D.iiArgs = fmap (saveAbsoluteRipAddresses mem insnAddr xi) (D.iiArgs ii) })
     XI jmpInstr0 = makeInstr (D.iiOp ii) [D.JumpOffset D.ZSize 0]
-    jmpInstr = XI (ii { D.iiArgs = fmap (saveAbsoluteRipAddresses mem insnAddr xi) (D.iiArgs jmpInstr0) })
+    jmpInstr = XI (jmpInstr0 { D.iiArgs = fmap (saveAbsoluteRipAddresses mem insnAddr xi) (D.iiArgs jmpInstr0) })
 
 
 saveAbsoluteRipAddresses :: (MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> Instruction () -> AnnotatedOperand () -> AnnotatedOperand (TargetAddress w)
