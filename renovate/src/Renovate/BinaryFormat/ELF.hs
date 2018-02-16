@@ -35,6 +35,8 @@ module Renovate.BinaryFormat.ELF (
   riOverwrittenRegions,
   riAppendedSegments,
   riRecoveredBlocks,
+  riOriginalTextSize,
+  riNewTextSize,
   riRedirectionDiagnostics,
   riBlockRecoveryDiagnostics,
   RenovateConfig(..),
@@ -122,6 +124,10 @@ data RewriterInfo w =
                , _riUnrelocatableTerm :: Int
                -- ^ The number of blocks that could not be relocated because
                -- they end with an IP-relative jump
+               , _riOriginalTextSize :: Int
+               -- ^ The number of bytes in the original text section
+               , _riNewTextSize :: Int
+               -- ^ The number of bytes allocated in the new text section
                }
   deriving (Generic)
 
@@ -340,6 +346,9 @@ doRewrite cfg mem symmap strat = do
                                        (E.elfSectionData textSection) strat layoutAddr dataAddr symmap
 
   (extraTextSecIdx, instrumentationSeg) <- withCurrentELF (newInstrumentationSegment nextSegmentAddress instrumentedBytes)
+
+  riOriginalTextSize L..= fromIntegral (B.length overwrittenBytes)
+  riNewTextSize L..= fromIntegral (B.length instrumentedBytes)
 
   -- Now go through and append our new segments.  The first contains our
   -- instrumentation.  The second contains a new data segment (if required).
@@ -928,7 +937,14 @@ emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
                                    , _riSmallBlockCount          = 0
                                    , _riReusedByteCount          = 0
                                    , _riUnrelocatableTerm        = 0
+                                   , _riOriginalTextSize         = 0
+                                   , _riNewTextSize              = 0
                                    }
+riOriginalTextSize :: L.Simple L.Lens (RewriterInfo w) Int
+riOriginalTextSize = GL.field @"_riOriginalTextSize"
+
+riNewTextSize :: L.Simple L.Lens (RewriterInfo w) Int
+riNewTextSize = GL.field @"_riNewTextSize"
 
 riSegmentVirtualAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
 riSegmentVirtualAddress = GL.field @"_riSegmentVirtualAddress"

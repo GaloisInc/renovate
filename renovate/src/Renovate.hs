@@ -88,6 +88,8 @@ module Renovate
   E.riSectionBaseAddress,
   E.riOverwrittenRegions,
   E.riSegmentVirtualAddress,
+  E.riOriginalTextSize,
+  E.riNewTextSize,
   D.Diagnostic(..),
   D.Diagnostics(..),
   -- * Constraints
