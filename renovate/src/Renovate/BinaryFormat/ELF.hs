@@ -24,14 +24,21 @@ module Renovate.BinaryFormat.ELF (
   withMemory,
   rewriteElf,
   analyzeElf,
-  riSectionBaseAddress,
   riInitialBytes,
   riSmallBlockCount,
   riReusedByteCount,
   riUnrelocatableTerm,
+  riEntryPointAddress,
+  riSectionBaseAddress,
   riInstrumentationSites,
+  riSegmentVirtualAddress,
+  riOverwrittenRegions,
+  riAppendedSegments,
+  riRecoveredBlocks,
+  riRedirectionDiagnostics,
+  riBlockRecoveryDiagnostics,
   RenovateConfig(..),
-  RewriterInfo(..),
+  RewriterInfo,
   SomeBlocks(..)
   ) where
 
@@ -932,8 +939,8 @@ riOverwrittenRegions = GL.field @"_riOverwrittenRegions"
 riAppendedSegments :: L.Simple L.Lens (RewriterInfo w) [(E.ElfSegmentType, Word16, Word64, Word64)]
 riAppendedSegments = GL.field @"_riAppendedSegments"
 
--- riEntryPointAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
--- riEntryPointAddress = GL.field @"_riEntryPointAddress"
+riEntryPointAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
+riEntryPointAddress = GL.field @"_riEntryPointAddress"
 
 riSectionBaseAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
 riSectionBaseAddress = GL.field @"_riSectionBaseAddress"
