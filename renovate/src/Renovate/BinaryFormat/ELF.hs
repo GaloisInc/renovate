@@ -255,10 +255,7 @@ withMemory e k =
     Left err -> C.throwM (MemoryLoadError err)
     Right (_sim, mem) -> k mem
   where
-    loadOpts = MM.LoadOptions { MM.loadStyleOverride = Nothing
-                              , MM.includeBSS = False
-                              , MM.loadRegionIndex = Just 0
-                              }
+    loadOpts = MM.defaultLoadOptions { MM.loadRegionIndex = Just 0 }
 
 findTextSection :: E.Elf w -> ElfRewriter w (E.ElfSection (E.ElfWordType w))
 findTextSection e = do
