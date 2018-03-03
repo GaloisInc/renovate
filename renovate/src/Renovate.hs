@@ -90,6 +90,7 @@ module Renovate
   E.riSegmentVirtualAddress,
   E.riOriginalTextSize,
   E.riNewTextSize,
+  E.riBlockMapping,
   D.Diagnostic(..),
   D.Diagnostics(..),
   -- * Constraints

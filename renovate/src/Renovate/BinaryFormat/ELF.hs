@@ -39,6 +39,7 @@ module Renovate.BinaryFormat.ELF (
   riNewTextSize,
   riRedirectionDiagnostics,
   riBlockRecoveryDiagnostics,
+  riBlockMapping,
   RenovateConfig(..),
   RewriterInfo,
   SomeBlocks(..)
@@ -128,6 +129,8 @@ data RewriterInfo w =
                -- ^ The number of bytes in the original text section
                , _riNewTextSize :: Int
                -- ^ The number of bytes allocated in the new text section
+               , _riBlockMapping :: [(RA.ConcreteAddress w, RA.ConcreteAddress w)]
+               -- ^ A mapping of original block addresses to rewritten block addresses
                }
   deriving (Generic)
 
@@ -855,6 +858,7 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
                   riReusedByteCount L..= RE.rdReusedBytes redir
                   riSmallBlockCount L..= RE.rdSmallBlock redir
                   riUnrelocatableTerm L..= RE.rdUnrelocatableTerm redir
+                  riBlockMapping L..= RE.rdBlockMapping redir
                   let allBlocks = overwrittenBlocks ++ instrumentationBlocks
                   case cfg of
                     RenovateConfig { rcAssembler = asm } -> do
@@ -936,6 +940,7 @@ emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
                                    , _riUnrelocatableTerm        = 0
                                    , _riOriginalTextSize         = 0
                                    , _riNewTextSize              = 0
+                                   , _riBlockMapping             = []
                                    }
 riOriginalTextSize :: L.Simple L.Lens (RewriterInfo w) Int
 riOriginalTextSize = GL.field @"_riOriginalTextSize"
@@ -981,3 +986,6 @@ riReusedByteCount = GL.field @"_riReusedByteCount"
 
 riUnrelocatableTerm :: L.Simple L.Lens (RewriterInfo w) Int
 riUnrelocatableTerm = GL.field @"_riUnrelocatableTerm"
+
+riBlockMapping :: L.Simple L.Lens (RewriterInfo w) [(RA.ConcreteAddress w, RA.ConcreteAddress w)]
+riBlockMapping = GL.field @"_riBlockMapping"

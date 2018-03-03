@@ -37,6 +37,7 @@ import           Renovate.ISA
 import           Renovate.Redirect.Concretize
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , Status(..)
+                                                      , ConcretePair
                                                       , LayoutPair(..) )
 import           Renovate.Redirect.Symbolize
 import           Renovate.Redirect.Internal
@@ -98,12 +99,19 @@ redirect isa textStart textEnd instrumentor mem strat layoutAddr blocks symmap =
          recordUnrelocatableTermBlock
        return (LayoutPair cb sb Unmodified)
   concretizedBlocks <- concretize strat layoutAddr transformedBlocks
+  recordBlockMap (toBlockMapping concretizedBlocks)
   redirectedBlocks <- redirectOriginalBlocks concretizedBlocks
   let sorter = L.sortBy (comparing basicBlockAddress)
   return $ (sorter *** sorter . catMaybes) (unzip (map toPair (F.toList redirectedBlocks)))
   where
     toPair (LayoutPair cb sb Modified)   = (cb, Just sb)
     toPair (LayoutPair cb _  Unmodified) = (cb, Nothing)
+
+toBlockMapping :: [ConcretePair i w] -> [(ConcreteAddress w, ConcreteAddress w)]
+toBlockMapping ps =
+  [ (basicBlockAddress (lpOrig lp), basicBlockAddress (lpNew lp))
+  | lp <- ps
+  ]
 
 isRelocatableTerminatorType :: JumpType w -> Bool
 isRelocatableTerminatorType jt =
