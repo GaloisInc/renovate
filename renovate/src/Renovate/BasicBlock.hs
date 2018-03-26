@@ -17,7 +17,6 @@ module Renovate.BasicBlock (
   instructionAddresses',
   terminatorType,
   TaggedInstruction,
-  tag,
   tagInstruction,
   hasNoSymbolicTarget,
   symbolicTarget,
