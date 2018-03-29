@@ -25,6 +25,9 @@ import qualified Data.Macaw.Memory as MM
 -- | Symbolic addresses that can be referenced abstractly and
 -- relocated.  They will automatically be concretized when blocks are
 -- laid out.
+--
+-- The 'Word64' value of the 'SymbolicAddress' is a meaningless nonce,
+-- a unique identifier.
 newtype SymbolicAddress = SymbolicAddress Word64
                         deriving (Eq, Ord, Show)
 

@@ -4,7 +4,7 @@
 -- | This module defines the interface required for describing an 'ISA'
 -- to the rewriter.
 --
--- Implementations of 'ISA's are under the Renovate.Arch module hierarchy.
+-- Implementations of 'ISA's are in separate @renovate-<arch>@ packages.
 module Renovate.ISA (
   ISA(..),
   JumpType(..),
@@ -86,7 +86,8 @@ data JumpType w = RelativeJump JumpCondition (ConcreteAddress w) (MM.MemWord w)
 -- The functions `isaSymbolizeAddress` and `isaConcretizeAddress`
 -- convert between concrete and symbolic instructions.
 --
--- There will be an x86_64ISA and an armISA, at the least.
+-- See separate @renovate-<arch>@ packages for actual 'ISA'
+-- definitions.
 data ISA (i :: * -> *) a w =
   ISA { isaInstructionSize :: forall t . i t -> Word8
         -- ^ Compute the size of an instruction in bytes
