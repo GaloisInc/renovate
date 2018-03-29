@@ -3,7 +3,11 @@
 set -e
 set -o pipefail
 
-ssh-add "$HOME/.ssh/id_ed25519_semmc"
+# Export LOCAL_TEST=1 for local testing to avoid trying to add this
+# SSH key.
+if [ -z "$LOCAL_TEST" ]; then
+  ssh-add "$HOME/.ssh/id_ed25519_semmc"
+fi
 
 export GHC_VER=$1
 
@@ -34,9 +38,12 @@ echo "Updating hackage index"
 cabal update || exit 1
 
 echo "Testing ghc"
-/opt/ghc/${GHC_VER}/bin/ghc --version
+ghc --version
 
 ln -sf ./cabal.project.dist ./cabal.project
 
+# Unset GHC_PACKAGE_PATH, in case we're running via 'stack exec',
+# because 'cabal new-configure' fails if GHC_PACKAGE_PATH is set, and
+unset GHC_PACKAGE_PATH
 cabal new-build renovate-x86 || exit 1
 cabal new-build renovate-ppc || exit 1

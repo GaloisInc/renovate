@@ -10,8 +10,6 @@ packages: deps/elf-edit/
           deps/dismantle/dismantle-ppc/
           deps/semmc/semmc/
           deps/semmc/semmc-ppc/
-          deps/semmc/submodules/s-cargot/
-          deps/semmc/submodules/s-cargot-letbind/
           deps/macaw-semmc/macaw-ppc/
           deps/macaw-semmc/macaw-semmc/
           renovate/
