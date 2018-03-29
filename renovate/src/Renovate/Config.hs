@@ -34,7 +34,7 @@ import qualified Renovate.Recovery as R
 
 -- | A wrapper around a 'RenovateConfig' that hides parameters and allows us to
 -- have collections of configs while capturing the necessary class dictionaries
-data SomeConfig b = forall i a w arch
+data SomeConfig   = forall i a w arch b
                   . (ISA.InstructionConstraints i a,
                      R.ArchBits arch w,
                      KnownNat w, Typeable w)

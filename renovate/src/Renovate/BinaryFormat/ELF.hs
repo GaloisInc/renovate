@@ -154,8 +154,8 @@ data SomeBlocks = forall i a w
 withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
               -- ^ The ELF file to analyze
-              -> [(Arch.Architecture, SomeConfig b)]
-              -> (forall i a w arch . (R.ArchBits arch w,
+              -> [(Arch.Architecture, SomeConfig)]
+              -> (forall i a w arch b . (R.ArchBits arch w,
                                        Typeable w,
                                        KnownNat w,
                                        E.ElfWidthConstraints w,
