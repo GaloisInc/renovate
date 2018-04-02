@@ -258,7 +258,7 @@ withMemory :: forall w m a
 withMemory e k =
   case MM.memoryForElf loadOpts e of
     Left err -> C.throwM (MemoryLoadError err)
-    Right (_sim, mem) -> k mem
+    Right (_sim, mem, _warnings) -> k mem
   where
     loadOpts = MM.defaultLoadOptions { MM.loadRegionIndex = Just 0 }
 
