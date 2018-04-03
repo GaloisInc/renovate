@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE ExistentialQuantification #-}
@@ -157,12 +158,13 @@ data SomeBlocks = forall i a w
 withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
               -- ^ The ELF file to analyze
-              -> [(Arch.Architecture, SomeConfig b)]
-              -> (forall i a w arch . (R.ArchBits arch w,
+              -> [(Arch.Architecture, SomeConfig c)]
+              -> (forall i a w arch b . (R.ArchBits arch w,
                                        Typeable w,
                                        KnownNat w,
                                        E.ElfWidthConstraints w,
-                                       ISA.InstructionConstraints i a)
+                                       ISA.InstructionConstraints i a,
+                                       c i a w arch b)
                                    => RenovateConfig i a w arch b
                                    -> E.Elf w
                                    -> MM.Memory w
@@ -259,7 +261,7 @@ withMemory :: forall w m a
 withMemory e k =
   case MM.memoryForElf loadOpts e of
     Left err -> C.throwM (MemoryLoadError err)
-    Right (_sim, mem) -> k mem
+    Right (_sim, mem, _warnings) -> k mem
   where
     loadOpts = MM.defaultLoadOptions { MM.loadRegionIndex = Just 0 }
 

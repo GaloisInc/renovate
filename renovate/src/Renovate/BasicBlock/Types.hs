@@ -6,7 +6,6 @@ module Renovate.BasicBlock.Types (
   SymbolicInfo(..),
   AddressAssignedBlock(..),
   TaggedInstruction,
-  tag,
   tagInstruction,
   hasNoSymbolicTarget,
   symbolicTarget,
@@ -81,10 +80,6 @@ symbolicTarget = snd . unTag
 -- | Remove the tag from an instruction
 projectInstruction :: TaggedInstruction i a -> i a
 projectInstruction = fst . unTag
-
--- | Tag an instruction with a 'SymbolicAddress' target
-tag :: i a -> Maybe SymbolicAddress -> TaggedInstruction i a
-tag i msa = Tag (i, msa)
 
 -- | The type of 'BasicBlock's that only have symbolic addresses.
 -- Their jumps are annotated with symbolic address targets as well,

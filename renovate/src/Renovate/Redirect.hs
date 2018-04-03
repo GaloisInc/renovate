@@ -127,6 +127,11 @@ isRelocatableTerminatorType jt =
 
 {- Note [Redirection]
 
+(As of 2018-03-27 conathan believes this Note is out of date. For
+example, (2) talks about ensuring that "fallthroughs in conditional
+jumps continue to work", but Renovate.Redirect.LayoutBlocks.Compact
+adds epilogues with absolute jumps to eliminate implicit fallthrough.)
+
 The redirection is complex, but can be essentially broken down into
 the following steps:
 

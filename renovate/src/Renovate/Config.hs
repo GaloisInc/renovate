@@ -1,12 +1,17 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds  #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 -- | Internal helpers for the ELF rewriting interface
 module Renovate.Config (
   RenovateConfig(..),
   SomeConfig(..),
+  TrivialConfigConstraint,
   compose,
   identity,
   nop
@@ -32,13 +37,22 @@ import qualified Renovate.ISA as ISA
 import qualified Renovate.Rewrite as RW
 import qualified Renovate.Recovery as R
 
--- | A wrapper around a 'RenovateConfig' that hides parameters and allows us to
--- have collections of configs while capturing the necessary class dictionaries
-data SomeConfig b = forall i a w arch
+-- | A wrapper around a 'RenovateConfig' that hides parameters and
+-- allows us to have collections of configs while capturing the
+-- necessary class dictionaries. The 'SomeConfig' is parameterized by
+-- a constraint @c@ over the hidden 'RenovateConfig' params, which
+-- supports exposing information about the hidden params, or bundling
+-- up other functionality via a type class.
+data SomeConfig c = forall i a w arch b
                   . (ISA.InstructionConstraints i a,
                      R.ArchBits arch w,
-                     KnownNat w, Typeable w)
+                     KnownNat w, Typeable w,
+                     c i a w arch b)
                   => SomeConfig (NR.NatRepr w) (RenovateConfig i a w arch b)
+
+-- | A trivial constraint for use with 'SomeConfig'.
+class TrivialConfigConstraint i a w arch b
+instance TrivialConfigConstraint i a w arch b
 
 -- | The configuration required for a run of the binary rewriter.
 --

@@ -28,10 +28,10 @@ import           Renovate.Redirect.Monad
 
 import           Renovate.Redirect.LayoutBlocks.Types
 
--- | The address heap associates chunks of memory to addresses.  The ordering of
--- the heap is based on the size of the chunk of memory at each address.  The
--- sizes are stored as negative values so that taking the minimum element of the
--- heap yields the region with the largest amount of space left.
+-- | The address heap associates chunks of memory to addresses.  The
+-- ordering of the heap is based on the size of the chunk of memory at
+-- each address. It's a priority heap with larger addresses having
+-- higher priority, hence @Down Int@ to sort decreasing on @Int@ size.
 type AddressHeap w = H.Heap (H.Entry (Down Int) (ConcreteAddress w))
 
 -- | Compute a concrete address for each 'SymbolicBlock'.
@@ -262,9 +262,6 @@ buildAddressHeap startAddr blocks = do
 -- We subtract out the space required to redirect execution of the block to its
 -- instrumented version.
 --
--- We actually insert the negation of the available space into the heap so that
--- extracting the minimum value yields the largest block possible.
---
 -- NOTE: We only add blocks that have been *modified*.  If a block is
 -- unmodified, overwriting it would throw away code, as we don't lay out
 -- duplicates of unmodified blocks.
@@ -295,7 +292,7 @@ randomOrder seed initial = runST $ do
   -- inplace shuffle.
   go :: MWC.GenST s -> Int -> MV.STVector s a -> ST s (MV.STVector s a)
   go g i vec
-    | i >= MV.length vec - 2 = return vec
+    | i >= MV.length vec - 1 = return vec
     | otherwise = do
       j <- MWC.uniformR (i,MV.length vec-1) g
       MV.swap vec i j
