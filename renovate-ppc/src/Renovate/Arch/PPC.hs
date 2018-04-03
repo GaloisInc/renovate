@@ -1,6 +1,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 module Renovate.Arch.PPC (
   -- * Configuration
   config32,
@@ -79,6 +81,12 @@ config64 tocMap analysis rewriter =
                  , rcCodeLayoutBase = 0x10100000
                  , rcDataLayoutBase = 0x20000000
                  }
+
+instance ArchInfo MP.PPC64 where
+  archFunctions _ = Nothing
+
+instance ArchInfo MP.PPC32 where
+  archFunctions _ = Nothing
 
 {- Note [Layout Addresses]
 

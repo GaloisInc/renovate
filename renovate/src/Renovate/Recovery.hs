@@ -3,18 +3,22 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 -- | The interface for 'BasicBlock' recovery
 module Renovate.Recovery (
+  Recovery(..),
   recoverBlocks,
   BlockInfo(..),
   isIncompleteBlockAddress,
   ArchBits,
+  ArchInfo(..),
   Diagnostic(..)
   ) where
 
 import qualified GHC.Err.Located as L
-import qualified Control.Exception as E
 import qualified Control.Lens as L
 import qualified Control.Monad.Catch as C
 import           Control.Monad.ST ( stToIO, ST, RealWorld )
@@ -23,18 +27,24 @@ import qualified Data.List.NonEmpty as NEL
 import qualified Data.Foldable as F
 import qualified Data.Map as M
 import           Data.Maybe ( catMaybes, fromMaybe, mapMaybe )
+import           Data.Proxy ( Proxy(..) )
 import qualified Data.Set as S
+import qualified Data.Traversable as T
 
 import qualified Data.Macaw.Architecture.Info as MC
 import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Discovery as MC
 import qualified Data.Macaw.Types as MC
+import qualified Data.Macaw.Symbolic as MS
+import qualified Lang.Crucible.CFG.Core as C
+import qualified Lang.Crucible.FunctionHandle as C
+import qualified Data.Parameterized.Context as Ctx
 import qualified Data.Parameterized.Some as PU
 
 import           Renovate.Address
 import           Renovate.BasicBlock
+import           Renovate.Diagnostic
 import           Renovate.ISA
-import           Renovate.Recovery.Monad
 import           Renovate.Redirect.Monad ( SymbolMap )
 
 type ArchBits arch w = (w ~ MC.RegAddrWidth (MC.ArchReg arch),
@@ -42,6 +52,7 @@ type ArchBits arch w = (w ~ MC.RegAddrWidth (MC.ArchReg arch),
                         MC.RegisterInfo (MC.ArchReg arch),
                         MC.HasRepr (MC.ArchReg arch) MC.TypeRepr,
                         MC.MemWidth w,
+                        ArchInfo arch,
                         Show (MC.ArchReg arch (MC.BVType (MC.ArchAddrWidth arch))))
 
 -- | Information on recovered basic blocks
@@ -53,59 +64,78 @@ data BlockInfo i w arch = BlockInfo
   , biIncomplete       :: S.Set (ConcreteAddress w)
   -- ^ The set of blocks that reside in incomplete functions (i.e., functions
   -- for which we cannot find all of the code)
+  , biCFG              :: M.Map (ConcreteAddress w) (C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch))
+  -- ^ The Crucible CFG for each function (if possible to construct), see
+  -- Note [CrucibleCFG]
   }
 
 isIncompleteBlockAddress :: BlockInfo i w arch -> ConcreteAddress w -> Bool
 isIncompleteBlockAddress bi a = S.member a (biIncomplete bi)
 
-analyzeDiscoveredFunctions :: (MC.MemWidth (MC.ArchAddrWidth arch))
-                           => ISA i a (MC.ArchAddrWidth arch)
-                           -> (forall m . (C.MonadThrow m)  => B.ByteString -> m (Int, i ()))
+analyzeDiscoveredFunctions :: (ArchInfo arch, MC.MemWidth (MC.ArchAddrWidth arch))
+                           => Recovery arch i a (MC.RegAddrWidth (MC.ArchReg arch))
                            -> MC.Memory (MC.ArchAddrWidth arch)
-                           -> Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
-                           -> Maybe (Int, MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i (MC.ArchAddrWidth arch) arch) -> IO ())
                            -> MC.DiscoveryState arch
                            -> Int
                            -- ^ Iteration count
                            -> IO (MC.DiscoveryState arch)
-analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback info !iterations =
+analyzeDiscoveredFunctions recovery mem info !iterations =
   case M.lookupMin (info L.^. MC.unexploredFunctions) of
     Nothing -> return info
     Just (addr, rsn) -> do
-      (info', _) <- stToIO (MC.analyzeFunction (fromMaybe (const (return ())) blockCallback) addr rsn info)
-      case funcCallback of
+      let bcb = fromMaybe (const (return ())) (recoveryBlockCallback recovery)
+      (info', _) <- stToIO (MC.analyzeFunction bcb addr rsn info)
+      case recoveryFuncCallback recovery of
         Just (freq, fcb)
-          | iterations `mod` freq == 0 -> fcb addr (blockInfo isa dis1 mem info')
+          | iterations `mod` freq == 0 -> do
+              bi <- blockInfo recovery mem info'
+              fcb addr bi
         _ -> return ()
-      analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback info' (iterations + 1)
+      analyzeDiscoveredFunctions recovery mem info' (iterations + 1)
 
-cfgFromAddrsWith :: (MC.MemWidth (MC.ArchAddrWidth arch))
-                 => ISA i a (MC.ArchAddrWidth arch)
-                 -> (forall m . (C.MonadThrow m)  => B.ByteString -> m (Int, i ()))
-                 -> Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
-                 -> Maybe (Int, MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i (MC.ArchAddrWidth arch) arch) -> IO ())
-                 -> MC.ArchitectureInfo arch
+-- | A class to capture the architecture-specific information required to
+-- perform block recovery and translation into a Crucible CFG.
+--
+-- For architectures that do not have a symbolic backend yet, have this function
+-- return 'Nothing'.
+class ArchInfo arch where
+  archFunctions :: proxy arch -> Maybe (MS.MacawSymbolicArchFunctions arch)
+
+toCFG :: forall arch ids s . (ArchInfo arch)
+      => C.HandleAllocator s
+      -> MC.DiscoveryFunInfo arch ids
+      -> Maybe (ST s (C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch)))
+toCFG halloc dfi = do
+  archFns <- archFunctions (Proxy @arch)
+  -- We only support statically linked binaries right now, so we don't have
+  -- to deal with segments
+  let memBaseVarMap = M.empty
+  let nm = undefined
+  let posFn = undefined
+  return (MS.mkFunCFG archFns halloc memBaseVarMap nm posFn dfi)
+
+cfgFromAddrsWith :: (ArchInfo arch, MC.MemWidth (MC.ArchAddrWidth arch))
+                 => Recovery arch i a (MC.RegAddrWidth (MC.ArchReg arch))
                  -> MC.Memory (MC.ArchAddrWidth arch)
                  -> MC.AddrSymMap (MC.ArchAddrWidth arch)
                  -> [MC.ArchSegmentOff arch]
                  -> [(MC.ArchSegmentOff arch, MC.ArchSegmentOff arch)]
                  -> IO (MC.DiscoveryState arch)
-cfgFromAddrsWith isa dis1 blockCallback funcCallback archInfo mem symbols initAddrs memWords = do
+cfgFromAddrsWith recovery mem symbols initAddrs memWords = do
   let s1 = MC.markAddrsAsFunction MC.InitAddr initAddrs s0
-  s2 <- analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback s1 0
+  s2 <- analyzeDiscoveredFunctions recovery mem s1 0
   let s3 = MC.exploreMemPointers memWords s2
-  analyzeDiscoveredFunctions isa dis1 mem blockCallback funcCallback s3 0
+  analyzeDiscoveredFunctions recovery mem s3 0
   where
-    s0 = MC.emptyDiscoveryState mem symbols archInfo
+    s0 = MC.emptyDiscoveryState mem symbols (recoveryArchInfo recovery)
 
-blockInfo :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch)), C.MonadThrow m)
-          => ISA i a (MC.RegAddrWidth (MC.ArchReg arch))
-          -> (B.ByteString -> Maybe (Int, i ()))
+blockInfo :: (ArchInfo arch, MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch)))
+          => Recovery arch i a (MC.RegAddrWidth (MC.ArchReg arch))
           -> MC.Memory (MC.RegAddrWidth (MC.ArchReg arch))
           -> MC.DiscoveryState arch
-          -> m (BlockInfo i (MC.RegAddrWidth (MC.ArchReg arch)) arch)
-blockInfo isa dis1 mem di = do
-  let blockBuilder = buildBlock isa dis1 mem (S.fromList (mapMaybe (concreteFromSegmentOff mem) (F.toList absoluteBlockStarts)))
+          -> IO (BlockInfo i (MC.RegAddrWidth (MC.ArchReg arch)) arch)
+blockInfo recovery mem di = do
+  let blockBuilder = buildBlock (recoveryISA recovery) (recoveryDis recovery) mem (S.fromList (mapMaybe (concreteFromSegmentOff mem) (F.toList absoluteBlockStarts)))
   blocks <- catMaybes <$> mapM blockBuilder (F.toList absoluteBlockStarts)
   let addBlock m b = M.insert (basicBlockAddress b) b m
   let blockIndex = F.foldl' addBlock M.empty blocks
@@ -114,11 +144,19 @@ blockInfo isa dis1 mem di = do
                               , Just funcAddr <- [concreteFromSegmentOff mem (MC.discoveredFunAddr dfi)]
                               , let blockAddrs = mapMaybe (concreteFromSegmentOff mem) (M.keys (dfi L.^. MC.parsedBlocks))
                               ]
+  let cfgs = M.fromList [ (funcAddr, stToIO cfg)
+                        | PU.Some dfi <- M.elems (di L.^. MC.funInfo)
+                        , not (isIncompleteFunction dfi)
+                        , Just funcAddr <- [concreteFromSegmentOff mem (MC.discoveredFunAddr dfi)]
+                        , Just cfg <- [toCFG (recoveryHandleAllocator recovery) dfi]
+                        ]
+  cfgs' <- T.sequence cfgs
   return BlockInfo { biBlocks = blocks
                    , biFunctionEntries = mapMaybe (concreteFromSegmentOff mem) funcEntries
                    , biFunctionBlocks = funcBlocks
                    , biDiscoveryFunInfo = infos
                    , biIncomplete = indexIncompleteBlocks mem infos
+                   , biCFG = cfgs'
                    }
   where
     absoluteBlockStarts = S.fromList [ entry
@@ -133,24 +171,25 @@ blockInfo isa dis1 mem di = do
                        , Just concAddr <- return (concreteFromSegmentOff mem segOff)
                        ]
 
-recoverBlocks :: (ArchBits arch w)
-              => Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
-              -> Maybe (Int, MC.ArchSegmentOff arch -> Either C.SomeException (BlockInfo i w arch) -> IO ())
-              -> ISA i a w
-              -> (forall m . (C.MonadThrow m)  => B.ByteString -> m (Int, i ()))
-              -- ^ A function to try to disassemble a single
-              -- instruction from a bytestring, returning the number
-              -- of bytes consumed and the instruction if successful
-              -> MC.ArchitectureInfo arch
+data Recovery arch i a w =
+  Recovery { recoveryISA :: ISA i a w
+           , recoveryDis :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, i ())
+           , recoveryArchInfo :: MC.ArchitectureInfo arch
+           , recoveryHandleAllocator :: C.HandleAllocator RealWorld
+           , recoveryBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
+           , recoveryFuncCallback :: Maybe (Int, MC.ArchSegmentOff arch -> BlockInfo i w arch -> IO ())
+           }
+
+recoverBlocks :: (ArchBits arch w, ArchInfo arch)
+              => Recovery arch i a w
               -> MC.Memory w
               -> SymbolMap w
               -> NEL.NonEmpty (MC.MemSegmentOff w)
-              -- ^ A list of entry points in the memory space
-              -> IO (Either E.SomeException (BlockInfo i w arch))
-recoverBlocks blockCallback funcCallback isa dis1 archInfo mem symmap entries = do
+              -> IO (BlockInfo i w arch)
+recoverBlocks recovery mem symmap entries = do
   sam <- toMacawSymbolMap mem symmap
-  di <- cfgFromAddrsWith isa dis1 blockCallback funcCallback archInfo mem sam (F.toList entries) []
-  return (blockInfo isa dis1 mem di)
+  di <- cfgFromAddrsWith recovery mem sam (F.toList entries) []
+  blockInfo recovery mem di
 
 toMacawSymbolMap :: (MC.MemWidth w) => MC.Memory w -> SymbolMap w -> IO (MC.AddrSymMap w)
 toMacawSymbolMap mem sm = return (M.mapKeys toSegOff sm)
@@ -235,11 +274,15 @@ addFunInfoIfIncomplete :: MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch))
                        -> S.Set (ConcreteAddress (MC.RegAddrWidth (MC.ArchReg arch)))
                        -> S.Set (ConcreteAddress (MC.RegAddrWidth (MC.ArchReg arch)))
 addFunInfoIfIncomplete mem (PU.Some fi) s
-  | any isIncomplete (M.elems pbs) = S.union s (S.fromList blockAddrs)
+  | isIncompleteFunction fi = S.union s (S.fromList blockAddrs)
   | otherwise = s
   where
     pbs = fi L.^. MC.parsedBlocks
     blockAddrs = mapMaybe (concreteFromSegmentOff mem) (M.keys pbs)
+
+isIncompleteFunction :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch))) => MC.DiscoveryFunInfo arch ids -> Bool
+isIncompleteFunction fi =
+  any isIncomplete (M.elems (fi L.^. MC.parsedBlocks))
 
 isIncomplete :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch))) => MC.ParsedBlock arch ids -> Bool
 isIncomplete pb =
@@ -258,5 +301,14 @@ isIncomplete pb =
 We still need to raise an error if we see a jump into an unaligned
 instruction.  It is technically perfectly possible, but we don't want
 to support or encourage it.
+
+-}
+
+{- Note [CrucibleCFG]
+
+We construct Crucible CFGs only for functions that are complete (i.e., for which
+all control flow is resolved).  Furthermore, we require the appropriate symbolic
+backend.  For architectures that lack a symbolic backend, there will be no
+entries in the CFG map.
 
 -}

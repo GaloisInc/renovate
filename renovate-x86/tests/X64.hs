@@ -73,7 +73,8 @@ mkTest fp = T.testCase fp $ withELF elfFilename testRewrite
     testRewrite :: E.Elf 64 -> IO ()
     testRewrite elf = do
       Just expected <- readMaybe <$> readFile (fp <.> "expected")
-      let cfg = [(R.X86_64, R.SomeConfig NR.knownNat (R64.config (analysis expected) R.identity))]
+      let cfg :: [(R.Architecture, R.SomeConfig R.TrivialConfigConstraint (Bool, [String]))]
+          cfg = [(R.X86_64, R.SomeConfig NR.knownNat (R64.config (analysis expected) R.identity))]
       R.withElfConfig (E.Elf64 elf) cfg testBlockRecovery
 
     elfFilename = replaceExtension fp "exe"

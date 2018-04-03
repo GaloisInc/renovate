@@ -25,6 +25,7 @@ library
                        bytestring,
                        flexdis86,
                        macaw-x86,
+                       macaw-x86-symbolic,
                        macaw-base,
                        ansi-wl-pprint,
                        exceptions,

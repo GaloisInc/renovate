@@ -3,9 +3,13 @@ packages: deps/elf-edit/
           deps/dwarf/
           deps/macaw/base/
           deps/macaw/x86/
+          deps/macaw/symbolic/
+          deps/macaw/x86_symbolic/
           deps/parameterized-utils/
           deps/crucible/crucible/
           deps/crucible/galois-matlab/
+          deps/crucible/crucible-llvm/
+          deps/llvm-pretty/
           deps/dismantle/dismantle-tablegen/
           deps/dismantle/dismantle-ppc/
           deps/semmc/semmc/

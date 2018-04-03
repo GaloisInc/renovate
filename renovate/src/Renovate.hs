@@ -23,6 +23,7 @@ module Renovate
   LB.LayoutStrategy(..),
   LB.CompactOrdering(..),
   C.RenovateConfig(..),
+  Recovery.ArchInfo(..),
   -- * ELF entry point
   E.withElfConfig,
   E.rewriteElf,

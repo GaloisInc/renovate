@@ -55,6 +55,8 @@ library
                        prettyprinter,
                        parameterized-utils,
                        macaw-base,
+                       macaw-symbolic,
+                       crucible,
                        elf-edit >= 0.28
 
   hs-source-dirs:      src

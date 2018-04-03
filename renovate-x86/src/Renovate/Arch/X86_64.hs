@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE Rank2Types       #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 -- | The interface for X86_64-specific ISA details.
 --
 -- The x86_64 ISA is currently supported through the flexdis86
@@ -29,6 +30,7 @@ module Renovate.Arch.X86_64 (
 
 import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.X86 as X86
+import qualified Data.Macaw.X86.Symbolic as SX86
 
 import           Renovate
 import           Renovate.Arch.X86_64.ABI
@@ -65,6 +67,9 @@ config analysis rewriter =
     , rcCodeLayoutBase = 0x800000
     , rcDataLayoutBase = 0xa00000
     }
+
+instance ArchInfo X86.X86_64 where
+  archFunctions _ = Just SX86.x86_64MacawSymbolicFns
 
 {- Note [Layout Addresses]
 

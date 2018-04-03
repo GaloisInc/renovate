@@ -80,6 +80,7 @@ import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.Memory.ElfLoader as MM
 import qualified Data.Parameterized.Classes as PC
 import qualified Data.Parameterized.NatRepr as NR
+import qualified Lang.Crucible.FunctionHandle as C
 
 import qualified Renovate.Address as RA
 import qualified Renovate.Analysis.FunctionRecovery as FR
@@ -158,8 +159,8 @@ data SomeBlocks = forall i a w
 withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
               -- ^ The ELF file to analyze
-              -> [(Arch.Architecture, SomeConfig c)]
-              -> (forall i a w arch b . (R.ArchBits arch w,
+              -> [(Arch.Architecture, SomeConfig c b)]
+              -> (forall i a w arch . (R.ArchBits arch w,
                                        Typeable w,
                                        KnownNat w,
                                        E.ElfWidthConstraints w,
@@ -823,54 +824,55 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
 --  let Just entrySegOff = RA.concreteAsSegmentOff mem entryPoint
 --  traceM ("instrumentTextSection entry point: " ++ show entryPoint)
 --  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entrySegOff)
+  hdlAlloc <- IO.liftIO C.newHandleAllocator
   elfEntryPoints@(entryPoint NEL.:| _) <- withCurrentELF $ \e -> return (findEntryPoints cfg e mem)
   let isa = rcISA cfg
       archInfo = rcArchInfo cfg
-  recRes <- IO.liftIO (R.recoverBlocks (rcBlockCallback cfg) (rcFunctionCallback cfg) isa (rcDisassembler cfg) archInfo mem symmap elfEntryPoints)
-  case recRes of
-    Left exn1 -> do
-      riBlockRecoveryDiagnostics L..= []
-      C.throwM (BlockRecoveryFailure exn1 [])
-    Right blockInfo -> do
---      traceM "Recovered blocks with macaw"
-      riBlockRecoveryDiagnostics L..= []
-      let blocks = R.biBlocks blockInfo
-      riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
-      let cfgs = FR.recoverFunctions isa mem blockInfo
-      case cfg of
-        -- This pattern match is only here to deal with the existential
-        -- quantification inside of RenovateConfig.
-        RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } ->
-          let analysisResult = analysis isa mem blockInfo
-              Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
-          in
-          case RW.runRewriteM mem
-                              concEntryPoint
-                              newGlobalBase
-                              cfgs
-                              (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult isa mem) mem strat layoutAddr blocks symmap)
-          of
-            (rres, info) ->
-              case RE.checkRedirection rres of
-                Left exn2 -> do
-                  riRedirectionDiagnostics L..= RE.rdDiagnostics rres
-                  C.throwM (RewriterFailure exn2 (RE.rdDiagnostics rres))
-                Right redir -> do
-                  let I.Identity (overwrittenBlocks, instrumentationBlocks) = RE.rdBlocks redir
-                  let newSyms = RE.rdNewSymbols redir
-                  riRedirectionDiagnostics L..= RE.rdDiagnostics rres
-                  riInstrumentationSites L..= RW.infoSites info
-                  riReusedByteCount L..= RE.rdReusedBytes redir
-                  riSmallBlockCount L..= RE.rdSmallBlock redir
-                  riUnrelocatableTerm L..= RE.rdUnrelocatableTerm redir
-                  riBlockMapping L..= RE.rdBlockMapping redir
-                  riIncompleteBlocks L..= RE.rdIncompleteBlocks redir
-                  let allBlocks = overwrittenBlocks ++ instrumentationBlocks
-                  case cfg of
-                    RenovateConfig { rcAssembler = asm } -> do
-                      (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks
-                      let newDataBytes = mkNewDataSection newGlobalBase info
-                      return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
+      recovery = R.Recovery { R.recoveryISA = isa
+                            , R.recoveryDis = rcDisassembler cfg
+                            , R.recoveryArchInfo = archInfo
+                            , R.recoveryHandleAllocator = hdlAlloc
+                            , R.recoveryBlockCallback = rcBlockCallback cfg
+                            , R.recoveryFuncCallback = rcFunctionCallback cfg
+                            }
+  blockInfo <- IO.liftIO (R.recoverBlocks recovery mem symmap elfEntryPoints)
+  riBlockRecoveryDiagnostics L..= []
+  let blocks = R.biBlocks blockInfo
+  riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
+  let cfgs = FR.recoverFunctions isa mem blockInfo
+  case cfg of
+    -- This pattern match is only here to deal with the existential
+    -- quantification inside of RenovateConfig.
+    RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } ->
+      let analysisResult = analysis isa mem blockInfo
+          Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
+      in
+      case RW.runRewriteM mem
+                          concEntryPoint
+                          newGlobalBase
+                          cfgs
+                          (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult isa mem) mem strat layoutAddr blocks symmap)
+      of
+        (rres, info) ->
+          case RE.checkRedirection rres of
+            Left exn2 -> do
+              riRedirectionDiagnostics L..= RE.rdDiagnostics rres
+              C.throwM (RewriterFailure exn2 (RE.rdDiagnostics rres))
+            Right redir -> do
+              let I.Identity (overwrittenBlocks, instrumentationBlocks) = RE.rdBlocks redir
+              let newSyms = RE.rdNewSymbols redir
+              riRedirectionDiagnostics L..= RE.rdDiagnostics rres
+              riInstrumentationSites L..= RW.infoSites info
+              riReusedByteCount L..= RE.rdReusedBytes redir
+              riSmallBlockCount L..= RE.rdSmallBlock redir
+              riUnrelocatableTerm L..= RE.rdUnrelocatableTerm redir
+              riBlockMapping L..= RE.rdBlockMapping redir
+              let allBlocks = overwrittenBlocks ++ instrumentationBlocks
+              case cfg of
+                RenovateConfig { rcAssembler = asm } -> do
+                  (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks
+                  let newDataBytes = mkNewDataSection newGlobalBase info
+                  return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
 
 analyzeTextSection :: forall i a w arch b
                     . (ISA.InstructionConstraints i a,
@@ -887,19 +889,21 @@ analyzeTextSection cfg mem symmap = do
   elfEntryPoints <- withCurrentELF $ \e -> return (findEntryPoints cfg e mem)
 --  traceM ("analyzeTextSection entry point: " ++ show entryPoint)
 --  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
+  hdlAlloc <- IO.liftIO C.newHandleAllocator
   let isa      = rcISA cfg
       archInfo = rcArchInfo cfg
-  recRes <- IO.liftIO (R.recoverBlocks (rcBlockCallback cfg) (rcFunctionCallback cfg) isa (rcDisassembler cfg) archInfo mem symmap elfEntryPoints)
-  case recRes of -- R.recoverBlocks isa (rcDisassembler cfg) archInfo mem elfEntryPoints of
-    Left exn1 -> do
-      riBlockRecoveryDiagnostics L..= []
-      C.throwM (BlockRecoveryFailure exn1 [])
-    Right blockInfo -> do
---      traceM "Recovered blocks with macaw"
-      riBlockRecoveryDiagnostics L..= []
-      let blocks = R.biBlocks blockInfo
-      riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
-      return $! (rcAnalysis cfg) isa mem blockInfo
+      recovery = R.Recovery { R.recoveryISA = isa
+                            , R.recoveryDis = rcDisassembler cfg
+                            , R.recoveryArchInfo = archInfo
+                            , R.recoveryHandleAllocator = hdlAlloc
+                            , R.recoveryBlockCallback = rcBlockCallback cfg
+                            , R.recoveryFuncCallback = rcFunctionCallback cfg
+                            }
+  blockInfo <- IO.liftIO (R.recoverBlocks recovery mem symmap elfEntryPoints)
+  riBlockRecoveryDiagnostics L..= []
+  let blocks = R.biBlocks blockInfo
+  riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
+  return $! (rcAnalysis cfg) isa mem blockInfo
 
 mkNewDataSection :: (MM.MemWidth w) => RA.ConcreteAddress w -> RW.RewriteInfo w -> Maybe B.ByteString
 mkNewDataSection baseAddr info = do

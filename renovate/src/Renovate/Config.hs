@@ -19,7 +19,6 @@ module Renovate.Config (
 
 import           GHC.TypeLits ( KnownNat )
 
-import qualified Control.Exception as X
 import qualified Control.Monad.Catch as C
 import           Control.Monad.ST ( ST, RealWorld )
 import qualified Data.ByteString as B
@@ -43,7 +42,7 @@ import qualified Renovate.Recovery as R
 -- a constraint @c@ over the hidden 'RenovateConfig' params, which
 -- supports exposing information about the hidden params, or bundling
 -- up other functionality via a type class.
-data SomeConfig c = forall i a w arch b
+data SomeConfig c b = forall i a w arch
                   . (ISA.InstructionConstraints i a,
                      R.ArchBits arch w,
                      KnownNat w, Typeable w,
@@ -83,7 +82,7 @@ data RenovateConfig i a w arch b =
                  , rcBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
                  -- ^ A callback called for each discovered block; the argument
                  -- is the address of the discovered block
-                 , rcFunctionCallback :: Maybe (Int, MC.ArchSegmentOff arch -> Either X.SomeException (R.BlockInfo i w arch) -> IO ())
+                 , rcFunctionCallback :: Maybe (Int, MC.ArchSegmentOff arch -> R.BlockInfo i w arch -> IO ())
                  -- ^ A callback called for each discovered function.  The
                  -- arguments are the address of the discovered function and the
                  -- recovery info (a summary of the information returned by
