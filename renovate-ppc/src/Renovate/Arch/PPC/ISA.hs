@@ -98,7 +98,7 @@ ppcMakePadding nBytes
   | otherwise = error (printf "Unexpected byte count (%d); PowerPC only supports instruction-sized padding" nBytes)
   where
     (nInsns, leftover) = fromIntegral nBytes `divMod` 4
-    nopInsn = D.Instruction D.TRAP D.Nil
+    nopInsn = D.Instruction D.ATTN D.Nil
 
 -- | Make an unconditional relative jump from the given @srcAddr@ to the
 -- @targetAddr@.
