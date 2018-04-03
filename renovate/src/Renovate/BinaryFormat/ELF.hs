@@ -37,6 +37,7 @@ module Renovate.BinaryFormat.ELF (
   riRecoveredBlocks,
   riOriginalTextSize,
   riNewTextSize,
+  riIncompleteBlocks,
   riRedirectionDiagnostics,
   riBlockRecoveryDiagnostics,
   riBlockMapping,
@@ -129,6 +130,8 @@ data RewriterInfo w =
                -- ^ The number of bytes in the original text section
                , _riNewTextSize :: Int
                -- ^ The number of bytes allocated in the new text section
+               , _riIncompleteBlocks :: Int
+               -- ^ The number of blocks in incomplete functions
                , _riBlockMapping :: [(RA.ConcreteAddress w, RA.ConcreteAddress w)]
                -- ^ A mapping of original block addresses to rewritten block addresses
                }
@@ -843,7 +846,7 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
                               concEntryPoint
                               newGlobalBase
                               cfgs
-                              (RE.redirect isa textSectionStartAddr textSectionEndAddr (rewriter analysisResult isa mem) mem strat layoutAddr blocks symmap)
+                              (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult isa mem) mem strat layoutAddr blocks symmap)
           of
             (rres, info) ->
               case RE.checkRedirection rres of
@@ -859,6 +862,7 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
                   riSmallBlockCount L..= RE.rdSmallBlock redir
                   riUnrelocatableTerm L..= RE.rdUnrelocatableTerm redir
                   riBlockMapping L..= RE.rdBlockMapping redir
+                  riIncompleteBlocks L..= RE.rdIncompleteBlocks redir
                   let allBlocks = overwrittenBlocks ++ instrumentationBlocks
                   case cfg of
                     RenovateConfig { rcAssembler = asm } -> do
@@ -939,6 +943,7 @@ emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
                                    , _riReusedByteCount          = 0
                                    , _riUnrelocatableTerm        = 0
                                    , _riOriginalTextSize         = 0
+                                   , _riIncompleteBlocks         = 0
                                    , _riNewTextSize              = 0
                                    , _riBlockMapping             = []
                                    }
@@ -947,6 +952,9 @@ riOriginalTextSize = GL.field @"_riOriginalTextSize"
 
 riNewTextSize :: L.Simple L.Lens (RewriterInfo w) Int
 riNewTextSize = GL.field @"_riNewTextSize"
+
+riIncompleteBlocks :: L.Simple L.Lens (RewriterInfo w) Int
+riIncompleteBlocks = GL.field @"_riIncompleteBlocks"
 
 riSegmentVirtualAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
 riSegmentVirtualAddress = GL.field @"_riSegmentVirtualAddress"

@@ -34,6 +34,7 @@ import qualified Data.Macaw.Memory as MM
 import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
+import           Renovate.Recovery ( BlockInfo, isIncompleteBlockAddress )
 import           Renovate.Redirect.Concretize
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , Status(..)
@@ -62,6 +63,8 @@ import           Renovate.Redirect.Monad
 redirect :: (Monad m, InstructionConstraints i a, KnownNat w, MM.MemWidth w, Typeable w)
          => ISA i a w
          -- ^ Information about the ISA in use
+         -> BlockInfo i w arch
+         -- ^ Information about all recovered blocks
          -> ConcreteAddress w
          -- ^ start of text section
          -> ConcreteAddress w
@@ -77,7 +80,7 @@ redirect :: (Monad m, InstructionConstraints i a, KnownNat w, MM.MemWidth w, Typ
          -- ^ The original basic blocks
          -> SymbolMap w
          -> m (Redirection (Either E.SomeException) w ([ConcreteBlock i w], [ConcreteBlock i w]))
-redirect isa textStart textEnd instrumentor mem strat layoutAddr blocks symmap = runRewriterT isa mem symmap $ do
+redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr blocks symmap = runRewriterT isa mem symmap $ do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress) (F.toList blocks)))))
   baseSymBlocks <- symbolizeBasicBlocks (L.sortBy (comparing basicBlockAddress) blocks)
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
@@ -88,6 +91,7 @@ redirect isa textStart textEnd instrumentor mem strat layoutAddr blocks symmap =
     case and [ textStart <= basicBlockAddress cb
              , basicBlockAddress cb < textEnd
              , isRelocatableTerminatorType (terminatorType isa mem cb)
+             , not (isIncompleteBlockAddress blockInfo (basicBlockAddress cb))
              ] of
      True ->  do
        insns' <- lift $ instrumentor sb
@@ -97,6 +101,8 @@ redirect isa textStart textEnd instrumentor mem strat layoutAddr blocks symmap =
      False -> do
        when (not (isRelocatableTerminatorType (terminatorType isa mem cb))) $ do
          recordUnrelocatableTermBlock
+       when (isIncompleteBlockAddress blockInfo (basicBlockAddress cb)) $ do
+         recordIncompleteBlock
        return (LayoutPair cb sb Unmodified)
   concretizedBlocks <- concretize strat layoutAddr transformedBlocks
   recordBlockMap (toBlockMapping concretizedBlocks)

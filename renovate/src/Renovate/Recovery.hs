@@ -8,6 +8,7 @@
 module Renovate.Recovery (
   recoverBlocks,
   BlockInfo(..),
+  isIncompleteBlockAddress,
   ArchBits,
   Diagnostic(..)
   ) where
@@ -49,7 +50,13 @@ data BlockInfo i w arch = BlockInfo
   , biFunctionEntries  :: [ConcreteAddress w]
   , biFunctionBlocks   :: M.Map (ConcreteAddress w) [ConcreteBlock i w]
   , biDiscoveryFunInfo :: M.Map (ConcreteAddress w) (PU.Some (MC.DiscoveryFunInfo arch))
+  , biIncomplete       :: S.Set (ConcreteAddress w)
+  -- ^ The set of blocks that reside in incomplete functions (i.e., functions
+  -- for which we cannot find all of the code)
   }
+
+isIncompleteBlockAddress :: BlockInfo i w arch -> ConcreteAddress w -> Bool
+isIncompleteBlockAddress bi a = S.member a (biIncomplete bi)
 
 analyzeDiscoveredFunctions :: (MC.MemWidth (MC.ArchAddrWidth arch))
                            => ISA i a (MC.ArchAddrWidth arch)
@@ -111,6 +118,7 @@ blockInfo isa dis1 mem di = do
                    , biFunctionEntries = mapMaybe (concreteFromSegmentOff mem) funcEntries
                    , biFunctionBlocks = funcBlocks
                    , biDiscoveryFunInfo = infos
+                   , biIncomplete = indexIncompleteBlocks mem infos
                    }
   where
     absoluteBlockStarts = S.fromList [ entry
@@ -209,6 +217,41 @@ buildBlock isa dis1 mem absStarts segAddr
           where
           nextAddr = insnAddr `addOff` fromIntegral bytesRead
 
+-- | Collect the set of basic block addresses of blocks that are contained in incomplete functions
+--
+-- A function is incomplete if it contains an error terminator (translation
+-- error or classify failure).  We can't rewrite these blocks, as we don't know
+-- if we have a safe view of them.  Rewriting them could introduce runtime
+-- failures.
+indexIncompleteBlocks :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch)))
+                      => MC.Memory (MC.RegAddrWidth (MC.ArchReg arch))
+                      -> M.Map (ConcreteAddress (MC.RegAddrWidth (MC.ArchReg arch))) (PU.Some (MC.DiscoveryFunInfo arch))
+                      -> S.Set (ConcreteAddress (MC.RegAddrWidth (MC.ArchReg arch)))
+indexIncompleteBlocks mem = foldr (addFunInfoIfIncomplete mem) S.empty
+
+addFunInfoIfIncomplete :: MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch))
+                       => MC.Memory (MC.RegAddrWidth (MC.ArchReg arch))
+                       -> PU.Some (MC.DiscoveryFunInfo arch)
+                       -> S.Set (ConcreteAddress (MC.RegAddrWidth (MC.ArchReg arch)))
+                       -> S.Set (ConcreteAddress (MC.RegAddrWidth (MC.ArchReg arch)))
+addFunInfoIfIncomplete mem (PU.Some fi) s
+  | any isIncomplete (M.elems pbs) = S.union s (S.fromList blockAddrs)
+  | otherwise = s
+  where
+    pbs = fi L.^. MC.parsedBlocks
+    blockAddrs = mapMaybe (concreteFromSegmentOff mem) (M.keys pbs)
+
+isIncomplete :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch))) => MC.ParsedBlock arch ids -> Bool
+isIncomplete pb =
+  case MC.stmtsTerm (MC.blockStatementList pb) of
+    MC.ParsedTranslateError {} -> True
+    MC.ClassifyFailure {} -> True
+    MC.ParsedArchTermStmt {} -> False
+    MC.ParsedIte {} -> False
+    MC.ParsedReturn {} -> False
+    MC.ParsedLookupTable {} -> False
+    MC.ParsedJump {} -> False
+    MC.ParsedCall {} -> False
 
 {- Note [Unaligned Instructions]
 

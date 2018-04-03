@@ -31,6 +31,7 @@ module Renovate.Redirect.Monad (
   putNewSymbolsMap,
   getNewSymbolsMap,
   recordUnrelocatableTermBlock,
+  recordIncompleteBlock,
   recordUnrelocatableSize,
   recordResuedBytes,
   recordBlockMap,
@@ -83,6 +84,8 @@ data RewriterState w = RewriterState
   -- ^ Count of blocks unrelocatable due to being too small to redirect
   , rwsReusedBytes           :: !Int
   -- ^ Count of bytes re-used by the compact layout strategy
+  , rwsIncompleteBlocks      :: !Int
+  -- ^ Count of blocks that are in incomplete functions
   , rwsBlockMapping          :: [(ConcreteAddress w, ConcreteAddress w)]
   -- ^ A mapping of original block addresses to the address they were redirected to
   }
@@ -126,6 +129,7 @@ initialState =  RewriterState
   , rwsUnrelocatableTerm     = 0
   , rwsUnrelocatableSize     = 0
   , rwsReusedBytes           = 0
+  , rwsIncompleteBlocks      = 0
   , rwsBlockMapping          = []
   }
 
@@ -139,6 +143,7 @@ data Redirection f w a =
               , rdUnrelocatableTerm :: Int
               , rdSmallBlock :: Int
               , rdReusedBytes :: Int
+              , rdIncompleteBlocks :: Int
               }
 
 -- | Try to unwrap a 'Redirection'
@@ -158,6 +163,7 @@ checkRedirection r =
                         , rdSmallBlock = rdSmallBlock r
                         , rdReusedBytes = rdReusedBytes r
                         , rdBlockMapping = rdBlockMapping r
+                        , rdIncompleteBlocks = rdIncompleteBlocks r
                         }
 
 -- | A wrapper around 'runReaderT' with 'I.Identity' as the base 'Monad'
@@ -187,6 +193,7 @@ runRewriterT isa mem symmap a = do
                      , rdSmallBlock = rwsUnrelocatableSize s
                      , rdReusedBytes = rwsReusedBytes s
                      , rdBlockMapping = rwsBlockMapping s
+                     , rdIncompleteBlocks = rwsIncompleteBlocks s
                      }
 
 -- | Log a diagnostic in the 'RewriterT' monad
@@ -243,3 +250,8 @@ recordBlockMap :: (Monad m) => [(ConcreteAddress w, ConcreteAddress w)] -> Rewri
 recordBlockMap m = do
   s <- RWS.get
   RWS.put $! s { rwsBlockMapping = m }
+
+recordIncompleteBlock :: (Monad m) => RewriterT i t w m ()
+recordIncompleteBlock = do
+  s <- RWS.get
+  RWS.put $! s { rwsIncompleteBlocks = rwsIncompleteBlocks s + 1 }
