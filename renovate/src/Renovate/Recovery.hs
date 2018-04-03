@@ -29,6 +29,8 @@ import qualified Data.Map as M
 import           Data.Maybe ( catMaybes, fromMaybe, mapMaybe )
 import           Data.Proxy ( Proxy(..) )
 import qualified Data.Set as S
+import qualified Data.Text.Encoding as T
+import qualified Data.Text.Encoding.Error as T
 import qualified Data.Traversable as T
 
 import qualified Data.Macaw.Architecture.Info as MC
@@ -36,10 +38,12 @@ import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Discovery as MC
 import qualified Data.Macaw.Types as MC
 import qualified Data.Macaw.Symbolic as MS
-import qualified Lang.Crucible.CFG.Core as C
-import qualified Lang.Crucible.FunctionHandle as C
 import qualified Data.Parameterized.Context as Ctx
 import qualified Data.Parameterized.Some as PU
+import qualified Lang.Crucible.CFG.Core as C
+import qualified Lang.Crucible.FunctionHandle as C
+import qualified Lang.Crucible.FunctionName as C
+import qualified Lang.Crucible.ProgramLoc as C
 
 import           Renovate.Address
 import           Renovate.BasicBlock
@@ -101,7 +105,8 @@ analyzeDiscoveredFunctions recovery mem info !iterations =
 class ArchInfo arch where
   archFunctions :: proxy arch -> Maybe (MS.MacawSymbolicArchFunctions arch)
 
-toCFG :: forall arch ids s . (ArchInfo arch)
+toCFG :: forall arch ids s
+       . (ArchInfo arch, MC.MemWidth (MC.ArchAddrWidth arch))
       => C.HandleAllocator s
       -> MC.DiscoveryFunInfo arch ids
       -> Maybe (ST s (C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch)))
@@ -110,8 +115,9 @@ toCFG halloc dfi = do
   -- We only support statically linked binaries right now, so we don't have
   -- to deal with segments
   let memBaseVarMap = M.empty
-  let nm = undefined
-  let posFn = undefined
+  let nmTxt = T.decodeUtf8With T.lenientDecode (MC.discoveredFunName dfi)
+  let nm = C.functionNameFromText nmTxt
+  let posFn addr = C.BinaryPos nmTxt (maybe 0 fromIntegral (MC.msegAddr addr))
   return (MS.mkFunCFG archFns halloc memBaseVarMap nm posFn dfi)
 
 cfgFromAddrsWith :: (ArchInfo arch, MC.MemWidth (MC.ArchAddrWidth arch))

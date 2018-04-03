@@ -43,6 +43,7 @@ library
   -- other-extensions:    
   build-depends:       base >=4.10 && <5,
                        bytestring,
+                       text,
                        containers >= 0.5 && < 0.6,
                        heaps >= 0.3 && < 0.4,
                        mtl >= 2.2 && < 2.3,
