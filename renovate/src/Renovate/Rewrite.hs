@@ -1,4 +1,7 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Renovate.Rewrite (
   RewriteM,
   RewriteInfo(..),
@@ -18,62 +21,64 @@ import qualified Data.Foldable as F
 import qualified Data.Map.Strict as M
 import           Data.Word ( Word32 )
 
-import qualified Data.Macaw.Memory as MM
+import qualified Data.Macaw.CFG as MM
 
 import qualified Renovate.Address as A
 import qualified Renovate.BasicBlock as B
 import qualified Renovate.Analysis.FunctionRecovery as FR
 
-data RewriteSite w =
-  RewriteSite { siteDescriptor :: (B.SymbolicInfo w, Word)
+data RewriteSite arch =
+  RewriteSite { siteDescriptor :: (B.SymbolicInfo arch, Word)
               -- ^ The basic block modified and the instruction offset into that
               -- block.
               , siteType :: String
               -- ^ A human-readable description of the modification
               }
-  deriving (Eq, Ord, Show)
+  deriving (Eq, Ord)
 
-data RewriteInfo w =
-  RewriteInfo { infoSites :: [RewriteSite w]
+deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (RewriteSite arch)
+
+data RewriteInfo arch =
+  RewriteInfo { infoSites :: [RewriteSite arch]
               -- ^ A collection of all of the rewritings applied so far
-              , newGlobals :: M.Map String (A.ConcreteAddress w)
+              , newGlobals :: M.Map String (A.ConcreteAddress arch)
               -- ^ A mapping of names to globals allocated in a new data
               -- section.  The names are user-provided and must be unique.
-              , nextGlobalAddress :: A.ConcreteAddress w
+              , nextGlobalAddress :: A.ConcreteAddress arch
               -- ^ The next address that will be handed out for a new global
               -- variable.
               }
 
-data RewriteEnv i w =
-  RewriteEnv { envCFGs :: M.Map (A.ConcreteAddress w) (FR.FunctionCFG i w)
+data RewriteEnv arch =
+  RewriteEnv { envCFGs :: M.Map (A.ConcreteAddress arch) (FR.FunctionCFG arch)
              -- ^ A map of function entry point addresses to CFGs
-             , envBlockCFGIndex :: M.Map (A.ConcreteAddress w) (FR.FunctionCFG i w)
+             , envBlockCFGIndex :: M.Map (A.ConcreteAddress arch) (FR.FunctionCFG arch)
              -- ^ A map of block addresses to the CFG that contains them (if
              -- any)
-             , envEntryAddress :: A.ConcreteAddress w
-             , envMemory :: MM.Memory w
+             , envEntryAddress :: A.ConcreteAddress arch
+             , envMemory :: MM.Memory (MM.ArchAddrWidth arch)
              }
 
 -- | A monadic environment for binary rewriting
-newtype RewriteM i w a = RewriteM { unRewriteM :: RWS.RWS (RewriteEnv i w) () (RewriteInfo w) a }
+newtype RewriteM arch a = RewriteM { unRewriteM :: RWS.RWS (RewriteEnv arch) () (RewriteInfo arch) a }
   deriving (Applicative,
             Functor,
             Monad,
-            RWS.MonadReader (RewriteEnv i w),
-            RWS.MonadState (RewriteInfo w))
+            RWS.MonadReader (RewriteEnv arch),
+            RWS.MonadState (RewriteInfo arch))
 
 -- | Run rewriting computation and return its value, along with metadata about
 -- transformations applied.
-runRewriteM :: MM.Memory w
-            -> A.ConcreteAddress w
+runRewriteM :: MM.Memory (MM.ArchAddrWidth arch)
+            -> A.ConcreteAddress arch
             -- ^ The address of the entry point of the program
-            -> A.ConcreteAddress w
+            -> A.ConcreteAddress arch
             -- ^ The address to start allocating new global variables at
-            -> [FR.FunctionCFG i w]
+            -> [FR.FunctionCFG arch]
             -- ^ The control flow graphs discovered by previous analysis
-            -> RewriteM i w a
+            -> RewriteM arch a
             -- ^ The rewriting action to run
-            -> (a, RewriteInfo w)
+            -> (a, RewriteInfo arch)
 runRewriteM mem entryAddr newGlobalBase cfgs i = (res, st)
   where
     (res, st, _) = RWS.runRWS (unRewriteM i) env emptyInfo
@@ -92,7 +97,7 @@ runRewriteM mem entryAddr newGlobalBase cfgs i = (res, st)
 
 -- | A function for instrumentors to call when they add
 -- instrumentation to a binary.
-recordRewrite :: String -> B.SymbolicInfo w -> Word -> RewriteM i w ()
+recordRewrite :: String -> B.SymbolicInfo arch -> Word -> RewriteM arch ()
 recordRewrite ty baddr off =
   RWS.modify $ \s -> s { infoSites = site : infoSites s }
   where
@@ -104,13 +109,13 @@ recordRewrite ty baddr off =
 --
 -- The block might not be assigned to a CFG, in which case the
 -- function returns 'Nothing'
-lookupBlockCFG :: B.SymbolicBlock i a w -> RewriteM i w (Maybe (FR.FunctionCFG i w))
+lookupBlockCFG :: B.SymbolicBlock arch -> RewriteM arch (Maybe (FR.FunctionCFG arch))
 lookupBlockCFG sb = do
   idx <- RWS.asks envBlockCFGIndex
   return (M.lookup (B.concreteAddress (B.basicBlockAddress sb)) idx)
 
 -- | Get the address of the entry point of the program
-lookupEntryAddress :: RewriteM i w (A.ConcreteAddress w)
+lookupEntryAddress :: RewriteM arch (A.ConcreteAddress arch)
 lookupEntryAddress = RWS.asks envEntryAddress
 
 -- | Allocate space for a global variable (occupying the given number
@@ -119,7 +124,7 @@ lookupEntryAddress = RWS.asks envEntryAddress
 --
 -- FIXME: The caller of runInstrument has to allocate a new data
 -- segment for globals allocated here.
-newGlobalVar :: (MM.MemWidth w) => String -> Word32 -> RewriteM i w (A.ConcreteAddress w)
+newGlobalVar :: (MM.MemWidth (MM.ArchAddrWidth arch)) => String -> Word32 -> RewriteM arch (A.ConcreteAddress arch)
 newGlobalVar name size = do
   addr <- RWS.gets nextGlobalAddress
   RWS.modify' $ \s -> s { nextGlobalAddress = addr `A.addressAddOffset` fromIntegral size
@@ -131,7 +136,7 @@ newGlobalVar name size = do
 --
 -- This will fail if the variable was not yet allocated, as that is a
 -- programming error.
-lookupGlobalVar :: String -> RewriteM i w (A.ConcreteAddress w)
+lookupGlobalVar :: String -> RewriteM arch (A.ConcreteAddress arch)
 lookupGlobalVar name = do
   m <- RWS.gets newGlobals
   case M.lookup name m of

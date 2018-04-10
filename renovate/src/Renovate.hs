@@ -43,6 +43,8 @@ module Renovate
   B.TaggedInstruction,
   B.tagInstruction,
   B.projectInstruction,
+  B.Instruction,
+  B.InstructionAnnotation,
   -- * Addresses
   A.SymbolicAddress,
   A.ConcreteAddress,
@@ -69,6 +71,7 @@ module Renovate
   C.nop,
   -- * ABI
   ABI.ABI(..),
+  ABI.RegisterType,
   ISA.ISA(..),
   ISA.JumpType(..),
   ISA.JumpCondition(..),
@@ -99,7 +102,7 @@ module Renovate
   D.Diagnostics(..),
   -- * Constraints
   Recovery.ArchBits,
-  ISA.InstructionConstraints,
+  B.InstructionConstraints,
   -- * Exceptions
   A.BlockAssemblyException(..)
 )

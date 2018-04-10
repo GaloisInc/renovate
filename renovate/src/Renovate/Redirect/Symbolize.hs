@@ -6,25 +6,18 @@ module Renovate.Redirect.Symbolize (
   symbolizeBasicBlocks
   ) where
 
-import           GHC.TypeLits ( KnownNat )
-
 import           Control.Applicative
 import qualified Data.Foldable as F
 import qualified Data.Map as M
 import qualified Data.Traversable as T
-import           Data.Typeable ( Typeable )
 import           Text.Printf ( printf )
 
 import           Prelude
-
-import qualified Data.Macaw.Memory as MM
 
 import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
 import           Renovate.Redirect.Monad
-
-import qualified Data.Text.Prettyprint.Doc as PD
 
 -- import Debug.Trace
 
@@ -39,9 +32,9 @@ import qualified Data.Text.Prettyprint.Doc as PD
 --
 -- Indirect jumps do not need to be annotated (in part because we
 -- cannot annotate them).
-symbolizeBasicBlocks :: (Monad m, T.Traversable t, KnownNat w, MM.MemWidth w, Typeable w, PD.Pretty (i ()))
-                     => t (ConcreteBlock i w)
-                     -> RewriterT i a w m (t (ConcreteBlock i w, SymbolicBlock i a w))
+symbolizeBasicBlocks :: (Monad m, T.Traversable t, InstructionConstraints arch)
+                     => t (ConcreteBlock arch)
+                     -> RewriterT arch m (t (ConcreteBlock arch, SymbolicBlock arch))
 symbolizeBasicBlocks concreteBlocks = do
   symBlocks <- T.traverse allocateSymbolicBlockAddress concreteBlocks
   let blockAddressIndex = M.fromList [ (basicBlockAddress b, symAddr)
@@ -62,11 +55,11 @@ symbolizeBasicBlocks concreteBlocks = do
 -- the result up in that same map).
 --
 -- See Note [Jump Promotion]
-symbolizeJumps :: forall i a w m
-                . (Monad m, KnownNat w, MM.MemWidth w, Typeable w, PD.Pretty (i ()))
-               => M.Map (ConcreteAddress w) SymbolicAddress
-               -> (ConcreteBlock i w, SymbolicAddress)
-               -> RewriterT i a w m (ConcreteBlock i w, SymbolicBlock i a w)
+symbolizeJumps :: forall arch m
+                . (Monad m, InstructionConstraints arch)
+               => M.Map (ConcreteAddress arch) SymbolicAddress
+               -> (ConcreteBlock arch, SymbolicAddress)
+               -> RewriterT arch m (ConcreteBlock arch, SymbolicBlock arch)
 symbolizeJumps symAddrMap (cb, symAddr) = do
   isa <- askISA
   mem <- askMem

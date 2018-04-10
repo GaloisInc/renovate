@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE Rank2Types       #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 -- | The interface for X86_64-specific ISA details.
@@ -32,7 +33,7 @@ import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.X86 as X86
 import qualified Data.Macaw.X86.Symbolic as SX86
 
-import           Renovate
+import qualified Renovate as R
 import           Renovate.Arch.X86_64.ABI
 import           Renovate.Arch.X86_64.ISA
 import           Renovate.Arch.X86_64.Internal ( Value, Instruction, TargetAddress, AssemblyFailure(..), DisassemblyFailure(..), toFlexInst )
@@ -46,29 +47,28 @@ import           Renovate.Arch.X86_64.Internal ( Value, Instruction, TargetAddre
 --
 -- This configuration is actually specific to Linux due to the system
 -- call personality.
-config :: (MM.MemWidth w)
-       => (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w X86.X86_64 -> a)
-       -> (a -> ISA Instruction (TargetAddress w) w -> MM.Memory w -> SymbolicBlock Instruction (TargetAddress w) w
-             -> RewriteM Instruction w (Maybe [TaggedInstruction Instruction (TargetAddress w)]))
-       -> RenovateConfig Instruction (TargetAddress w) w X86.X86_64 a
+config :: (R.ISA X86.X86_64 -> MM.Memory 64 -> R.BlockInfo X86.X86_64 -> a)
+       -> (a -> R.ISA X86.X86_64 -> MM.Memory 64 -> R.SymbolicBlock X86.X86_64
+             -> R.RewriteM X86.X86_64 (Maybe [R.TaggedInstruction X86.X86_64 TargetAddress]))
+       -> R.RenovateConfig X86.X86_64 a
 config analysis rewriter =
-  RenovateConfig
-    { rcISA           = isa
-    , rcArchInfo      = X86.x86_64_linux_info
-    , rcAssembler     = assemble
-    , rcDisassembler  = disassemble
-    , rcBlockCallback = Nothing
-    , rcFunctionCallback = Nothing
-    , rcELFEntryPoints = const []
-    , rcAnalysis      = analysis
-    , rcRewriter      = rewriter
-    , rcUpdateSymbolTable = True
+  R.RenovateConfig
+    { R.rcISA           = isa
+    , R.rcArchInfo      = X86.x86_64_linux_info
+    , R.rcAssembler     = assemble
+    , R.rcDisassembler  = disassemble
+    , R.rcBlockCallback = Nothing
+    , R.rcFunctionCallback = Nothing
+    , R.rcELFEntryPoints = const []
+    , R.rcAnalysis      = analysis
+    , R.rcRewriter      = rewriter
+    , R.rcUpdateSymbolTable = True
     -- See Note [Layout Addresses]
-    , rcCodeLayoutBase = 0x800000
-    , rcDataLayoutBase = 0xa00000
+    , R.rcCodeLayoutBase = 0x800000
+    , R.rcDataLayoutBase = 0xa00000
     }
 
-instance ArchInfo X86.X86_64 where
+instance R.ArchInfo X86.X86_64 where
   archFunctions _ = Just SX86.x86_64MacawSymbolicFns
 
 {- Note [Layout Addresses]

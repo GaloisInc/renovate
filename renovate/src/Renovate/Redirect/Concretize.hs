@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE PatternGuards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
@@ -5,24 +6,20 @@
 -- blocks.
 module Renovate.Redirect.Concretize ( concretize ) where
 
-import           GHC.TypeLits ( KnownNat )
-
 import qualified Data.Foldable as F
 import qualified Data.Map as M
 import qualified Data.Traversable as T
 import qualified Data.Map as Map
 import           Data.Maybe ( maybeToList )
-import           Data.Typeable ( Typeable )
-import qualified Data.Macaw.Memory as MM
 
 import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
 import           Renovate.Redirect.LayoutBlocks ( layoutBlocks )
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutPair(..)
-                                                      , SymbolicPair
-                                                      , AddressAssignedPair
-                                                      , ConcretePair
+                                                      , SymbolicPair(..)
+                                                      , AddressAssignedPair(..)
+                                                      , ConcretePair(..)
                                                       , Status(..)
                                                       , LayoutStrategy )
 import           Renovate.Redirect.Monad
@@ -44,12 +41,12 @@ import           Renovate.Redirect.Monad
 -- Note that blocks have to be laid out in order; using M.toList is
 -- sufficient to sort by original address, which maintains the order
 -- invariant.
-concretize :: (Monad m, T.Traversable t, InstructionConstraints i a, KnownNat w, MM.MemWidth w, Typeable w)
+concretize :: (Monad m, T.Traversable t, InstructionConstraints arch)
            => LayoutStrategy
-           -> ConcreteAddress w
+           -> ConcreteAddress arch
            -- ^ The start address of the concretized (instrumented) blocks
-           -> t (SymbolicPair i a w)
-           -> RewriterT i a w m [ConcretePair i w]
+           -> t (SymbolicPair arch)
+           -> RewriterT arch m [ConcretePair arch]
 concretize strat startAddr blocks = do
   -- First, build up a mapping of symbolic address to new concrete
   -- address
@@ -57,12 +54,12 @@ concretize strat startAddr blocks = do
   symmap <- askSymbolMap
   concreteAddresses <- layoutBlocks strat startAddr blocks
   let concreteAddressMap = M.fromList [ (symbolicAddress (basicBlockAddress sb), ca)
-                                      | LayoutPair _ (AddressAssignedBlock sb ca) _ <- F.toList concreteAddresses
+                                      | AddressAssignedPair (LayoutPair _ (AddressAssignedBlock sb ca) _) <- F.toList concreteAddresses
                                       ]
       -- Make note of symbolic names for each embrittled function. We can
       -- use this to make new symtab entries for them.
       brittleMap = M.fromList [ (ca, (basicBlockAddress oa, nm))
-                              | LayoutPair oa (AddressAssignedBlock _sb ca) _ <- F.toList concreteAddresses
+                              | AddressAssignedPair (LayoutPair oa (AddressAssignedBlock _sb ca) _) <- F.toList concreteAddresses
                               , nm <- maybeToList $ Map.lookup (basicBlockAddress oa) symmap
                               ]
   -- TODO: JED: Should this be a put or an append?
@@ -103,20 +100,21 @@ these could be sentinels that require translation back to IP relative
 -- something like @push XXX ; ret@, the @ret@ restores the stack
 -- height and gets rid of the extra value.  We wouldn't change that in
 -- this transformation, but the idea might be worth considering.
-concretizeJumps :: (Monad m, InstructionConstraints i a, KnownNat w, MM.MemWidth w, Typeable w)
-                => ISA i a w
-                -> M.Map SymbolicAddress (ConcreteAddress w)
-                -> AddressAssignedPair i a w
-                -> RewriterT i a w m (ConcretePair i w)
-concretizeJumps isa concreteAddressMap (LayoutPair cb (AddressAssignedBlock sb baddr) Modified) = do
+concretizeJumps :: (Monad m, InstructionConstraints arch)
+                => ISA arch
+                -> M.Map SymbolicAddress (ConcreteAddress arch)
+                -> AddressAssignedPair arch
+                -> RewriterT arch m (ConcretePair arch)
+concretizeJumps isa concreteAddressMap (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock sb baddr) Modified)) = do
   mem <- askMem
   let insnAddrs = instructionAddresses' isa (isaConcretizeAddresses isa mem baddr . projectInstruction) baddr (basicBlockInstructions sb)
   concretizedInstrs <- T.traverse (mapJumpAddress concreteAddressMap) insnAddrs
   let sb' = sb { basicBlockAddress = baddr
                , basicBlockInstructions = concretizedInstrs
                }
-  return (LayoutPair cb sb' Modified)
-concretizeJumps _isa _concreteAddressMap (LayoutPair cb _ Unmodified) = return (LayoutPair cb cb Unmodified)
+  return (ConcretePair (LayoutPair cb sb' Modified))
+concretizeJumps _isa _concreteAddressMap (AddressAssignedPair (LayoutPair cb _ Unmodified)) =
+  return (ConcretePair (LayoutPair cb cb Unmodified))
 
 -- | We need the address of the instruction, so we need to pre-compute
 -- all instruction addresses above.
@@ -125,11 +123,11 @@ concretizeJumps _isa _concreteAddressMap (LayoutPair cb _ Unmodified) = return (
 -- type, but change its target.  This may require changing the opcode,
 -- as a longer jump may require a different instruction (e.g., 8 bit
 -- to 32 bit offset).
-mapJumpAddress :: forall m i a w
-                . (Monad m, InstructionConstraints i a, KnownNat w, Typeable w)
-               => M.Map SymbolicAddress (ConcreteAddress w)
-               -> (TaggedInstruction i a, ConcreteAddress w)
-               -> RewriterT i a w m (i ())
+mapJumpAddress :: forall m arch
+                . (Monad m, InstructionConstraints arch)
+               => M.Map SymbolicAddress (ConcreteAddress arch)
+               -> (TaggedInstruction arch (InstructionAnnotation arch), ConcreteAddress arch)
+               -> RewriterT arch m (Instruction arch ())
 mapJumpAddress concreteAddressMap (tagged, insnAddr) = do
   isa <- askISA
   mem <- askMem

@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 module Renovate.Redirect.LayoutBlocks.Compact (
   compactLayout
   ) where
@@ -19,7 +20,7 @@ import           Text.Printf ( printf )
 
 import qualified System.Random.MWC as MWC
 
-import qualified Data.Macaw.Memory as MM
+import qualified Data.Macaw.CFG as MM
 
 import           Renovate.Address
 import           Renovate.BasicBlock
@@ -32,18 +33,18 @@ import           Renovate.Redirect.LayoutBlocks.Types
 -- ordering of the heap is based on the size of the chunk of memory at
 -- each address. It's a priority heap with larger addresses having
 -- higher priority, hence @Down Int@ to sort decreasing on @Int@ size.
-type AddressHeap w = H.Heap (H.Entry (Down Int) (ConcreteAddress w))
+type AddressHeap arch = H.Heap (H.Entry (Down Int) (ConcreteAddress arch))
 
 -- | Compute a concrete address for each 'SymbolicBlock'.
 --
 -- Right now, we use an inefficient encoding of jumps.  We could do
 -- better later on.
-compactLayout :: (Monad m, T.Traversable t, InstructionConstraints i a, MM.MemWidth w)
-              => ConcreteAddress w
+compactLayout :: (Monad m, T.Traversable t, InstructionConstraints arch)
+              => ConcreteAddress arch
               -- ^ Address to begin block layout of instrumented blocks
               -> LayoutStrategy
-              -> t (SymbolicPair i a w)
-              -> RewriterT i a w m [AddressAssignedPair i a w]
+              -> t (SymbolicPair arch)
+              -> RewriterT arch m [AddressAssignedPair arch]
 compactLayout startAddr strat blocks = do
   h0 <- if strat == Parallel -- the parallel strategy is now a special case of
                              -- compact. In particular, we avoid allocating
@@ -59,7 +60,7 @@ compactLayout startAddr strat blocks = do
   -- behavior of blocks ending in conditional jumps (or non-jumps).
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . lpOrig) (F.toList blocks)))))
   mem     <- askMem
-  let (modifiedBlocks, unmodifiedBlocks) = L.partition (\b -> lpStatus b == Modified)
+  let (modifiedBlocks, unmodifiedBlocks) = L.partition (\(SymbolicPair b) -> lpStatus b == Modified)
                                                        (F.toList blocks)
   blocks' <- reifyFallthroughSuccessors mem modifiedBlocks blocks
 
@@ -71,7 +72,7 @@ compactLayout startAddr strat blocks = do
   -- the parallel layout as a special case of compact.
   isa <- askISA
   let sortedBlocks =
-        let newBlocks = F.toList (lpNew <$> blocks') in
+        let newBlocks = F.toList ((lpNew . unSymbolicPair) <$> blocks') in
         case strat of
         Compact SortedOrder        -> L.sortOn    (bySize isa mem) newBlocks
         Compact (RandomOrder seed) -> randomOrder seed             newBlocks
@@ -97,24 +98,24 @@ compactLayout startAddr strat blocks = do
 --
 -- Every symbolic block is assumed to have been assigned an address at this
 -- point.
-assignConcreteAddress :: (Monad m, MM.MemWidth w)
-                      => M.Map (SymbolicInfo w) (ConcreteAddress w)
-                      -> SymbolicPair i a w
-                      -> RewriterT i a w m (AddressAssignedPair i a w)
-assignConcreteAddress assignedAddrs (LayoutPair cb sb Modified) = do
+assignConcreteAddress :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
+                      => M.Map (SymbolicInfo arch) (ConcreteAddress arch)
+                      -> SymbolicPair arch
+                      -> RewriterT arch m (AddressAssignedPair arch)
+assignConcreteAddress assignedAddrs (SymbolicPair (LayoutPair cb sb Modified)) = do
   case M.lookup (basicBlockAddress sb) assignedAddrs of
     Nothing -> L.error $ printf "Expected an assigned address for symbolic block %s (derived from concrete block %s)"
                                 (show (basicBlockAddress sb))
                                 (show (basicBlockAddress cb))
-    Just addr -> return (LayoutPair cb (AddressAssignedBlock sb addr) Modified)
-assignConcreteAddress _ (LayoutPair cb sb Unmodified) =
-  return (LayoutPair cb (AddressAssignedBlock sb (basicBlockAddress cb)) Unmodified)
+    Just addr -> return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock sb addr) Modified))
+assignConcreteAddress _ (SymbolicPair (LayoutPair cb sb Unmodified)) =
+  return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock sb (basicBlockAddress cb)) Unmodified))
 
-allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth w)
-                               => ConcreteAddress w
-                               -> AddressHeap w
-                               -> [SymbolicBlock i a w]
-                               -> RewriterT i a w m (M.Map (SymbolicInfo w) (ConcreteAddress w))
+allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
+                               => ConcreteAddress arch
+                               -> AddressHeap arch
+                               -> [SymbolicBlock arch]
+                               -> RewriterT arch m (M.Map (SymbolicInfo arch) (ConcreteAddress arch))
 allocateSymbolicBlockAddresses startAddr h0 blocksBySize = do
   isa <- askISA
   mem <- askMem
@@ -131,12 +132,12 @@ allocateSymbolicBlockAddresses startAddr h0 blocksBySize = do
 -- Note that the 'SymbolicBlock' at this stage must have been augmented with its
 -- final unconditional jump to preserve fallthrough control flow (we rely on the
 -- size of the block to be correct).
-allocateBlockAddress :: (MM.MemWidth w, Monad m)
-                     => ISA i a w
-                     -> MM.Memory w
-                     -> (ConcreteAddress w, AddressHeap w, M.Map (SymbolicInfo w) (ConcreteAddress w))
-                     -> SymbolicBlock i a w
-                     -> RewriterT i a w m (ConcreteAddress w, AddressHeap w, M.Map (SymbolicInfo w) (ConcreteAddress w))
+allocateBlockAddress :: (MM.MemWidth (MM.ArchAddrWidth arch), Monad m)
+                     => ISA arch
+                     -> MM.Memory (MM.ArchAddrWidth arch)
+                     -> (ConcreteAddress arch, AddressHeap arch, M.Map (SymbolicInfo arch) (ConcreteAddress arch))
+                     -> SymbolicBlock arch
+                     -> RewriterT arch m (ConcreteAddress arch, AddressHeap arch, M.Map (SymbolicInfo arch) (ConcreteAddress arch))
 allocateBlockAddress isa mem (newTextAddr, h, m) sb =
   case H.viewMin h of
     Nothing -> return allocateNewTextAddr
@@ -172,17 +173,17 @@ allocateBlockAddress isa mem (newTextAddr, h, m) sb =
 -- unconditional jumps).
 --
 -- A block has fallthrough behavior if it does not end in an unconditional jump.
-reifyFallthroughSuccessors :: (Traversable t, Monad m, MM.MemWidth w, Traversable t')
-                           => MM.Memory w
-                           -> t (SymbolicPair i a w)
+reifyFallthroughSuccessors :: (Traversable t, Monad m, MM.MemWidth (MM.ArchAddrWidth arch), Traversable t')
+                           => MM.Memory (MM.ArchAddrWidth arch)
+                           -> t (SymbolicPair arch)
                            -- ^ The modified blocks
-                           -> t' (SymbolicPair i a w)
+                           -> t' (SymbolicPair arch)
                            -- ^ All blocks (which we need to compute the fallthrough address index)
-                           -> RewriterT i a w m (t (SymbolicPair i a w))
+                           -> RewriterT arch m (t (SymbolicPair arch))
 reifyFallthroughSuccessors mem modifiedBlocks allBlocks =
   T.traverse (addExplicitFallthrough mem symSuccIdx) modifiedBlocks
   where
-    blist0 = F.toList (fmap lpNew allBlocks)
+    blist0 = F.toList (fmap (lpNew . unSymbolicPair) allBlocks)
     symSuccs | length blist0 > 1 = zip blist0 (tail blist0)
              | otherwise = []
     -- An index mapping the symbolic address of a symbolic basic block to the
@@ -191,21 +192,21 @@ reifyFallthroughSuccessors mem modifiedBlocks allBlocks =
     indexSymbolicSuccessors m (symBlock, symSucc) =
       M.insert (basicBlockAddress symBlock) (basicBlockAddress symSucc) m
 
-type SuccessorMap w = M.Map (SymbolicInfo w) (SymbolicInfo w)
+type SuccessorMap arch = M.Map (SymbolicInfo arch) (SymbolicInfo arch)
 
-addExplicitFallthrough :: (Monad m, MM.MemWidth w)
-                       => MM.Memory w
-                       -> SuccessorMap w
-                       -> SymbolicPair i a w
-                       -> RewriterT i a w m (SymbolicPair i a w)
-addExplicitFallthrough mem symSucIdx pair@(LayoutPair cb sb Modified) = do
+addExplicitFallthrough :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
+                       => MM.Memory (MM.ArchAddrWidth arch)
+                       -> SuccessorMap arch
+                       -> SymbolicPair arch
+                       -> RewriterT arch m (SymbolicPair arch)
+addExplicitFallthrough mem symSucIdx pair@(SymbolicPair (LayoutPair cb sb Modified)) = do
   isa <- askISA
   -- We pass in a fake relative address since we don't need the resolution of
   -- relative jumps.  We just need the type of jump.
   --
   -- If the block ends in an unconditional jump, just return it unmodified.
   -- Otherwise, append an absolute jump to the correct location.
-  let newPair = LayoutPair cb (appendUnconditionalJump isa symSucIdx cb sb) Modified
+  let newPair = SymbolicPair (LayoutPair cb (appendUnconditionalJump isa symSucIdx cb sb) Modified)
   case isaJumpType isa lastInsn mem fakeAddress of
     br | isUnconditional br -> return pair
        | otherwise          -> return newPair
@@ -229,14 +230,14 @@ addExplicitFallthrough mem symSucIdx pair@(LayoutPair cb sb Modified) = do
                                                            (show (basicBlockAddress sb))
                                                            (show (basicBlockAddress cb)))
       | otherwise = projectInstruction $ last (basicBlockInstructions sb)
-addExplicitFallthrough _ _ pair@(LayoutPair _ _ Unmodified) = return pair
+addExplicitFallthrough _ _ pair@(SymbolicPair (LayoutPair _ _ Unmodified)) = return pair
 
-appendUnconditionalJump :: (MM.MemWidth w)
-                        => ISA i a w
-                        -> SuccessorMap w
-                        -> ConcreteBlock i w
-                        -> SymbolicBlock i a w
-                        -> SymbolicBlock i a w
+appendUnconditionalJump :: (MM.MemWidth (MM.ArchAddrWidth arch))
+                        => ISA arch
+                        -> SuccessorMap arch
+                        -> ConcreteBlock arch
+                        -> SymbolicBlock arch
+                        -> SymbolicBlock arch
 appendUnconditionalJump isa symSucIdx cb sb =
   case M.lookup (basicBlockAddress sb) symSucIdx of
     Nothing -> L.error (printf "Expected a successor block for symbolic block %s (derived from block %s)"
@@ -247,10 +248,10 @@ appendUnconditionalJump isa symSucIdx cb sb =
       in sb { basicBlockInstructions = basicBlockInstructions sb ++ insns }
 
 
-buildAddressHeap :: (MM.MemWidth w, Foldable t, Monad m)
-                 => ConcreteAddress w
-                 -> t (SymbolicPair i a w)
-                 -> RewriterT i a w m (AddressHeap w)
+buildAddressHeap :: (MM.MemWidth (MM.ArchAddrWidth arch), Foldable t, Monad m)
+                 => ConcreteAddress arch
+                 -> t (SymbolicPair arch)
+                 -> RewriterT arch m (AddressHeap arch)
 buildAddressHeap startAddr blocks = do
   isa <- askISA
   let dummyJump = isaMakeRelativeJumpTo  isa startAddr startAddr
@@ -265,13 +266,13 @@ buildAddressHeap startAddr blocks = do
 -- NOTE: We only add blocks that have been *modified*.  If a block is
 -- unmodified, overwriting it would throw away code, as we don't lay out
 -- duplicates of unmodified blocks.
-addOriginalBlock :: (MM.MemWidth w)
-                 => ISA i a w
+addOriginalBlock :: (MM.MemWidth (MM.ArchAddrWidth arch))
+                 => ISA arch
                  -> Word64
-                 -> AddressHeap w
-                 -> SymbolicPair i a w
-                 -> AddressHeap w
-addOriginalBlock isa jumpSize h (LayoutPair cb _ status)
+                 -> AddressHeap arch
+                 -> SymbolicPair arch
+                 -> AddressHeap arch
+addOriginalBlock isa jumpSize h (SymbolicPair (LayoutPair cb _ status))
   | bsize > jumpSize && status == Modified =
     H.insert (H.Entry (Down spaceSize) addr) h
   | otherwise = h

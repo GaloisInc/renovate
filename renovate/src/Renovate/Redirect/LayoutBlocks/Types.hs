@@ -1,14 +1,16 @@
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Renovate.Redirect.LayoutBlocks.Types (
   LayoutStrategy(..),
   CompactOrdering(..),
   LayoutPair(..),
-  SymbolicPair,
-  AddressAssignedPair,
-  ConcretePair,
+  SymbolicPair(..),
+  AddressAssignedPair(..),
+  ConcretePair(..),
   Status(..),
   RandomSeed
   ) where
@@ -16,7 +18,6 @@ module Renovate.Redirect.LayoutBlocks.Types (
 import qualified Data.Vector.Unboxed as V
 import           Data.Word ( Word32 )
 import           Renovate.BasicBlock
-import qualified Data.Macaw.Memory as MM
 import qualified Data.Text.Prettyprint.Doc as PD
 
 -- | A type for selecting the strategy for laying out basic blocks in rewritten
@@ -49,22 +50,17 @@ data CompactOrdering
 -- modified and the type of the rewritten block is a type parameter because at
 -- some points in the algorithm it is symbolic and at other points it will be
 -- concrete.
-data LayoutPair block i w = LayoutPair
-  { lpOrig   :: ConcreteBlock i w -- ^ the original block
-  , lpNew    :: block             -- ^ the instrumented block
-  , lpStatus :: Status            -- ^ allows us to track if the instrumentor changed the block.
+data LayoutPair block arch = LayoutPair
+  { lpOrig   :: ConcreteBlock arch -- ^ the original block
+  , lpNew    :: block              -- ^ the instrumented block
+  , lpStatus :: Status             -- ^ allows us to track if the instrumentor changed the block.
   }
 
-instance ( MM.MemWidth w
-         , PD.Pretty (i a)
-         , PD.Pretty (i ())
-         ) => PD.Pretty (SymbolicPair i a w) where
-  pretty (LayoutPair o n _) = ppBlocks projectInstruction o n
+instance (InstructionConstraints arch) => PD.Pretty (SymbolicPair arch) where
+  pretty (SymbolicPair (LayoutPair o n _)) = ppBlocks projectInstruction o n
 
-instance ( MM.MemWidth w
-         , PD.Pretty (i ())
-         ) => PD.Pretty (ConcretePair i w) where
-  pretty (LayoutPair o n _) = ppBlocks id o n
+instance (InstructionConstraints arch) => PD.Pretty (ConcretePair arch) where
+  pretty (ConcretePair (LayoutPair o n _)) = ppBlocks id o n
 
 ppBlocks :: ( PD.Pretty (i1 a1)
             , PD.Pretty (i1 a2)
@@ -104,6 +100,6 @@ data Status
   | Unmodified
   deriving (Eq, Ord, Read, Show)
 
-type SymbolicPair         i a w = LayoutPair (SymbolicBlock        i a w) i w
-type AddressAssignedPair  i a w = LayoutPair (AddressAssignedBlock i a w) i w
-type ConcretePair         i   w = LayoutPair (ConcreteBlock        i   w) i w
+newtype SymbolicPair         arch = SymbolicPair { unSymbolicPair :: LayoutPair (SymbolicBlock arch) arch }
+newtype AddressAssignedPair  arch = AddressAssignedPair { unAddressAssignedPair :: LayoutPair (AddressAssignedBlock arch) arch }
+newtype ConcretePair         arch = ConcretePair { unConcretePair :: LayoutPair (ConcreteBlock arch) arch }

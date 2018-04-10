@@ -35,57 +35,57 @@ import           Data.Macaw.Types ( BVType )
 
 import qualified Data.Macaw.PPC as MP
 
-import           Renovate
+import qualified Renovate as R
 import           Renovate.Arch.PPC.ISA
 
-config32 :: (MM.MemWidth w, w ~ 32)
+config32 :: (MM.MemWidth w, w ~ 32, MC.ArchAddrWidth MP.PPC32 ~ w)
          => (MC.ArchSegmentOff MP.PPC32 -> Maybe (MA.AbsValue 32 (BVType 32)))
-         -> (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w MP.PPC32 -> a)
-         -> (a -> ISA Instruction (TargetAddress w) w -> MM.Memory w -> SymbolicBlock Instruction (TargetAddress w) w
-               -> RewriteM Instruction w (Maybe [TaggedInstruction Instruction (TargetAddress w)]))
-         -> RenovateConfig Instruction (TargetAddress w) w MP.PPC32 a
+         -> (R.ISA MP.PPC32 -> MM.Memory w -> R.BlockInfo MP.PPC32 -> a)
+         -> (a -> R.ISA MP.PPC32 -> MM.Memory w -> R.SymbolicBlock MP.PPC32
+               -> R.RewriteM MP.PPC32 (Maybe [R.TaggedInstruction MP.PPC32 (TargetAddress MP.PPC32)]))
+         -> R.RenovateConfig MP.PPC32 a
 config32 tocMap analysis rewriter =
-  RenovateConfig { rcISA = isa
-                 , rcArchInfo = MP.ppc32_linux_info tocMap
-                 , rcAssembler = assemble
-                 , rcDisassembler = disassemble
-                 , rcBlockCallback = Nothing
-                 , rcFunctionCallback = Nothing
-                 , rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC32)
-                 , rcAnalysis = analysis
-                 , rcRewriter = rewriter
-                 , rcUpdateSymbolTable = False
-                 -- See Note [Layout Addresses]
-                 , rcCodeLayoutBase = 0x10100000
-                 , rcDataLayoutBase = 0x20000000
-                 }
+  R.RenovateConfig { R.rcISA = isa
+                   , R.rcArchInfo = MP.ppc32_linux_info tocMap
+                   , R.rcAssembler = assemble
+                   , R.rcDisassembler = disassemble
+                   , R.rcBlockCallback = Nothing
+                   , R.rcFunctionCallback = Nothing
+                   , R.rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC32)
+                   , R.rcAnalysis = analysis
+                   , R.rcRewriter = rewriter
+                   , R.rcUpdateSymbolTable = False
+                   -- See Note [Layout Addresses]
+                   , R.rcCodeLayoutBase = 0x10100000
+                   , R.rcDataLayoutBase = 0x20000000
+                   }
 
-config64 :: (MM.MemWidth w, w ~ 64)
+config64 :: (MM.MemWidth w, w ~ 64, MC.ArchAddrWidth MP.PPC64 ~ w)
          => (MC.ArchSegmentOff MP.PPC64 -> Maybe (MA.AbsValue 64 (BVType 64)))
-         -> (ISA Instruction (TargetAddress w) w -> MM.Memory w -> BlockInfo Instruction w MP.PPC64 -> a)
-         -> (a -> ISA Instruction (TargetAddress w) w -> MM.Memory w -> SymbolicBlock Instruction (TargetAddress w) w
-               -> RewriteM Instruction w (Maybe [TaggedInstruction Instruction (TargetAddress w)]))
-         -> RenovateConfig Instruction (TargetAddress w) w MP.PPC64 a
+         -> (R.ISA MP.PPC64 -> MM.Memory w -> R.BlockInfo MP.PPC64 -> a)
+         -> (a -> R.ISA MP.PPC64 -> MM.Memory w -> R.SymbolicBlock MP.PPC64
+               -> R.RewriteM MP.PPC64 (Maybe [R.TaggedInstruction MP.PPC64 (TargetAddress MP.PPC64)]))
+         -> R.RenovateConfig MP.PPC64 a
 config64 tocMap analysis rewriter =
-  RenovateConfig { rcISA = isa
-                 , rcArchInfo = MP.ppc64_linux_info tocMap
-                 , rcAssembler = assemble
-                 , rcDisassembler = disassemble
-                 , rcBlockCallback = Nothing
-                 , rcFunctionCallback = Nothing
-                 , rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC64)
-                 , rcAnalysis = analysis
-                 , rcRewriter = rewriter
-                 , rcUpdateSymbolTable = False
-                 -- See Note [Layout Addresses]
-                 , rcCodeLayoutBase = 0x10100000
-                 , rcDataLayoutBase = 0x20000000
-                 }
+  R.RenovateConfig { R.rcISA = isa
+                   , R.rcArchInfo = MP.ppc64_linux_info tocMap
+                   , R.rcAssembler = assemble
+                   , R.rcDisassembler = disassemble
+                   , R.rcBlockCallback = Nothing
+                   , R.rcFunctionCallback = Nothing
+                   , R.rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC64)
+                   , R.rcAnalysis = analysis
+                   , R.rcRewriter = rewriter
+                   , R.rcUpdateSymbolTable = False
+                   -- See Note [Layout Addresses]
+                   , R.rcCodeLayoutBase = 0x10100000
+                   , R.rcDataLayoutBase = 0x20000000
+                   }
 
-instance ArchInfo MP.PPC64 where
+instance R.ArchInfo MP.PPC64 where
   archFunctions _ = Nothing
 
-instance ArchInfo MP.PPC32 where
+instance R.ArchInfo MP.PPC32 where
   archFunctions _ = Nothing
 
 {- Note [Layout Addresses]

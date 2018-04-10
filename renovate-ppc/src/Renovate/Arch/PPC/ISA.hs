@@ -1,6 +1,10 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Renovate.Arch.PPC.ISA (
   isa,
   assemble,
@@ -25,19 +29,27 @@ import qualified Data.Text.Prettyprint.Doc as PP
 import           Data.Word ( Word8, Word64 )
 import           Text.Printf ( printf )
 
-import qualified Data.Macaw.Memory as MM
+import qualified Data.Macaw.CFG as MM
+import qualified Data.Macaw.PPC as MP
 import           Data.Parameterized.Classes ( showF )
 import qualified Data.Parameterized.TraversableFC as FC
 import qualified Dismantle.PPC as D
 
-import           Renovate
+import qualified Renovate as R
 
-data TargetAddress w = NoAddress
-                     | AbsoluteAddress (ConcreteAddress w)
-                     deriving (Eq, Ord, Show)
+data TargetAddress arch = NoAddress
+                        | AbsoluteAddress (R.ConcreteAddress arch)
+                        deriving (Eq, Ord)
+
+deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (TargetAddress arch)
 
 newtype Instruction a = I { unI :: D.AnnotatedInstruction a }
   deriving (Show)
+
+type instance R.Instruction MP.PPC32 = Instruction
+type instance R.InstructionAnnotation MP.PPC32 = TargetAddress MP.PPC32
+type instance R.Instruction MP.PPC64 = Instruction
+type instance R.InstructionAnnotation MP.PPC64 = TargetAddress MP.PPC64
 
 instance PP.Pretty (Instruction a) where
   pretty = PP.pretty . ppcPrettyInstruction
@@ -68,19 +80,19 @@ instance C.Exception InstructionDisassemblyFailure
 -- | An 'ISA' description for PowerPC
 --
 -- For now, the same description works for both PowerPC 32 and PowerPC 64.
-isa :: (MM.MemWidth w) => ISA Instruction (TargetAddress w) w
+isa :: (MM.MemWidth (MM.ArchAddrWidth arch), R.Instruction arch ~ Instruction, R.InstructionAnnotation arch ~ TargetAddress arch) => R.ISA arch
 isa =
-  ISA { isaInstructionSize = ppcInstrSize
-      , isaPrettyInstruction = ppcPrettyInstruction
-      , isaMakePadding = ppcMakePadding
-      , isaMakeRelativeJumpTo = ppcMakeRelativeJumpTo
-      , isaJumpType = ppcJumpType
-      , isaModifyJumpTarget = ppcModifyJumpTarget
-      , isaMakeSymbolicJump = ppcMakeSymbolicJump
-      , isaConcretizeAddresses = ppcConcretizeAddresses
-      , isaSymbolizeAddresses = ppcSymbolizeAddresses
-      , isaMakeTrapIf = error "makeTrapIf is no implemented for PowerPC yet -- move this function out of ISA"
-      }
+  R.ISA { R.isaInstructionSize = ppcInstrSize
+        , R.isaPrettyInstruction = ppcPrettyInstruction
+        , R.isaMakePadding = ppcMakePadding
+        , R.isaMakeRelativeJumpTo = ppcMakeRelativeJumpTo
+        , R.isaJumpType = ppcJumpType
+        , R.isaModifyJumpTarget = ppcModifyJumpTarget
+        , R.isaMakeSymbolicJump = ppcMakeSymbolicJump
+        , R.isaConcretizeAddresses = ppcConcretizeAddresses
+        , R.isaSymbolizeAddresses = ppcSymbolizeAddresses
+        , R.isaMakeTrapIf = error "makeTrapIf is no implemented for PowerPC yet -- move this function out of ISA"
+        }
 
 ppcPrettyInstruction :: Instruction a -> String
 ppcPrettyInstruction = show . D.ppInstruction . toInst
@@ -102,7 +114,7 @@ ppcMakePadding nBytes
 
 -- | Make an unconditional relative jump from the given @srcAddr@ to the
 -- @targetAddr@.
-ppcMakeRelativeJumpTo :: (MM.MemWidth w) => ConcreteAddress w -> ConcreteAddress w -> [Instruction ()]
+ppcMakeRelativeJumpTo :: (MM.MemWidth (MM.ArchAddrWidth arch)) => R.ConcreteAddress arch -> R.ConcreteAddress arch -> [Instruction ()]
 ppcMakeRelativeJumpTo srcAddr targetAddr
   | offset `mod` 4 /= 0 =
     error (printf "Unaligned jump with source=%s and target=%s" (show srcAddr) (show targetAddr))
@@ -112,7 +124,7 @@ ppcMakeRelativeJumpTo srcAddr targetAddr
   where
     -- We are limited to 24 + 2 bits of offset, where the low two bits must be zero.
     offset :: Integer
-    offset = fromIntegral (targetAddr `addressDiff` srcAddr)
+    offset = fromIntegral (targetAddr `R.addressDiff` srcAddr)
 
     -- We checked to make sure the low bits are zero with the mod case above.
     -- Now we shift off two of the required zeros.
@@ -120,8 +132,10 @@ ppcMakeRelativeJumpTo srcAddr targetAddr
     shiftedOffset = fromIntegral offset `shiftR` 2
     jumpInstr = D.Instruction D.B (D.Directbrtarget (D.BT shiftedOffset) D.:< D.Nil)
 
-ppcMakeSymbolicJump :: (MM.MemWidth w) => SymbolicAddress -> [TaggedInstruction Instruction (TargetAddress w)]
-ppcMakeSymbolicJump symAddr = [tagInstruction (Just symAddr) i]
+ppcMakeSymbolicJump :: (MM.MemWidth (MM.ArchAddrWidth arch), R.Instruction arch ~ Instruction)
+                    => R.SymbolicAddress
+                    -> [R.TaggedInstruction arch (TargetAddress arch)]
+ppcMakeSymbolicJump symAddr = [R.tagInstruction (Just symAddr) i]
   where
     -- The jump has an invalid destination because it is just a stand-in; it
     -- will be rewritten with a real jump target when we concretize the
@@ -131,7 +145,10 @@ ppcMakeSymbolicJump symAddr = [tagInstruction (Just symAddr) i]
 
 -- | This function converts symbolic address references in operands back to
 -- concrete values.  As with 'ppcSymbolizeAddresses', it is a no-op on PowerPC.
-ppcConcretizeAddresses :: (MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> Instruction (TargetAddress w) -> Instruction ()
+ppcConcretizeAddresses :: (MM.MemWidth (MM.ArchAddrWidth arch))
+                       => MM.Memory (MM.ArchAddrWidth arch)
+                       -> R.ConcreteAddress arch
+                       -> Instruction (TargetAddress arch) -> Instruction ()
 ppcConcretizeAddresses _mem _addr i =
   case unI i of
     D.Instruction opc operands ->
@@ -152,63 +169,67 @@ ppcConcretizeAddresses _mem _addr i =
 --
 -- Note that the long unconditional jump we add has a dummy target, as the real
 -- target is specified through the symbolic target.
-ppcSymbolizeAddresses :: (MM.MemWidth w)
-                      => MM.Memory w
-                      -> (ConcreteAddress w -> Maybe SymbolicAddress)
-                      -> ConcreteAddress w
-                      -> Maybe SymbolicAddress
+ppcSymbolizeAddresses :: (MM.MemWidth (MM.ArchAddrWidth arch), R.Instruction arch ~ Instruction)
+                      => MM.Memory (MM.ArchAddrWidth arch)
+                      -> (R.ConcreteAddress arch -> Maybe R.SymbolicAddress)
+                      -> R.ConcreteAddress arch
+                      -> Maybe R.SymbolicAddress
                       -> Instruction ()
-                      -> [TaggedInstruction Instruction (TargetAddress w)]
+                      -> [R.TaggedInstruction arch (TargetAddress arch)]
 ppcSymbolizeAddresses _mem lookupSymAddr insnAddr mSymbolicTarget i =
   case mSymbolicTarget of
     Nothing ->
       case unI i of
         D.Instruction opc operands ->
           let newInsn = D.Instruction (coerce opc) (FC.fmapFC annotateNull operands)
-          in [tagInstruction Nothing (I newInsn)]
+          in [R.tagInstruction Nothing (I newInsn)]
     Just _symbolicTarget ->
       case unI i of
         D.Instruction opc operands ->
           case operands of
             D.Annotated _ (D.Condbrtarget _) D.:< rest ->
-              let fallthroughAddr = insnAddr `addressAddOffset` 4
+              let fallthroughAddr = insnAddr `R.addressAddOffset` 4
                   newCondbr = D.Instruction (coerce opc) (D.Annotated NoAddress (D.Condbrtarget (D.CBT (8 `shiftR` 2))) D.:< FC.fmapFC annotateNull rest)
                   fallthrough = D.Instruction D.B (D.Annotated NoAddress (D.Directbrtarget (D.BT 0)) D.:< D.Nil)
                   longBr = D.Instruction D.B (D.Annotated NoAddress (D.Directbrtarget (D.BT 0)) D.:< D.Nil)
               in case lookupSymAddr fallthroughAddr of
                 Nothing -> error ("No block for fallthrough address " ++ show fallthroughAddr)
                 Just symFallthrough ->
-                  [ tagInstruction Nothing (I newCondbr)
-                  , tagInstruction (Just symFallthrough) (I fallthrough)
-                  , tagInstruction mSymbolicTarget (I longBr)
+                  [ R.tagInstruction Nothing (I newCondbr)
+                  , R.tagInstruction (Just symFallthrough) (I fallthrough)
+                  , R.tagInstruction mSymbolicTarget (I longBr)
                   ]
             _ ->
               let newInsn = D.Instruction (coerce opc) (FC.fmapFC annotateNull operands)
-              in [ tagInstruction mSymbolicTarget (I newInsn) ]
+              in [ R.tagInstruction mSymbolicTarget (I newInsn) ]
   where
     annotateNull (D.Annotated _ operand) = D.Annotated NoAddress operand
 
 -- | Classify jumps (and determine their targets, where possible)
-ppcJumpType :: (HasCallStack, MM.MemWidth w) => Instruction t -> MM.Memory w -> ConcreteAddress w -> JumpType w
+ppcJumpType :: (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch))
+            => Instruction t
+            -> MM.Memory (MM.ArchAddrWidth arch)
+            -> R.ConcreteAddress arch
+            -> R.JumpType arch
 ppcJumpType i _mem insnAddr =
   case toInst i of
     D.Instruction opc operands ->
       case operands of
         D.Calltarget (D.BT offset) D.:< D.Nil ->
-          DirectCall insnAddr (fromIntegral (offset `shiftL` 2))
+          R.DirectCall insnAddr (fromIntegral (offset `shiftL` 2))
         D.Directbrtarget (D.BT offset) D.:< D.Nil ->
-          RelativeJump Unconditional insnAddr (fromIntegral (offset `shiftL` 2))
+          R.RelativeJump R.Unconditional insnAddr (fromIntegral (offset `shiftL` 2))
         -- GBC has an extra argument generalizing to include a branch hint
         D.Condbrtarget (D.CBT offset) D.:< _crbit D.:< _bh D.:< D.Nil ->
-          RelativeJump Conditional insnAddr (fromIntegral (offset `shiftL` 2))
+          R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2))
         D.Condbrtarget (D.CBT offset) D.:< _crbit D.:< D.Nil ->
-          RelativeJump Conditional insnAddr (fromIntegral (offset `shiftL` 2))
+          R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2))
         D.Condbrtarget (D.CBT offset) D.:< D.Nil ->
           case opc of
             D.BCLalways ->
-              RelativeJump Unconditional insnAddr (fromIntegral (offset `shiftL` 2))
+              R.RelativeJump R.Unconditional insnAddr (fromIntegral (offset `shiftL` 2))
             _ ->
-              RelativeJump Conditional insnAddr (fromIntegral (offset `shiftL` 2))
+              R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2))
         D.Absdirectbrtarget _ D.:< D.Nil ->
           error ("Absolute jumps are not supported: " ++ showF opc)
         D.Abscondbrtarget _ D.:< D.Nil ->
@@ -217,50 +238,50 @@ ppcJumpType i _mem insnAddr =
           error ("Absolute jumps are not supported: " ++ showF opc)
         D.Nil ->
           case opc of
-            D.BCTR -> IndirectJump Unconditional
-            D.BCTRL -> IndirectCall
-            D.TRAP -> IndirectCall
+            D.BCTR -> R.IndirectJump R.Unconditional
+            D.BCTRL -> R.IndirectCall
+            D.TRAP -> R.IndirectCall
             -- Conditional branches to link register
-            D.BDNZLR -> IndirectCall    -- Some kind of conditional return
-            D.BDNZLRL -> IndirectCall   -- Conditional return and link
-            D.BDNZLRLm -> IndirectCall
-            D.BDNZLRLp -> IndirectCall
-            D.BDNZLRm -> IndirectCall
-            D.BDNZLRp -> IndirectCall
-            D.BDZLR -> IndirectCall
-            D.BDZLRL -> IndirectCall
-            D.BDZLRLm -> IndirectCall
-            D.BDZLRLp -> IndirectCall
-            D.BDZLRm -> IndirectCall
-            D.BDZLRp -> IndirectCall
+            D.BDNZLR -> R.IndirectCall    -- Some kind of conditional return
+            D.BDNZLRL -> R.IndirectCall   -- Conditional return and link
+            D.BDNZLRLm -> R.IndirectCall
+            D.BDNZLRLp -> R.IndirectCall
+            D.BDNZLRm -> R.IndirectCall
+            D.BDNZLRp -> R.IndirectCall
+            D.BDZLR -> R.IndirectCall
+            D.BDZLRL -> R.IndirectCall
+            D.BDZLRLm -> R.IndirectCall
+            D.BDZLRLp -> R.IndirectCall
+            D.BDZLRm -> R.IndirectCall
+            D.BDZLRp -> R.IndirectCall
             -- Normal return (branch to link register)
-            D.BLR -> Return
-            D.BLRL -> Return
-            _ -> NoJump
+            D.BLR -> R.Return
+            D.BLRL -> R.Return
+            _ -> R.NoJump
         (_ D.:< _) ->
           -- In this case, we handle all of the branches that don't need to inspect
           -- operands (because they are indirect)
           case opc of
             -- Conditional branch through the CTR register
-            D.BCCTR -> IndirectJump Conditional
-            D.GBCCTR -> IndirectJump Conditional
+            D.BCCTR -> R.IndirectJump R.Conditional
+            D.GBCCTR -> R.IndirectJump R.Conditional
             -- This is a call because it is setting the link register and could
             -- return to the next instruction
-            D.BCCTRL -> IndirectCall
-            D.BCL -> IndirectCall
-            D.GBCL -> IndirectCall
-            D.GBCCTRL -> IndirectCall
+            D.BCCTRL -> R.IndirectCall
+            D.BCL -> R.IndirectCall
+            D.GBCL -> R.IndirectCall
+            D.GBCCTRL -> R.IndirectCall
             -- Syscall
-            D.SC -> IndirectCall
+            D.SC -> R.IndirectCall
             -- Traps
-            D.TW -> IndirectCall
-            D.TWI -> IndirectCall
-            D.TD -> IndirectCall
-            D.TDI -> IndirectCall
+            D.TW -> R.IndirectCall
+            D.TWI -> R.IndirectCall
+            D.TD -> R.IndirectCall
+            D.TDI -> R.IndirectCall
             -- Returns with extra operands
-            D.GBCLR -> Return
-            D.GBCLRL -> Return
-            _ -> NoJump
+            D.GBCLR -> R.Return
+            D.GBCLRL -> R.Return
+            _ -> R.NoJump
 
 -- | Given a jump instruction and a new target address, update the jump
 -- instruction to target the new address.
@@ -275,12 +296,12 @@ ppcJumpType i _mem insnAddr =
 -- two zero bits.
 --
 -- See Note [Conditional Branch Restrictions]
-ppcModifyJumpTarget :: (HasCallStack, MM.MemWidth w)
+ppcModifyJumpTarget :: (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch))
                     => Instruction ()
                     -- ^ The instruction to modify
-                    -> ConcreteAddress w
+                    -> R.ConcreteAddress arch
                     -- ^ The address of the instruction
-                    -> ConcreteAddress w
+                    -> R.ConcreteAddress arch
                     -- ^ The new target address
                     -> Maybe (Instruction ())
 ppcModifyJumpTarget i srcAddr targetAddr =
@@ -317,7 +338,7 @@ ppcModifyJumpTarget i srcAddr targetAddr =
 -- call error.  The limit of the branch is specified as @nBits@, which is the
 -- number of bits in the immediate field that will hold the offset.  Note that
 -- offsets are signed, so the range check has to account for that.
-newJumpOffset :: (HasCallStack, MM.MemWidth w) => Int -> ConcreteAddress w -> ConcreteAddress w -> Either String Int32
+newJumpOffset :: (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch)) => Int -> R.ConcreteAddress arch -> R.ConcreteAddress arch -> Either String Int32
 newJumpOffset nBits srcAddr targetAddr
   | rawOff `mod` 4 /= 0 =
     Left (printf "Invalid alignment for offset between src=%s and target=%s" (show srcAddr) (show targetAddr))
@@ -325,7 +346,7 @@ newJumpOffset nBits srcAddr targetAddr
     Left (printf "Jump offset too large between src=%s and target=%s" (show srcAddr) (show targetAddr))
   | otherwise = Right (fromIntegral rawOff)
   where
-    rawOff = targetAddr `addressDiff` srcAddr
+    rawOff = targetAddr `R.addressDiff` srcAddr
 
 -- | Convert the 'Instruction' wrapper to the base instruction type, dropping
 -- annotations.

@@ -8,26 +8,24 @@ module Renovate.Redirect.LayoutBlocks (
 
 import qualified Data.Traversable as T
 
-import qualified Data.Macaw.Memory as MM
-
 import           Renovate.Address
+import           Renovate.BasicBlock ( InstructionConstraints )
 import           Renovate.Redirect.Monad
 import           Renovate.Redirect.LayoutBlocks.Compact ( compactLayout )
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , CompactOrdering(..)
                                                       , SymbolicPair
                                                       , AddressAssignedPair )
-import           Renovate.ISA
 
 -- | Compute a concrete address for each 'SymbolicBlock'.
 --
 -- Right now, we use an inefficient encoding of jumps.  We could do
 -- better later on.
-layoutBlocks :: (Monad m, T.Traversable t, InstructionConstraints i a, MM.MemWidth w)
+layoutBlocks :: (Monad m, T.Traversable t, InstructionConstraints arch)
              => LayoutStrategy
-             -> ConcreteAddress w
+             -> ConcreteAddress arch
              -- ^ Address to begin block layout of instrumented blocks
-             -> t (SymbolicPair i a w)
-             -> RewriterT i a w m [AddressAssignedPair i a w]
+             -> t (SymbolicPair arch)
+             -> RewriterT arch m [AddressAssignedPair arch]
 layoutBlocks strat startAddr blocks =
   compactLayout startAddr strat blocks

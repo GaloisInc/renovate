@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE TypeFamilies #-}
 -- | Internal helpers for the x86_64 ISA implementation
 module Renovate.Arch.X86_64.Internal (
   makeInstr,
@@ -25,24 +26,25 @@ import qualified Control.Monad.Catch as C
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy.Builder as B
 import qualified Data.ByteString.Lazy as LB
-import Data.Maybe ( fromMaybe )
-import Data.Typeable ( Typeable )
-import Data.Word ( Word8 )
-
-import qualified Flexdis86 as D
+import           Data.Maybe ( fromMaybe )
 import qualified Data.Text.Prettyprint.Doc as PD
+import           Data.Typeable ( Typeable )
+import           Data.Word ( Word8 )
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
-import Renovate
+import qualified Data.Macaw.X86 as X86
+import qualified Flexdis86 as D
+
+import qualified Renovate as R
 
 -- | The type of operands to x86_64 instructions
 type Value = D.Value
 
 -- | The target address of a jump.  This is used as the annotation
 -- type for symbolic instructions.
-data TargetAddress w = NoAddress
-                     | AbsoluteAddress (ConcreteAddress w)
-                     deriving (Eq, Ord, Show)
+data TargetAddress = NoAddress
+                   | AbsoluteAddress (R.ConcreteAddress X86.X86_64)
+                   deriving (Eq, Ord, Show)
 
 -- | The type of an operand with an annotation
 data AnnotatedOperand a = AnnotatedOperand { aoOperand :: (D.Value, D.OperandType)
@@ -54,6 +56,9 @@ data AnnotatedOperand a = AnnotatedOperand { aoOperand :: (D.Value, D.OperandTyp
 -- annotation on each operand of type @a@.
 newtype Instruction a = XI { unXI :: D.InstructionInstanceF (AnnotatedOperand a) }
                          deriving (Functor, Show)
+
+type instance R.Instruction X86.X86_64 = Instruction
+type instance R.InstructionAnnotation X86.X86_64 = TargetAddress
 
 instance PD.Pretty (Instruction a) where
   pretty = PD.pretty . prettyPrint

@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 -- | Low-level code redirection helpers
 --
 -- This module is only exposed for testing purposes and is not an
@@ -9,13 +10,11 @@ import qualified Data.Traversable as T
 
 import           Prelude
 
-import qualified Data.Macaw.Memory as MC
-
 import           Renovate.BasicBlock
 import           Renovate.ISA
 import           Renovate.Redirect.Monad
 import           Renovate.Redirect.LayoutBlocks.Types ( Status(..)
-                                                      , ConcretePair
+                                                      , ConcretePair(..)
                                                       , LayoutPair(..) )
 
 -- | Overwrite the entry points of each original block with a pointer
@@ -26,9 +25,9 @@ import           Renovate.Redirect.LayoutBlocks.Types ( Status(..)
 -- blocks.  We will generate a diagnostic for each one.
 --
 -- This is a low level helper mostly exposed for testing
-redirectOriginalBlocks :: (MC.MemWidth w, Monad m, T.Traversable t, InstructionConstraints i a)
-                       => t (ConcretePair i w)
-                       -> RewriterT i a w m (t (ConcretePair i w))
+redirectOriginalBlocks :: (Monad m, T.Traversable t, InstructionConstraints arch)
+                       => t (ConcretePair arch)
+                       -> RewriterT arch m (t (ConcretePair arch))
 redirectOriginalBlocks = T.traverse redirectBlock
 
 -- | Given an original 'ConcreteBlock' and an instrumented
@@ -40,10 +39,10 @@ redirectOriginalBlocks = T.traverse redirectBlock
 --
 -- Note that the address of the jump instruction is the address of the
 -- original block (since it will be the first instruction).
-redirectBlock :: (MC.MemWidth w, Monad m, InstructionConstraints i a)
-              => ConcretePair i w
-              -> RewriterT i a w m (ConcretePair i w)
-redirectBlock input@(LayoutPair origBlock instrBlock Modified) = do
+redirectBlock :: (Monad m, InstructionConstraints arch)
+              => ConcretePair arch
+              -> RewriterT arch m (ConcretePair arch)
+redirectBlock input@(ConcretePair (LayoutPair origBlock instrBlock Modified)) = do
   isa <- askISA
   let origBlockSize = concreteBlockSize isa origBlock
       jmpInsns = isaMakeRelativeJumpTo isa (basicBlockAddress origBlock) (basicBlockAddress instrBlock)
@@ -59,5 +58,5 @@ redirectBlock input@(LayoutPair origBlock instrBlock Modified) = do
     False -> do
       let padding = isaMakePadding isa (origBlockSize - jmpSize)
           origBlock' = origBlock { basicBlockInstructions = jmpInsns <> padding }
-      return (LayoutPair origBlock' instrBlock Modified)
-redirectBlock unmodified@(LayoutPair _ _ Unmodified) = return unmodified
+      return (ConcretePair (LayoutPair origBlock' instrBlock Modified))
+redirectBlock unmodified@(ConcretePair (LayoutPair _ _ Unmodified)) = return unmodified

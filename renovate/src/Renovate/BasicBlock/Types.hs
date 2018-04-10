@@ -1,6 +1,13 @@
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Renovate.BasicBlock.Types (
   BasicBlock(..),
+  Instruction,
+  InstructionAnnotation,
   ConcreteBlock,
   SymbolicBlock,
   SymbolicInfo(..),
@@ -9,11 +16,16 @@ module Renovate.BasicBlock.Types (
   tagInstruction,
   hasNoSymbolicTarget,
   symbolicTarget,
-  projectInstruction
+  projectInstruction,
+  -- * Constraints
+  InstructionConstraints
   ) where
 
 import           Data.Maybe ( isNothing )
 import qualified Data.Text.Prettyprint.Doc as PD
+import           Data.Typeable ( Typeable )
+
+import qualified Data.Macaw.CFG as MC
 
 import           Renovate.Address
 
@@ -24,7 +36,7 @@ import           Renovate.Address
 -- The intent is that basic blocks can have either concrete or
 -- symbolic addresses (instantiated as 'ConcreteBlock' and
 -- 'SymbolicBlock', respectively)
-data BasicBlock addr i a =
+data BasicBlock addr (i :: * -> *) a =
   BasicBlock { basicBlockInstructions :: [i a]
              , basicBlockAddress :: addr
              }
@@ -34,6 +46,25 @@ instance (PD.Pretty addr, PD.Pretty (i a)) => PD.Pretty (BasicBlock addr i a) wh
   pretty (BasicBlock insns addr) =
     PD.pretty addr PD.<> ":" PD.<+> PD.align (PD.vsep (map PD.pretty insns))
 
+type family Instruction arch :: * -> *
+type family InstructionAnnotation arch :: *
+
+-- | Constraints common to all instructions.
+--
+-- Basically, all 'Instruction' instances must be 'Show'able and
+-- 'Typeable'.  They are combined for convenience and to reduce noise
+-- in type signatures, since those constraints are not very
+-- interesting.
+type InstructionConstraints arch =
+  ( PD.Pretty (Instruction arch ())
+  , PD.Pretty (Instruction arch (InstructionAnnotation arch))
+  , Show (Instruction arch (InstructionAnnotation arch))
+  , Show (Instruction arch ())
+  , Typeable (Instruction arch (InstructionAnnotation arch))
+  , Typeable (Instruction arch ())
+  , MC.MemWidth (MC.ArchAddrWidth arch)
+  )
+
 -- | The type of concrete 'BasicBlock's that have been assigned real
 -- addresses.
 --
@@ -41,7 +72,7 @@ instance (PD.Pretty addr, PD.Pretty (i a)) => PD.Pretty (BasicBlock addr i a) wh
 -- 'MC.SegmentedAddr', as we need to create blocks that haven't yet
 -- been assigned to a segment, so we can't actually give them a
 -- 'MC.SegmentedAddr' (there is no segment for them to refer to).
-type ConcreteBlock i w = BasicBlock (ConcreteAddress w) i ()
+type ConcreteBlock arch = BasicBlock (ConcreteAddress arch) (Instruction arch) ()
 
 -- | A wrapper around a normal instruction that includes an optional
 -- 'SymbolicAddress'.
@@ -55,9 +86,9 @@ type ConcreteBlock i w = BasicBlock (ConcreteAddress w) i ()
 -- than one possible target (if there is such a thing).  If that
 -- becomes an issue, the annotation will need to sink into the operand
 -- annotations, and we'll need a helper to collect those.
-newtype TaggedInstruction i a = Tag { unTag :: (i a, Maybe SymbolicAddress) }
+newtype TaggedInstruction arch a = Tag { unTag :: (Instruction arch a, Maybe SymbolicAddress) }
 
-instance PD.Pretty (i a) => PD.Pretty (TaggedInstruction i a) where
+instance PD.Pretty (Instruction arch a) => PD.Pretty (TaggedInstruction arch a) where
   pretty (Tag (i, _)) = PD.pretty i
 
 -- | Annotate an instruction with a symbolic target.
@@ -65,33 +96,33 @@ instance PD.Pretty (i a) => PD.Pretty (TaggedInstruction i a) where
 -- We use this if the instruction is a jump and we will need to
 -- relocate it, so we need to know the symbolic block it is jumping
 -- to.
-tagInstruction :: Maybe SymbolicAddress -> i a -> TaggedInstruction i a
+tagInstruction :: Maybe SymbolicAddress -> Instruction arch a -> TaggedInstruction arch a
 tagInstruction ma i = Tag (i, ma)
 
 -- | Return 'True' if the 'TaggedInstruction' has no symbolic target.
-hasNoSymbolicTarget :: TaggedInstruction i a -> Bool
+hasNoSymbolicTarget :: TaggedInstruction arch a -> Bool
 hasNoSymbolicTarget = isNothing . symbolicTarget
 
 -- | If the 'TaggedInstruction' has a 'SymbolicAddress' as a target,
 -- return it.
-symbolicTarget :: TaggedInstruction i a -> Maybe SymbolicAddress
+symbolicTarget :: TaggedInstruction arch a -> Maybe SymbolicAddress
 symbolicTarget = snd . unTag
 
 -- | Remove the tag from an instruction
-projectInstruction :: TaggedInstruction i a -> i a
+projectInstruction :: TaggedInstruction arch a -> Instruction arch a
 projectInstruction = fst . unTag
 
 -- | The type of 'BasicBlock's that only have symbolic addresses.
 -- Their jumps are annotated with symbolic address targets as well,
 -- which refer to other 'SymbolicBlock's.
-type SymbolicBlock i a w = BasicBlock (SymbolicInfo w) (TaggedInstruction i) a
+type SymbolicBlock arch = BasicBlock (SymbolicInfo arch) (TaggedInstruction arch) (InstructionAnnotation arch)
 
 -- | Some algorithms (such as layout) will need to assigned an address
 -- to symbolic blocks and then make the blocks concrete. This type
 -- bundles up a symbolic block and concrete address for that purpose.
-data AddressAssignedBlock i a w = AddressAssignedBlock
-  { lbBlock :: SymbolicBlock i a w -- ^ The symbolic block
-  , lbAt    :: ConcreteAddress w        -- ^ The concrete address for this block
+data AddressAssignedBlock arch = AddressAssignedBlock
+  { lbBlock :: SymbolicBlock arch   -- ^ The symbolic block
+  , lbAt    :: ConcreteAddress arch -- ^ The concrete address for this block
   }
 
 -- | Address information for a symbolic block.
@@ -100,11 +131,13 @@ data AddressAssignedBlock i a w = AddressAssignedBlock
 -- identifies the block.  It also includes the original concrete
 -- address of the corresponding 'ConcreteBlock' for this symbolic
 -- block.
-data SymbolicInfo w = SymbolicInfo { symbolicAddress :: SymbolicAddress
-                                   , concreteAddress :: ConcreteAddress w
-                                   }
-                    deriving (Eq, Ord, Show)
+data SymbolicInfo arch = SymbolicInfo { symbolicAddress :: SymbolicAddress
+                                      , concreteAddress :: ConcreteAddress arch
+                                      }
+                    deriving (Eq, Ord)
 
-instance PD.Pretty (SymbolicInfo w) where
+deriving instance (MC.MemWidth (MC.ArchAddrWidth arch)) => Show (SymbolicInfo arch)
+
+instance PD.Pretty (SymbolicInfo arch) where
   pretty si = PD.pretty (symbolicAddress si)
 

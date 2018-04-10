@@ -1,6 +1,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs            #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 -- | Tests for the x64 ABI
 module X64 ( x64Tests ) where
 
@@ -17,7 +19,7 @@ import qualified Test.Tasty.HUnit as T
 import Text.Read ( readMaybe )
 
 import qualified Data.Parameterized.NatRepr as NR
-import qualified Data.Macaw.Memory as MM
+import qualified Data.Macaw.CFG as MM
 
 import qualified Renovate as R
 import qualified Renovate.Arch.X86_64 as R64
@@ -67,23 +69,26 @@ data ExpectedResult = ExpectedResult { expectedBlocks :: [ExpectedBlock]
                                      }
                     deriving (Read, Show, Eq)
 
+class (KnownNat (MM.ArchAddrWidth arch)) => TestConstraint arch b where
+instance TestConstraint R64.X86_64 b
+
 mkTest :: FilePath -> T.TestTree
 mkTest fp = T.testCase fp $ withELF elfFilename testRewrite
   where
     testRewrite :: E.Elf 64 -> IO ()
     testRewrite elf = do
       Just expected <- readMaybe <$> readFile (fp <.> "expected")
-      let cfg :: [(R.Architecture, R.SomeConfig R.TrivialConfigConstraint (Bool, [String]))]
+      let cfg :: [(R.Architecture, R.SomeConfig TestConstraint (Bool, [String]))]
           cfg = [(R.X86_64, R.SomeConfig NR.knownNat (R64.config (analysis expected) R.identity))]
       R.withElfConfig (E.Elf64 elf) cfg testBlockRecovery
 
     elfFilename = replaceExtension fp "exe"
 
-analysis :: ExpectedResult -> R.ISA R64.Instruction (R64.TargetAddress 64) 64 -> MM.Memory 64 -> R.BlockInfo R64.Instruction 64 arch -> (Bool,[String])
+analysis :: ExpectedResult -> R.ISA R64.X86_64 -> MM.Memory 64 -> R.BlockInfo R64.X86_64 -> (Bool,[String])
 analysis expected isa _mem blocks =
   foldr go (True,[]) (R.biBlocks blocks)
   where
-    go :: R.ConcreteBlock R64.Instruction 64 -> (Bool,[String]) -> (Bool,[String])
+    go :: R.ConcreteBlock R64.X86_64 -> (Bool,[String]) -> (Bool,[String])
     go b (bacc,sacc) =
       let actual = ExpectedBlock { addr = fromIntegral (R.absoluteAddress (R.basicBlockAddress b))
                                  , byteCount = R.concreteBlockSize isa b
@@ -100,12 +105,13 @@ analysis expected isa _mem blocks =
     expectedMap = M.fromList [ (addr eb, eb) | eb <- expectedBlocks expected ]
     ignoreSet = S.fromList (ignoreBlocks expected)
 
-testBlockRecovery :: (R.InstructionConstraints i a,
+testBlockRecovery :: (w ~ MM.ArchAddrWidth arch,
+                      R.InstructionConstraints arch,
                       E.ElfWidthConstraints w,
                       KnownNat w,
                       Typeable w,
-                      R.ArchBits arch w)
-                  => R.RenovateConfig i a w arch (Bool,[String])
+                      R.ArchBits arch)
+                  => R.RenovateConfig arch (Bool,[String])
                   -> E.Elf w
                   -> MM.Memory w
                   -> T.Assertion

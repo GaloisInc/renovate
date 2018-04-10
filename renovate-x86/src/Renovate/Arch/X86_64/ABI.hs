@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies #-}
 -- | An 'ABI' implementation for the x86_64 ABI
 --
 -- Currently, this is for Linux; Windows and OS X would require different ABIs
@@ -8,16 +9,18 @@ module Renovate.Arch.X86_64.ABI
 , instrOpcode
 ) where
 
-import Data.Bits
-import Data.Int ( Int64 )
-import Data.Word ( Word32 )
+import           Data.Bits
+import           Data.Int ( Int64 )
+import           Data.Word ( Word32 )
 
-import qualified Data.Macaw.Memory as MM
+import qualified Data.Macaw.X86 as X86
 
-import Renovate
-import Renovate.Arch.X86_64.Internal
+import qualified Renovate as R
+import           Renovate.Arch.X86_64.Internal
 
 import qualified Flexdis86 as D
+
+type instance R.RegisterType X86.X86_64 = Value
 
 -- | An ABI for x86_64 using flexdis.
 --
@@ -25,16 +28,16 @@ import qualified Flexdis86 as D
 -- 'ret' instruction returns from a function that obeys the ABI.  This
 -- is not true in general and needs to be made more robust for real
 -- programs.
-abi :: (MM.MemWidth w) => ABI Instruction (TargetAddress w) Value w
-abi = ABI { isReturn = x64IsReturn
-          , callerSaveRegisters = x64CallerSaveRegisters
-          , clearRegister = x64ClearRegister
-          , allocateMemory = x64AllocateMemory
-          , pointerSize = 8
-          , computeStackPointerOffset = x64ComputeStackPointerOffset
-          , saveReturnAddress = x64SaveReturnAddress
-          , checkShadowStack = x64CheckShadowStack
-          }
+abi :: R.ABI X86.X86_64
+abi = R.ABI { R.isReturn = x64IsReturn
+            , R.callerSaveRegisters = x64CallerSaveRegisters
+            , R.clearRegister = x64ClearRegister
+            , R.allocateMemory = x64AllocateMemory
+            , R.pointerSize = 8
+            , R.computeStackPointerOffset = x64ComputeStackPointerOffset
+            , R.saveReturnAddress = x64SaveReturnAddress
+            , R.checkShadowStack = x64CheckShadowStack
+            }
 
 x64IsReturn :: Instruction a -> Bool
 x64IsReturn ii = instrOpcode ii == "ret"
@@ -61,7 +64,7 @@ x64CallerSaveRegisters = [ D.QWordReg D.RCX
                          , D.QWordReg (D.Reg64 11)
                          ]
 
-x64ClearRegister :: Value -> Instruction (TargetAddress w)
+x64ClearRegister :: Value -> Instruction TargetAddress
 x64ClearRegister r =
   fmap (const NoAddress) (makeInstr "xor" [r, r])
 
@@ -72,7 +75,7 @@ x64ClearRegister r =
 -- Arguments are passed in %rdi, %rsi, %rdx, %r10, %r8, %r9 (mmap uses all of them)
 --
 -- The return value is in %rax
-x64AllocateMemory :: (MM.MemWidth w) => Word32 -> ConcreteAddress w -> [Instruction (TargetAddress w)]
+x64AllocateMemory :: Word32 -> R.ConcreteAddress X86.X86_64 -> [Instruction TargetAddress]
 x64AllocateMemory nBytes addr = [ noAddr $ makeInstr "push" [D.QWordReg D.RAX]
                                 , noAddr $ makeInstr "push" [D.QWordReg D.RDI]
                                 , noAddr $ makeInstr "push" [D.QWordReg D.RSI]
@@ -91,7 +94,7 @@ x64AllocateMemory nBytes addr = [ noAddr $ makeInstr "push" [D.QWordReg D.RAX]
                                 , noAddr $ makeInstr "syscall" []
                                 -- Save the result FIXME: Error checking
                                   -- Put the address to store the result at into a register
-                                , noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (fromIntegral (absoluteAddress addr))]
+                                , noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (fromIntegral (R.absoluteAddress addr))]
                                 , noAddr $ makeInstr "mov" [D.Mem64 destAddr, D.QWordReg D.RAX]
                                 -- Restore registers
                                 , noAddr $ makeInstr "pop" [D.QWordReg (D.Reg64 8)]
@@ -114,15 +117,15 @@ prot_Write = 0x2
 map_Anon :: Int64
 map_Anon = 0x20
 
-noAddr :: Instruction () -> Instruction (TargetAddress w)
+noAddr :: Instruction () -> Instruction TargetAddress
 noAddr i = annotateInstr i NoAddress
 
 -- | Using RBX here because mov %rax has a strange encoding that isn't
 -- supported in the assembler yet.
-x64ComputeStackPointerOffset :: (MM.MemWidth w) => ConcreteAddress w -> [Instruction (TargetAddress w)]
+x64ComputeStackPointerOffset :: R.ConcreteAddress X86.X86_64 -> [Instruction TargetAddress]
 x64ComputeStackPointerOffset memAddr =
   [ noAddr $ makeInstr "push" [D.QWordReg D.RBX]
-  , noAddr $ makeInstr "mov" [D.QWordReg D.RBX, D.QWordImm (fromIntegral (absoluteAddress memAddr))]
+  , noAddr $ makeInstr "mov" [D.QWordReg D.RBX, D.QWordImm (fromIntegral (R.absoluteAddress memAddr))]
   , noAddr $ makeInstr "sub" [D.Mem64 memRef, D.QWordReg D.RSP]
   , noAddr $ makeInstr "pop" [D.QWordReg D.RBX]
   ]
@@ -137,9 +140,9 @@ x64ComputeStackPointerOffset memAddr =
 -- don't actually need them as long as we put this code before any
 -- other code in the function body (esp. before the function reserves
 -- stack space by modifying rsp).
-x64SaveReturnAddress :: (MM.MemWidth w) => ConcreteAddress w -> [Instruction (TargetAddress w)]
+x64SaveReturnAddress :: R.ConcreteAddress X86.X86_64 -> [Instruction TargetAddress]
 x64SaveReturnAddress memAddr =
-  [ noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (fromIntegral (absoluteAddress memAddr))]
+  [ noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (fromIntegral (R.absoluteAddress memAddr))]
   , noAddr $ makeInstr "mov" [D.QWordReg D.RSI, D.QWordReg D.RSP]
   , noAddr $ makeInstr "add" [D.QWordReg D.RSI, D.Mem64 offsetMemRef]
   -- The offset to write the return address to is now in %rsi (%rdi is now free)
@@ -156,9 +159,9 @@ x64SaveReturnAddress memAddr =
 
 -- | Read the real return value into a register, read its offset
 -- shadow value into another register, then cmp + jmp
-x64CheckShadowStack :: (MM.MemWidth w) => ConcreteAddress w -> [Instruction (TargetAddress w)]
+x64CheckShadowStack :: R.ConcreteAddress X86.X86_64 -> [Instruction TargetAddress]
 x64CheckShadowStack memAddr =
-  [ noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (fromIntegral (absoluteAddress memAddr))]
+  [ noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (fromIntegral (R.absoluteAddress memAddr))]
   , noAddr $ makeInstr "mov" [D.QWordReg D.RSI, D.QWordReg D.RSP]
   , noAddr $ makeInstr "add" [D.QWordReg D.RSI, D.Mem64 offsetMemRef]
   -- The address of the shadow return value is now in %rsi, while %rdi is free

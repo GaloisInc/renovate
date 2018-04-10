@@ -48,7 +48,6 @@ module Renovate.BinaryFormat.ELF (
   ) where
 
 import           GHC.Generics ( Generic )
-import           GHC.TypeLits ( KnownNat )
 
 import           Control.Applicative
 import qualified Control.Lens as L
@@ -76,7 +75,7 @@ import           Text.Printf ( printf )
 import           Prelude
 
 import qualified Data.ElfEdit as E
-import qualified Data.Macaw.Memory as MM
+import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.Memory.ElfLoader as MM
 import qualified Data.Parameterized.Classes as PC
 import qualified Data.Parameterized.NatRepr as NR
@@ -104,7 +103,7 @@ pageAlignment = 0x1000
 
 -- | Statistics gathered and diagnostics generated during the
 -- rewriting phase.
-data RewriterInfo w =
+data RewriterInfo arch =
   RewriterInfo { _riSegmentVirtualAddress :: Maybe Word64
                , _riOverwrittenRegions :: [(String, Word64)]
                -- ^ The name of a data region and its length (which is
@@ -119,8 +118,8 @@ data RewriterInfo w =
                , _riBlockRecoveryDiagnostics :: [RD.Diagnostic]
                , _riRedirectionDiagnostics :: [RD.Diagnostic]
                , _riRecoveredBlocks :: Maybe SomeBlocks
-               , _riInstrumentationSites :: [RW.RewriteSite w]
-               , _riELF :: E.Elf w
+               , _riInstrumentationSites :: [RW.RewriteSite arch]
+               , _riELF :: E.Elf (MM.ArchAddrWidth arch)
                , _riSmallBlockCount :: Int
                -- ^ The number of blocks that were too small to rewrite
                , _riReusedByteCount :: Int
@@ -134,14 +133,14 @@ data RewriterInfo w =
                -- ^ The number of bytes allocated in the new text section
                , _riIncompleteBlocks :: Int
                -- ^ The number of blocks in incomplete functions
-               , _riBlockMapping :: [(RA.ConcreteAddress w, RA.ConcreteAddress w)]
+               , _riBlockMapping :: [(RA.ConcreteAddress arch, RA.ConcreteAddress arch)]
                -- ^ A mapping of original block addresses to rewritten block addresses
                }
   deriving (Generic)
 
-data SomeBlocks = forall i a w
-                . (MM.MemWidth w, ISA.InstructionConstraints i a)
-                => SomeBlocks (ISA.ISA i a w) [B.ConcreteBlock i w]
+data SomeBlocks = forall arch
+                . (B.InstructionConstraints arch)
+                => SomeBlocks (ISA.ISA arch) [B.ConcreteBlock arch]
 
 -- | Apply an instrumentation pass to the code in an ELF binary,
 -- rewriting the binary.
@@ -160,15 +159,13 @@ withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
               -- ^ The ELF file to analyze
               -> [(Arch.Architecture, SomeConfig c b)]
-              -> (forall i a w arch . (R.ArchBits arch w,
-                                       Typeable w,
-                                       KnownNat w,
-                                       E.ElfWidthConstraints w,
-                                       ISA.InstructionConstraints i a,
-                                       c i a w arch b)
-                                   => RenovateConfig i a w arch b
-                                   -> E.Elf w
-                                   -> MM.Memory w
+              -> (forall arch . (R.ArchBits arch,
+                                  E.ElfWidthConstraints (MM.ArchAddrWidth arch),
+                                  B.InstructionConstraints arch,
+                                  c arch b)
+                                   => RenovateConfig arch b
+                                   -> E.Elf (MM.ArchAddrWidth arch)
+                                   -> MM.Memory (MM.ArchAddrWidth arch)
                                    -> m t)
               -> m t
 withElfConfig e0 configs k =
@@ -203,21 +200,19 @@ withElfConfig e0 configs k =
 -- out in the new binary file.  If the rewriter succeeds, it returns a new ELF
 -- file and some metadata describing the changes made to the file.  Some of the
 -- metadata is provided by rewriter passes in the 'RW.RewriteM' environment.
-rewriteElf :: (ISA.InstructionConstraints i a,
-               E.ElfWidthConstraints w,
-               KnownNat w,
-               Typeable w,
-               R.ArchBits arch w)
-           => RenovateConfig i a w arch b
+rewriteElf :: (B.InstructionConstraints arch,
+               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
+               R.ArchBits arch)
+           => RenovateConfig arch b
            -- ^ The configuration for the rewriter
-           -> E.Elf w
+           -> E.Elf (MM.ArchAddrWidth arch)
            -- ^ The ELF file to rewrite
-           -> MM.Memory w
+           -> MM.Memory (MM.ArchAddrWidth arch)
            -- ^ A representation of the contents of memory of the ELF file
            -- (including statically-allocated data)
            -> RE.LayoutStrategy
            -- ^ The layout strategy for blocks in the new binary
-           -> IO (E.Elf w, b, RewriterInfo w)
+           -> IO (E.Elf (MM.ArchAddrWidth arch), b, RewriterInfo arch)
 rewriteElf cfg e mem strat = do
     (analysisResult, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
     return (_riELF ri, analysisResult, ri)
@@ -226,16 +221,14 @@ rewriteElf cfg e mem strat = do
       symmap <- withCurrentELF (buildSymbolMap mem)
       doRewrite cfg mem symmap strat
 
-analyzeElf :: (ISA.InstructionConstraints i a,
-               E.ElfWidthConstraints w,
-               KnownNat w,
-               Typeable w,
-               R.ArchBits arch w)
-           => RenovateConfig i a w arch b
+analyzeElf :: (B.InstructionConstraints arch,
+               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
+               R.ArchBits arch)
+           => RenovateConfig arch b
            -- ^ The configuration for the analysis
-           -> E.Elf w
+           -> E.Elf (MM.ArchAddrWidth arch)
            -- ^ The ELF file to analyze
-           -> MM.Memory w
+           -> MM.Memory (MM.ArchAddrWidth arch)
            -- ^ A representation of the contents of memory of the ELF file
            -- (including statically-allocated data)
            -> IO (b, [RM.Diagnostic])
@@ -266,7 +259,7 @@ withMemory e k =
   where
     loadOpts = MM.defaultLoadOptions { MM.loadRegionIndex = Just 0 }
 
-findTextSection :: E.Elf w -> ElfRewriter w (E.ElfSection (E.ElfWordType w))
+findTextSection :: (w ~ MM.ArchAddrWidth arch) => E.Elf w -> ElfRewriter arch (E.ElfSection (E.ElfWordType w))
 findTextSection e = do
   case E.findSectionByName (C8.pack ".text") e of
     [textSection] -> return textSection
@@ -278,7 +271,7 @@ findTextSection e = do
 -- The intention is that functions that simply *read* the current ELF file are
 -- wrapped in this combinator as a marker that they are read-only.  Functions
 -- that modify the current ELF file will be wrapped in 'modifyCurrentELF'.
-withCurrentELF :: (E.Elf w -> ElfRewriter w a) -> ElfRewriter w a
+withCurrentELF :: (w ~ MM.ArchAddrWidth arch) => (E.Elf w -> ElfRewriter arch a) -> ElfRewriter arch a
 withCurrentELF k = do
   elf <- S.gets _riELF
   k elf
@@ -289,7 +282,7 @@ withCurrentELF k = do
 -- a function mutates the ELF file.
 --
 -- This should be the only function that writes to the current ELF file
-modifyCurrentELF :: (E.Elf w -> ElfRewriter w (a, E.Elf w)) -> ElfRewriter w a
+modifyCurrentELF :: (w ~ MM.ArchAddrWidth arch) => (E.Elf w -> ElfRewriter arch (a, E.Elf w)) -> ElfRewriter arch a
 modifyCurrentELF k = do
   elf <- S.gets _riELF
   (res, elf') <- k elf
@@ -298,16 +291,14 @@ modifyCurrentELF k = do
 
 
 -- | The rewriter driver
-doRewrite :: (ISA.InstructionConstraints i a,
-              Typeable w,
-              E.ElfWidthConstraints w,
-              KnownNat w,
-              R.ArchBits arch w)
-          => RenovateConfig i a w arch b
-          -> MM.Memory w
-          -> RM.SymbolMap w
+doRewrite :: (B.InstructionConstraints arch,
+              E.ElfWidthConstraints (MM.ArchAddrWidth arch),
+              R.ArchBits arch)
+          => RenovateConfig arch b
+          -> MM.Memory (MM.ArchAddrWidth arch)
+          -> RM.SymbolMap arch
           -> RE.LayoutStrategy
-          -> ElfRewriter w b
+          -> ElfRewriter arch b
 doRewrite cfg mem symmap strat = do
   -- We pull some information from the unmodified initial binary: the text
   -- section, the entry point(s), and original symbol table (if any).
@@ -386,15 +377,13 @@ doRewrite cfg mem symmap strat = do
   return analysisResult
 
 -- | The analysis driver
-doAnalysis :: (ISA.InstructionConstraints i a,
-               Typeable w,
-               E.ElfWidthConstraints w,
-               KnownNat w,
-               R.ArchBits arch w)
-           => RenovateConfig i a w arch b
-           -> MM.Memory w
-           -> RM.SymbolMap w
-           -> ElfRewriter w b
+doAnalysis :: (B.InstructionConstraints arch,
+               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
+               R.ArchBits arch)
+           => RenovateConfig arch b
+           -> MM.Memory (MM.ArchAddrWidth arch)
+           -> RM.SymbolMap arch
+           -> ElfRewriter arch b
 doAnalysis cfg mem symmap = do
 --  (entryPoint, _otherEntries) <- withCurrentELF (entryPoints mem)
 
@@ -408,11 +397,10 @@ doAnalysis cfg mem symmap = do
   analysisResult <- analyzeTextSection cfg mem symmap
   return analysisResult
 
-buildSymbolMap :: Integral (E.ElfWordType w)
-               => MM.MemWidth w
+buildSymbolMap :: (w ~ MM.ArchAddrWidth arch, Integral (E.ElfWordType w), MM.MemWidth w)
                => MM.Memory w
                -> E.Elf w
-               -> ElfRewriter w (RM.SymbolMap w)
+               -> ElfRewriter arch (RM.SymbolMap arch)
 buildSymbolMap _mem elf = do
   case filter isSymbolTable (F.toList (E._elfFileData elf)) of
     [E.ElfDataSymtab table] -> do
@@ -430,15 +418,15 @@ isSymbolTable :: E.ElfDataRegion w -> Bool
 isSymbolTable (E.ElfDataSymtab{}) = True
 isSymbolTable _                   = False
 
-buildNewSymbolTable :: (E.ElfWidthConstraints w, MM.MemWidth w)
+buildNewSymbolTable :: (w ~ MM.ArchAddrWidth arch, E.ElfWidthConstraints w, MM.MemWidth w)
                     => Word16
                     -> E.ElfSectionIndex
-                    -> RA.ConcreteAddress w
-                    -> RM.NewSymbolsMap w
+                    -> RA.ConcreteAddress arch
+                    -> RM.NewSymbolsMap arch
                     -> E.ElfSymbolTable (E.ElfWordType w)
                     -- ^ The original symbol table
                     -> E.Elf w
-                    -> ElfRewriter w (E.ElfSymbolTable (E.ElfWordType w))
+                    -> ElfRewriter arch (E.ElfSymbolTable (E.ElfWordType w))
 buildNewSymbolTable textSecIdx extraTextSecIdx layoutAddr newSyms baseTable elf
   | trace (printf "New symbol table index is %d" (nextSectionIndex elf)) False = undefined
   | otherwise =
@@ -454,17 +442,17 @@ buildNewSymbolTable textSecIdx extraTextSecIdx layoutAddr newSyms baseTable elf
                                 ]
 
 -- | Get the current symbol table
-getBaseSymbolTable :: E.Elf w
-                   -> ElfRewriter w (Maybe (E.ElfSymbolTable (E.ElfWordType w)))
+getBaseSymbolTable :: (w ~ MM.ArchAddrWidth arch)
+                   => E.Elf w
+                   -> ElfRewriter arch (Maybe (E.ElfSymbolTable (E.ElfWordType w)))
 getBaseSymbolTable = return . listToMaybe . E.elfSymtab
 
-newFromEntry :: MM.MemWidth w
-             => E.ElfWidthConstraints w
+newFromEntry :: (w ~ MM.ArchAddrWidth arch, MM.MemWidth w, E.ElfWidthConstraints w)
              => Word16
              -> E.ElfSectionIndex
-             -> RA.ConcreteAddress w
+             -> RA.ConcreteAddress arch
              -> E.ElfSymbolTableEntry (E.ElfWordType w)
-             -> RA.ConcreteAddress w
+             -> RA.ConcreteAddress arch
              -> B.ByteString
              -> E.ElfSymbolTableEntry (E.ElfWordType w)
 newFromEntry textSecIdx extraTextSecIdx layoutAddr e addr nm = e
@@ -480,11 +468,11 @@ newFromEntry textSecIdx extraTextSecIdx layoutAddr e addr nm = e
 -- | Create a new data segment containing a single data section, containing the given bytestring
 --
 -- It will be placed at the given start address.
-newDataSegment :: (Num (E.ElfWordType w), Show (E.ElfWordType w), Integral (E.ElfWordType w), Bits (E.ElfWordType w))
+newDataSegment :: (w ~ MM.ArchAddrWidth arch, Num (E.ElfWordType w), Show (E.ElfWordType w), Integral (E.ElfWordType w), Bits (E.ElfWordType w))
                => E.ElfWordType w
                -> B.ByteString
                -> E.Elf w
-               -> ElfRewriter w (E.ElfSegment w)
+               -> ElfRewriter arch (E.ElfSegment w)
 newDataSegment startAddr bytes e = do
   let sec = E.ElfSection { E.elfSectionName = C8.pack "brittle_data"
                        , E.elfSectionType = E.SHT_PROGBITS
@@ -513,10 +501,10 @@ newDataSegment startAddr bytes e = do
 -- look at them during libc init. Some padding is needed to get the alignment to
 -- work out. The address needs to be the start address for the elf. This can
 -- usually be calculated with `findBaseAddr`.
-newProgramHeaderSegment :: (Num (E.ElfWordType w), Show (E.ElfWordType w), Integral (E.ElfWordType w), Bits (E.ElfWordType w))
+newProgramHeaderSegment :: (w ~ MM.ArchAddrWidth arch, Num (E.ElfWordType w), Show (E.ElfWordType w), Integral (E.ElfWordType w), Bits (E.ElfWordType w))
                         => E.ElfWordType w
                         -> E.Elf w
-                        -> ElfRewriter w (E.ElfSegment w)
+                        -> ElfRewriter arch (E.ElfSegment w)
 newProgramHeaderSegment baseAddr e = do
   let layout        = E.elfLayout e
       sz            = E.elfLayoutSize layout
@@ -538,10 +526,10 @@ newProgramHeaderSegment baseAddr e = do
 --
 -- Note: This assumes there is at least one PT_LOAD segment, which should
 -- normally be the case.
-findBaseAddr :: forall w
-              . (Num (E.ElfWordType w), Show (E.ElfWordType w), Integral (E.ElfWordType w), Bits (E.ElfWordType w))
+findBaseAddr :: forall w arch
+              . (w ~ MM.ArchAddrWidth arch, Num (E.ElfWordType w), Show (E.ElfWordType w), Integral (E.ElfWordType w), Bits (E.ElfWordType w))
              => E.Elf w
-             -> ElfRewriter w (E.ElfWordType w)
+             -> ElfRewriter arch (E.ElfWordType w)
 findBaseAddr e = do
   let segs :: [ E.ElfDataRegion w ]
       segs = e L.^. E.elfFileData . L.to F.toList
@@ -559,7 +547,7 @@ findBaseAddr e = do
 -- We replace them with padding so that none of the original contents
 -- of the binary need to move.  We will re-create these sections at
 -- the end of the binary when we have finished rewriting it.
-padDynamicDataRegions :: Integral (E.ElfWordType w) => E.Elf w -> ElfRewriter w ((), E.Elf w)
+padDynamicDataRegions :: (w ~ MM.ArchAddrWidth arch, Integral (E.ElfWordType w)) => E.Elf w -> ElfRewriter arch ((), E.Elf w)
 padDynamicDataRegions e = do
   let layout0 = E.elfLayout e
   ((),) <$> E.traverseElfDataRegions (replaceSectionWithPadding layout0 isDynamicDataRegion) e
@@ -573,10 +561,10 @@ padDynamicDataRegions e = do
         E.ElfDataStrtab {} -> True
         _ -> False
 
-appendDataRegion :: (Ord (E.ElfWordType w), Integral (E.ElfWordType w))
+appendDataRegion :: (w ~ MM.ArchAddrWidth arch, Ord (E.ElfWordType w), Integral (E.ElfWordType w))
                  => E.ElfDataRegion w
                  -> E.Elf w
-                 -> ElfRewriter w ((), E.Elf w)
+                 -> ElfRewriter arch ((), E.Elf w)
 appendDataRegion r e = do
   let layout = E.elfLayout e
       sz = E.elfLayoutSize layout
@@ -590,11 +578,10 @@ appendDataRegion r e = do
 
 -- | Append a segment to the given ELF file, adding the necessary
 -- padding before with an ElfDataRaw data region.
-appendSegment :: Ord (E.ElfWordType w)
-              => Integral (E.ElfWordType w)
+appendSegment :: (w ~ MM.ArchAddrWidth arch, Ord (E.ElfWordType w), Integral (E.ElfWordType w))
               => E.ElfSegment w
               -> E.Elf w
-              -> ElfRewriter w ((), E.Elf w)
+              -> ElfRewriter arch ((), E.Elf w)
 appendSegment seg e = do
   let layout = E.elfLayout e
       sz = E.elfLayoutSize layout
@@ -611,9 +598,9 @@ appendSegment seg e = do
 -- | Append the necessary program header data onto the end of the ELF file.
 --
 -- This includes: section headers, segment headers, and the section name table.
-appendHeaders :: (Show (E.ElfWordType w), Bits (E.ElfWordType w), Integral (E.ElfWordType w))
+appendHeaders :: (w ~ MM.ArchAddrWidth arch, Show (E.ElfWordType w), Bits (E.ElfWordType w), Integral (E.ElfWordType w))
               => E.Elf w
-              -> ElfRewriter w ((), E.Elf w)
+              -> ElfRewriter arch ((), E.Elf w)
 appendHeaders elf = do
   let shstrtabidx = nextSectionIndex elf
   let strtabidx = shstrtabidx + 1
@@ -637,11 +624,11 @@ nextSectionIndex e = firstAvailable 0 indexes
 nextSegmentIndex :: E.Elf w -> Word16
 nextSegmentIndex = fromIntegral . length . E.elfSegments
 
-replaceSectionWithPadding :: Integral (E.ElfWordType w)
+replaceSectionWithPadding :: (w ~ MM.ArchAddrWidth arch, Integral (E.ElfWordType w))
                           => E.ElfLayout w
                           -> (E.ElfDataRegion w -> Bool)
                           -> E.ElfDataRegion w
-                          -> ElfRewriter w (E.ElfDataRegion w)
+                          -> ElfRewriter arch (E.ElfDataRegion w)
 replaceSectionWithPadding layout shouldReplace r
   | not (shouldReplace r) = return r
   | otherwise = do
@@ -679,10 +666,10 @@ elfDataRegionName r =
 -- virtual address for the segment will be divisible by the executable
 -- alignment (0x20000), but they will be congruent (i.e., have the
 -- same remainder).
-segmentLayoutAddress :: (Num (E.ElfWordType w), Integral (E.ElfWordType w))
+segmentLayoutAddress :: (w ~ MM.ArchAddrWidth arch, Num (E.ElfWordType w), Integral (E.ElfWordType w))
                      => Word64
                      -> E.Elf w
-                     -> ElfRewriter w (E.ElfWordType w)
+                     -> ElfRewriter arch (E.ElfWordType w)
 segmentLayoutAddress segBaseAddr e = do
   let layout = E.elfLayout e
   let totalSize = F.sum $ fmap (E.elfRegionFileSize layout) (L.view E.elfFileData e)
@@ -701,7 +688,7 @@ fixAlignment v a0
     a = fromIntegral a0
     (c,m) = v `divMod` a
 
-overwriteTextSection :: (Integral (E.ElfWordType w)) => B.ByteString -> E.Elf w -> ElfRewriter w ((), E.Elf w)
+overwriteTextSection :: (w ~ MM.ArchAddrWidth arch, Integral (E.ElfWordType w)) => B.ByteString -> E.Elf w -> ElfRewriter arch ((), E.Elf w)
 overwriteTextSection newBytes e = do
   ((), ) <$> E.elfSections doOverwrite e
   where
@@ -714,12 +701,12 @@ overwriteTextSection newBytes e = do
                    , E.elfSectionSize = fromIntegral (B.length newBytes)
                    }
 
-newInstrumentationSegment :: (Num (E.ElfWordType w), Show (E.ElfWordType w), Integral (E.ElfWordType w), Bits (E.ElfWordType w))
+newInstrumentationSegment :: (w ~ MM.ArchAddrWidth arch, Num (E.ElfWordType w), Show (E.ElfWordType w), Integral (E.ElfWordType w), Bits (E.ElfWordType w))
                           => Bits (E.ElfWordType w)
                           => E.ElfWordType w
                           -> B.ByteString
                           -> E.Elf w
-                          -> ElfRewriter w (E.ElfSectionIndex, E.ElfSegment w)
+                          -> ElfRewriter arch (E.ElfSectionIndex, E.ElfSegment w)
 newInstrumentationSegment startAddr bytes e = do
   let txtIdx = nextSectionIndex e
 --  traceM ("New text section index: " ++ show txtIdx)
@@ -753,8 +740,8 @@ newInstrumentationSegment startAddr bytes e = do
 -- PowerPC has special treatment because the ELF entry point value actually
 -- points to the address of the Table of Contents (TOC) entry for the entry
 -- point.
-findEntryPoints :: (MM.MemWidth w, Integral (E.ElfWordType w))
-                => RenovateConfig i a w arch b
+findEntryPoints :: (w ~ MM.ArchAddrWidth arch, MM.MemWidth w, Integral (E.ElfWordType w))
+                => RenovateConfig arch b
                 -> E.Elf w
                 -> MM.Memory w
                 -> NEL.NonEmpty (MM.MemSegmentOff w)
@@ -794,30 +781,29 @@ findEntryPoints cfg elf mem =
 -- As a side effect of running the instrumentor, we get information
 -- about how much extra space needs to be reserved in a new data
 -- section.  The new data section is rooted at @newGlobalBase@.
-instrumentTextSection :: forall i a w arch b
-                       . (ISA.InstructionConstraints i a,
-                          Typeable w,
-                          KnownNat w,
+instrumentTextSection :: forall w arch b
+                       . (w ~ MM.ArchAddrWidth arch,
+                          B.InstructionConstraints arch,
                           Integral (E.ElfWordType w),
-                          R.ArchBits arch w)
-                      => RenovateConfig i a w arch b
+                          R.ArchBits arch)
+                      => RenovateConfig arch b
                       -> MM.Memory w
                       -- ^ The memory space
-                      -> RA.ConcreteAddress w
+                      -> RA.ConcreteAddress arch
                       -- ^ The address of the start of the text section
-                      -> RA.ConcreteAddress w
+                      -> RA.ConcreteAddress arch
                       -- ^ The address of the end of the text section
                       -> B.ByteString
                       -- ^ The bytes of the text section
                       -> RE.LayoutStrategy
                       -- ^ The strategy to use for laying out instrumented blocks
-                      -> RA.ConcreteAddress w
+                      -> RA.ConcreteAddress arch
                       -- ^ The address to lay out the instrumented blocks
-                      -> RA.ConcreteAddress w
+                      -> RA.ConcreteAddress arch
                       -- ^ The address to lay out the new data section
-                      -> RM.SymbolMap w
+                      -> RM.SymbolMap arch
                       -- ^ meta data?
-                      -> ElfRewriter w (b, B.ByteString, B.ByteString, Maybe B.ByteString, RM.NewSymbolsMap w)
+                      -> ElfRewriter arch (b, B.ByteString, B.ByteString, Maybe B.ByteString, RM.NewSymbolsMap arch)
 instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes strat layoutAddr newGlobalBase symmap = do
   -- We use an irrefutable match on the entry point -- we are asserting that the
   -- entry point is mapped in the 'MM.Memory' object passed in.
@@ -874,17 +860,16 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
                   let newDataBytes = mkNewDataSection newGlobalBase info
                   return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
 
-analyzeTextSection :: forall i a w arch b
-                    . (ISA.InstructionConstraints i a,
-                       Typeable w,
-                       KnownNat w,
+analyzeTextSection :: forall w arch b
+                    . (w ~ MM.ArchAddrWidth arch,
+                       B.InstructionConstraints arch,
                        Integral (E.ElfWordType w),
-                       R.ArchBits arch w)
-                   => RenovateConfig i a w arch b
+                       R.ArchBits arch)
+                   => RenovateConfig arch b
                    -> MM.Memory w
                    -- ^ The memory space
-                   -> RM.SymbolMap w
-                   -> ElfRewriter w b
+                   -> RM.SymbolMap arch
+                   -> ElfRewriter arch b
 analyzeTextSection cfg mem symmap = do
   elfEntryPoints <- withCurrentELF $ \e -> return (findEntryPoints cfg e mem)
 --  traceM ("analyzeTextSection entry point: " ++ show entryPoint)
@@ -905,7 +890,7 @@ analyzeTextSection cfg mem symmap = do
   riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
   return $! (rcAnalysis cfg) isa mem blockInfo
 
-mkNewDataSection :: (MM.MemWidth w) => RA.ConcreteAddress w -> RW.RewriteInfo w -> Maybe B.ByteString
+mkNewDataSection :: (MM.MemWidth (MM.ArchAddrWidth arch)) => RA.ConcreteAddress arch -> RW.RewriteInfo arch -> Maybe B.ByteString
 mkNewDataSection baseAddr info = do
   guard (bytes > 0)
   return (B.pack (replicate bytes 0))
@@ -925,15 +910,15 @@ data ElfRewriteException = RewrittenTextSectionSizeMismatch Int Int
 deriving instance Show ElfRewriteException
 instance C.Exception ElfRewriteException
 
-newtype ElfRewriter w a = ElfRewriter { unElfRewrite :: S.StateT (RewriterInfo w) IO a }
+newtype ElfRewriter arch a = ElfRewriter { unElfRewrite :: S.StateT (RewriterInfo arch) IO a }
                           deriving (Monad,
                                     Functor,
                                     Applicative,
                                     IO.MonadIO,
                                     P.MonadThrow,
-                                    S.MonadState (RewriterInfo w))
+                                    S.MonadState (RewriterInfo arch))
 
-emptyRewriterInfo :: E.Elf w -> RewriterInfo w
+emptyRewriterInfo :: E.Elf (MM.ArchAddrWidth arch) -> RewriterInfo arch
 emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
                                    , _riOverwrittenRegions       = []
                                    , _riAppendedSegments         = []
@@ -953,53 +938,53 @@ emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
                                    , _riNewTextSize              = 0
                                    , _riBlockMapping             = []
                                    }
-riOriginalTextSize :: L.Simple L.Lens (RewriterInfo w) Int
+riOriginalTextSize :: L.Simple L.Lens (RewriterInfo arch) Int
 riOriginalTextSize = GL.field @"_riOriginalTextSize"
 
-riNewTextSize :: L.Simple L.Lens (RewriterInfo w) Int
+riNewTextSize :: L.Simple L.Lens (RewriterInfo arch) Int
 riNewTextSize = GL.field @"_riNewTextSize"
 
-riIncompleteBlocks :: L.Simple L.Lens (RewriterInfo w) Int
+riIncompleteBlocks :: L.Simple L.Lens (RewriterInfo arch) Int
 riIncompleteBlocks = GL.field @"_riIncompleteBlocks"
 
-riSegmentVirtualAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
+riSegmentVirtualAddress :: L.Simple L.Lens (RewriterInfo arch) (Maybe Word64)
 riSegmentVirtualAddress = GL.field @"_riSegmentVirtualAddress"
 
-riOverwrittenRegions :: L.Simple L.Lens (RewriterInfo w) [(String, Word64)]
+riOverwrittenRegions :: L.Simple L.Lens (RewriterInfo arch) [(String, Word64)]
 riOverwrittenRegions = GL.field @"_riOverwrittenRegions"
 
-riAppendedSegments :: L.Simple L.Lens (RewriterInfo w) [(E.ElfSegmentType, Word16, Word64, Word64)]
+riAppendedSegments :: L.Simple L.Lens (RewriterInfo arch) [(E.ElfSegmentType, Word16, Word64, Word64)]
 riAppendedSegments = GL.field @"_riAppendedSegments"
 
-riEntryPointAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
+riEntryPointAddress :: L.Simple L.Lens (RewriterInfo arch) (Maybe Word64)
 riEntryPointAddress = GL.field @"_riEntryPointAddress"
 
-riSectionBaseAddress :: L.Simple L.Lens (RewriterInfo w) (Maybe Word64)
+riSectionBaseAddress :: L.Simple L.Lens (RewriterInfo arch) (Maybe Word64)
 riSectionBaseAddress = GL.field @"_riSectionBaseAddress"
 
-riInitialBytes :: L.Simple L.Lens (RewriterInfo w) (Maybe B.ByteString)
+riInitialBytes :: L.Simple L.Lens (RewriterInfo arch) (Maybe B.ByteString)
 riInitialBytes = GL.field @"_riInitialBytes"
 
-riBlockRecoveryDiagnostics :: L.Simple L.Lens (RewriterInfo w) [RD.Diagnostic]
+riBlockRecoveryDiagnostics :: L.Simple L.Lens (RewriterInfo arch) [RD.Diagnostic]
 riBlockRecoveryDiagnostics = GL.field @"_riBlockRecoveryDiagnostics"
 
-riRedirectionDiagnostics :: L.Simple L.Lens (RewriterInfo w) [RD.Diagnostic]
+riRedirectionDiagnostics :: L.Simple L.Lens (RewriterInfo arch) [RD.Diagnostic]
 riRedirectionDiagnostics = GL.field @"_riRedirectionDiagnostics"
 
-riRecoveredBlocks :: L.Simple L.Lens (RewriterInfo w) (Maybe SomeBlocks)
+riRecoveredBlocks :: L.Simple L.Lens (RewriterInfo arch) (Maybe SomeBlocks)
 riRecoveredBlocks = GL.field @"_riRecoveredBlocks"
 
-riInstrumentationSites :: L.Simple L.Lens (RewriterInfo w) [RW.RewriteSite w]
+riInstrumentationSites :: L.Simple L.Lens (RewriterInfo arch) [RW.RewriteSite arch]
 riInstrumentationSites = GL.field @"_riInstrumentationSites"
 
-riSmallBlockCount :: L.Simple L.Lens (RewriterInfo w) Int
+riSmallBlockCount :: L.Simple L.Lens (RewriterInfo arch) Int
 riSmallBlockCount = GL.field @"_riSmallBlockCount"
 
-riReusedByteCount :: L.Simple L.Lens (RewriterInfo w) Int
+riReusedByteCount :: L.Simple L.Lens (RewriterInfo arch) Int
 riReusedByteCount = GL.field @"_riReusedByteCount"
 
-riUnrelocatableTerm :: L.Simple L.Lens (RewriterInfo w) Int
+riUnrelocatableTerm :: L.Simple L.Lens (RewriterInfo arch) Int
 riUnrelocatableTerm = GL.field @"_riUnrelocatableTerm"
 
-riBlockMapping :: L.Simple L.Lens (RewriterInfo w) [(RA.ConcreteAddress w, RA.ConcreteAddress w)]
+riBlockMapping :: L.Simple L.Lens (RewriterInfo arch) [(RA.ConcreteAddress arch, RA.ConcreteAddress arch)]
 riBlockMapping = GL.field @"_riBlockMapping"

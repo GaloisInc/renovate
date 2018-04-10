@@ -23,7 +23,6 @@ library
                        Renovate.BasicBlock.Types
                        Renovate.Config
                        Renovate.Diagnostic
-                       Renovate.Recovery.Monad
                        Renovate.Redirect.Concretize
                        Renovate.Redirect.Internal
                        Renovate.Redirect.LayoutBlocks

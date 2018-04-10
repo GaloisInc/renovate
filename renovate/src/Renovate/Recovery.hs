@@ -51,33 +51,32 @@ import           Renovate.Diagnostic
 import           Renovate.ISA
 import           Renovate.Redirect.Monad ( SymbolMap )
 
-type ArchBits arch w = (w ~ MC.RegAddrWidth (MC.ArchReg arch),
-                        MC.ArchConstraints arch,
+type ArchBits arch = (  MC.ArchConstraints arch,
                         MC.RegisterInfo (MC.ArchReg arch),
                         MC.HasRepr (MC.ArchReg arch) MC.TypeRepr,
-                        MC.MemWidth w,
+                        MC.MemWidth (MC.ArchAddrWidth arch),
                         ArchInfo arch,
                         Show (MC.ArchReg arch (MC.BVType (MC.ArchAddrWidth arch))))
 
 -- | Information on recovered basic blocks
-data BlockInfo i w arch = BlockInfo
-  { biBlocks           :: [ConcreteBlock i w]
-  , biFunctionEntries  :: [ConcreteAddress w]
-  , biFunctionBlocks   :: M.Map (ConcreteAddress w) [ConcreteBlock i w]
-  , biDiscoveryFunInfo :: M.Map (ConcreteAddress w) (PU.Some (MC.DiscoveryFunInfo arch))
-  , biIncomplete       :: S.Set (ConcreteAddress w)
+data BlockInfo arch = BlockInfo
+  { biBlocks           :: [ConcreteBlock arch]
+  , biFunctionEntries  :: [ConcreteAddress arch]
+  , biFunctionBlocks   :: M.Map (ConcreteAddress arch) [ConcreteBlock arch]
+  , biDiscoveryFunInfo :: M.Map (ConcreteAddress arch) (PU.Some (MC.DiscoveryFunInfo arch))
+  , biIncomplete       :: S.Set (ConcreteAddress arch)
   -- ^ The set of blocks that reside in incomplete functions (i.e., functions
   -- for which we cannot find all of the code)
-  , biCFG              :: M.Map (ConcreteAddress w) (C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch))
+  , biCFG              :: M.Map (ConcreteAddress arch) (C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch))
   -- ^ The Crucible CFG for each function (if possible to construct), see
   -- Note [CrucibleCFG]
   }
 
-isIncompleteBlockAddress :: BlockInfo i w arch -> ConcreteAddress w -> Bool
+isIncompleteBlockAddress :: BlockInfo arch -> ConcreteAddress arch -> Bool
 isIncompleteBlockAddress bi a = S.member a (biIncomplete bi)
 
-analyzeDiscoveredFunctions :: (ArchInfo arch, MC.MemWidth (MC.ArchAddrWidth arch))
-                           => Recovery arch i a (MC.RegAddrWidth (MC.ArchReg arch))
+analyzeDiscoveredFunctions :: (ArchBits arch)
+                           => Recovery arch
                            -> MC.Memory (MC.ArchAddrWidth arch)
                            -> MC.DiscoveryState arch
                            -> Int
@@ -106,7 +105,7 @@ class ArchInfo arch where
   archFunctions :: proxy arch -> Maybe (MS.MacawSymbolicArchFunctions arch)
 
 toCFG :: forall arch ids s
-       . (ArchInfo arch, MC.MemWidth (MC.ArchAddrWidth arch))
+       . (ArchBits arch)
       => C.HandleAllocator s
       -> MC.DiscoveryFunInfo arch ids
       -> Maybe (ST s (C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch)))
@@ -120,8 +119,8 @@ toCFG halloc dfi = do
   let posFn addr = C.BinaryPos nmTxt (maybe 0 fromIntegral (MC.msegAddr addr))
   return (MS.mkFunCFG archFns halloc memBaseVarMap nm posFn dfi)
 
-cfgFromAddrsWith :: (ArchInfo arch, MC.MemWidth (MC.ArchAddrWidth arch))
-                 => Recovery arch i a (MC.RegAddrWidth (MC.ArchReg arch))
+cfgFromAddrsWith :: (ArchBits arch)
+                 => Recovery arch
                  -> MC.Memory (MC.ArchAddrWidth arch)
                  -> MC.AddrSymMap (MC.ArchAddrWidth arch)
                  -> [MC.ArchSegmentOff arch]
@@ -135,11 +134,11 @@ cfgFromAddrsWith recovery mem symbols initAddrs memWords = do
   where
     s0 = MC.emptyDiscoveryState mem symbols (recoveryArchInfo recovery)
 
-blockInfo :: (ArchInfo arch, MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch)))
-          => Recovery arch i a (MC.RegAddrWidth (MC.ArchReg arch))
+blockInfo :: (ArchBits arch)
+          => Recovery arch
           -> MC.Memory (MC.RegAddrWidth (MC.ArchReg arch))
           -> MC.DiscoveryState arch
-          -> IO (BlockInfo i (MC.RegAddrWidth (MC.ArchReg arch)) arch)
+          -> IO (BlockInfo arch)
 blockInfo recovery mem di = do
   let blockBuilder = buildBlock (recoveryISA recovery) (recoveryDis recovery) mem (S.fromList (mapMaybe (concreteFromSegmentOff mem) (F.toList absoluteBlockStarts)))
   blocks <- catMaybes <$> mapM blockBuilder (F.toList absoluteBlockStarts)
@@ -177,27 +176,27 @@ blockInfo recovery mem di = do
                        , Just concAddr <- return (concreteFromSegmentOff mem segOff)
                        ]
 
-data Recovery arch i a w =
-  Recovery { recoveryISA :: ISA i a w
-           , recoveryDis :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, i ())
+data Recovery arch =
+  Recovery { recoveryISA :: ISA arch
+           , recoveryDis :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, Instruction arch ())
            , recoveryArchInfo :: MC.ArchitectureInfo arch
            , recoveryHandleAllocator :: C.HandleAllocator RealWorld
            , recoveryBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
-           , recoveryFuncCallback :: Maybe (Int, MC.ArchSegmentOff arch -> BlockInfo i w arch -> IO ())
+           , recoveryFuncCallback :: Maybe (Int, MC.ArchSegmentOff arch -> BlockInfo arch -> IO ())
            }
 
-recoverBlocks :: (ArchBits arch w, ArchInfo arch)
-              => Recovery arch i a w
-              -> MC.Memory w
-              -> SymbolMap w
-              -> NEL.NonEmpty (MC.MemSegmentOff w)
-              -> IO (BlockInfo i w arch)
+recoverBlocks :: (ArchBits arch)
+              => Recovery arch
+              -> MC.Memory (MC.ArchAddrWidth arch)
+              -> SymbolMap arch
+              -> NEL.NonEmpty (MC.MemSegmentOff (MC.ArchAddrWidth arch))
+              -> IO (BlockInfo arch)
 recoverBlocks recovery mem symmap entries = do
   sam <- toMacawSymbolMap mem symmap
   di <- cfgFromAddrsWith recovery mem sam (F.toList entries) []
   blockInfo recovery mem di
 
-toMacawSymbolMap :: (MC.MemWidth w) => MC.Memory w -> SymbolMap w -> IO (MC.AddrSymMap w)
+toMacawSymbolMap :: (MC.MemWidth (MC.ArchAddrWidth arch)) => MC.Memory (MC.ArchAddrWidth arch) -> SymbolMap arch -> IO (MC.AddrSymMap (MC.ArchAddrWidth arch))
 toMacawSymbolMap mem sm = return (M.mapKeys toSegOff sm)
   where
     toSegOff concAddr =
@@ -212,18 +211,18 @@ toMacawSymbolMap mem sm = return (M.mapKeys toSegOff sm)
 -- The block starts are obtained from Macaw.  We disassemble from the
 -- start address until we hit a terminator instruction or the start of
 -- another basic block.
-buildBlock :: (L.HasCallStack, MC.MemWidth w, C.MonadThrow m)
-           => ISA i a w
-           -> (B.ByteString -> Maybe (Int, i ()))
+buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow m)
+           => ISA arch
+           -> (B.ByteString -> Maybe (Int, Instruction arch ()))
            -- ^ The function to pull a single instruction off of the
            -- byte stream; it returns the number of bytes consumed and
            -- the new instruction.
-           -> MC.Memory w
-           -> S.Set (ConcreteAddress w)
+           -> MC.Memory (MC.ArchAddrWidth arch)
+           -> S.Set (ConcreteAddress arch)
            -- ^ The set of all basic block entry points
-           -> MC.MemSegmentOff w
+           -> MC.MemSegmentOff (MC.ArchAddrWidth arch)
            -- ^ The address to start disassembling this block from
-           -> m (Maybe (ConcreteBlock i w))
+           -> m (Maybe (ConcreteBlock arch))
 buildBlock isa dis1 mem absStarts segAddr
   | Just concAddr <- concreteFromSegmentOff mem segAddr = do
       case MC.addrContentsAfter mem (MC.relativeSegmentAddr segAddr) of
@@ -268,17 +267,17 @@ buildBlock isa dis1 mem absStarts segAddr
 -- error or classify failure).  We can't rewrite these blocks, as we don't know
 -- if we have a safe view of them.  Rewriting them could introduce runtime
 -- failures.
-indexIncompleteBlocks :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch)))
-                      => MC.Memory (MC.RegAddrWidth (MC.ArchReg arch))
-                      -> M.Map (ConcreteAddress (MC.RegAddrWidth (MC.ArchReg arch))) (PU.Some (MC.DiscoveryFunInfo arch))
-                      -> S.Set (ConcreteAddress (MC.RegAddrWidth (MC.ArchReg arch)))
+indexIncompleteBlocks :: (MC.MemWidth (MC.ArchAddrWidth arch))
+                      => MC.Memory (MC.ArchAddrWidth arch)
+                      -> M.Map (ConcreteAddress arch) (PU.Some (MC.DiscoveryFunInfo arch))
+                      -> S.Set (ConcreteAddress arch)
 indexIncompleteBlocks mem = foldr (addFunInfoIfIncomplete mem) S.empty
 
-addFunInfoIfIncomplete :: MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch))
-                       => MC.Memory (MC.RegAddrWidth (MC.ArchReg arch))
+addFunInfoIfIncomplete :: (MC.MemWidth (MC.ArchAddrWidth arch))
+                       => MC.Memory (MC.ArchAddrWidth arch)
                        -> PU.Some (MC.DiscoveryFunInfo arch)
-                       -> S.Set (ConcreteAddress (MC.RegAddrWidth (MC.ArchReg arch)))
-                       -> S.Set (ConcreteAddress (MC.RegAddrWidth (MC.ArchReg arch)))
+                       -> S.Set (ConcreteAddress arch)
+                       -> S.Set (ConcreteAddress arch)
 addFunInfoIfIncomplete mem (PU.Some fi) s
   | isIncompleteFunction fi = S.union s (S.fromList blockAddrs)
   | otherwise = s
@@ -286,11 +285,11 @@ addFunInfoIfIncomplete mem (PU.Some fi) s
     pbs = fi L.^. MC.parsedBlocks
     blockAddrs = mapMaybe (concreteFromSegmentOff mem) (M.keys pbs)
 
-isIncompleteFunction :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch))) => MC.DiscoveryFunInfo arch ids -> Bool
+isIncompleteFunction :: (MC.MemWidth (MC.ArchAddrWidth arch)) => MC.DiscoveryFunInfo arch ids -> Bool
 isIncompleteFunction fi =
   any isIncomplete (M.elems (fi L.^. MC.parsedBlocks))
 
-isIncomplete :: (MC.MemWidth (MC.RegAddrWidth (MC.ArchReg arch))) => MC.ParsedBlock arch ids -> Bool
+isIncomplete :: (MC.MemWidth (MC.ArchAddrWidth arch)) => MC.ParsedBlock arch ids -> Bool
 isIncomplete pb =
   case MC.stmtsTerm (MC.blockStatementList pb) of
     MC.ParsedTranslateError {} -> True

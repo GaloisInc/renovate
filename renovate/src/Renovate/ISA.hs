@@ -1,6 +1,8 @@
-{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 -- | This module defines the interface required for describing an 'ISA'
 -- to the rewriter.
 --
@@ -9,34 +11,15 @@ module Renovate.ISA (
   ISA(..),
   JumpType(..),
   JumpCondition(..),
-  TrapPredicate(..),
-  InstructionConstraints
+  TrapPredicate(..)
   ) where
 
-import Data.Typeable ( Typeable )
 import Data.Word ( Word8, Word64 )
 
-import qualified Data.Macaw.Memory as MM
+import qualified Data.Macaw.CFG as MM
 
 import Renovate.Address
-import Renovate.BasicBlock.Types ( TaggedInstruction )
-
-import qualified Data.Text.Prettyprint.Doc as PD
-
--- | Constraints common to all instructions.
---
--- Basically, all 'Instruction' instances must be 'Show'able and
--- 'Typeable'.  They are combined for convenience and to reduce noise
--- in type signatures, since those constraints are not very
--- interesting.
-type InstructionConstraints i a =
-  ( PD.Pretty (i ())
-  , PD.Pretty (i a)
-  , Show (i a)
-  , Show (i ())
-  , Typeable (i a)
-  , Typeable (i ())
-  )
+import Renovate.BasicBlock.Types ( Instruction, InstructionAnnotation, TaggedInstruction )
 
 -- | The variety of a jump: either conditional or unconditional.  This
 -- is used as a tag for 'JumpType's.  One day, we could model the type
@@ -50,16 +33,16 @@ data JumpCondition = Unconditional
 -- Note that we model calls as conditional jumps.  That isn't exactly
 -- right, but it captures the important aspect of calls for basic
 -- block recovery: execution continues after the return.
-data JumpType w = RelativeJump JumpCondition (ConcreteAddress w) (MM.MemWord w)
+data JumpType arch = RelativeJump JumpCondition (ConcreteAddress arch) (MM.MemWord (MM.ArchAddrWidth arch))
                 -- ^ A relative jump by some offset in bytes, which
                 -- could be negative.  The 'Address' is the address
                 -- from which the jump was issued.
-                | AbsoluteJump JumpCondition (ConcreteAddress w)
+                | AbsoluteJump JumpCondition (ConcreteAddress arch)
                 -- ^ A jump to an absolute address
                 | IndirectJump JumpCondition
                 -- ^ A jump type for indirect jumps, which end blocks
                 -- but do not let us find new code.
-                | DirectCall (ConcreteAddress w) (MM.MemWord w)
+                | DirectCall (ConcreteAddress arch) (MM.MemWord (MM.ArchAddrWidth arch))
                 -- ^ A call to a known location expressed as an offset
                 -- from the jump location (note, this might be
                 -- difficult to fill in for RISC architectures - macaw
@@ -69,7 +52,9 @@ data JumpType w = RelativeJump JumpCondition (ConcreteAddress w) (MM.MemWord w)
                 | Return
                 | NoJump
                 -- ^ The instruction is not a jump
-                deriving (Show, Eq)
+                deriving (Eq)
+
+deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (JumpType arch)
 
 -- | Information about an ISA.
 --
@@ -88,15 +73,15 @@ data JumpType w = RelativeJump JumpCondition (ConcreteAddress w) (MM.MemWord w)
 --
 -- See separate @renovate-<arch>@ packages for actual 'ISA'
 -- definitions.
-data ISA (i :: * -> *) a w =
-  ISA { isaInstructionSize :: forall t . i t -> Word8
+data ISA arch =
+  ISA { isaInstructionSize :: forall t . Instruction arch t -> Word8
         -- ^ Compute the size of an instruction in bytes
-      , isaSymbolizeAddresses :: MM.Memory w
-                              -> (ConcreteAddress w -> Maybe SymbolicAddress)
-                              -> ConcreteAddress w
+      , isaSymbolizeAddresses :: MM.Memory (MM.ArchAddrWidth arch)
+                              -> (ConcreteAddress arch -> Maybe SymbolicAddress)
+                              -> ConcreteAddress arch
                               -> Maybe SymbolicAddress
-                              -> i ()
-                              -> [TaggedInstruction i a]
+                              -> Instruction arch ()
+                              -> [TaggedInstruction arch (InstructionAnnotation arch)]
         -- ^ Abstract instructions and annotate them. The contract is that this
         -- function can change the opcode, but the selected instruction must
         -- never change sizes later (during concretization). That is, for all
@@ -108,9 +93,9 @@ data ISA (i :: * -> *) a w =
         --
         -- NOTE: This function is allowed to return larger instructions now and,
         -- in fact, may return extra instructions.
-      , isaConcretizeAddresses :: MM.Memory w -> ConcreteAddress w -> i a -> i ()
+      , isaConcretizeAddresses :: MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> Instruction arch (InstructionAnnotation arch) -> Instruction arch ()
         -- ^ Remove the annotation, with possible post-processing.
-      , isaJumpType :: forall t . i t -> MM.Memory w -> ConcreteAddress w -> JumpType w
+      , isaJumpType :: forall t . Instruction arch t -> MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> JumpType arch
         -- ^ Test if an instruction is a jump; if it is, return some
         -- metadata about the jump (destination or offset).
         --
@@ -121,11 +106,11 @@ data ISA (i :: * -> *) a w =
         --
         -- The 'Address' parameter is the address of the instruction,
         -- which is needed to resolve relative jumps.
-      , isaMakeRelativeJumpTo :: ConcreteAddress w -> ConcreteAddress w -> [i ()]
+      , isaMakeRelativeJumpTo :: ConcreteAddress arch -> ConcreteAddress arch -> [Instruction arch ()]
         -- ^ Create a relative jump from the first 'ConcreteAddress'
         -- to the second.  This will call error if the range is too
         -- far (probably more than 2GB).
-      , isaModifyJumpTarget :: i () -> ConcreteAddress w -> ConcreteAddress w -> Maybe (i ())
+      , isaModifyJumpTarget :: Instruction arch () -> ConcreteAddress arch -> ConcreteAddress arch -> Maybe (Instruction arch ())
         -- ^ Modify the given jump instruction, rather than creating
         -- an entirely new one.  This differs from
         -- 'isaMakeRelativeJumpTo' in that it preserves the jump type
@@ -134,19 +119,19 @@ data ISA (i :: * -> *) a w =
         -- NOTE: This function must not change the size of the instruction, as
         -- it is called after code layout is done, so we cannot re-arrange
         -- anything.
-      , isaMakePadding :: Word64 -> [i ()]
+      , isaMakePadding :: Word64 -> [Instruction arch ()]
         -- ^ Make the given number of bytes of padding instructions.
         -- The semantics of the instruction stream should either be
         -- no-ops or halts (i.e., not meant to be executed).
-      , isaMakeTrapIf :: i a -> TrapPredicate -> [i a]
+      , isaMakeTrapIf :: Instruction arch (InstructionAnnotation arch) -> TrapPredicate -> [Instruction arch (InstructionAnnotation arch)]
         -- ^ Create an instruction sequence that halts if the given
         -- instruction meets the given predicate.  For example, it
         -- could create a conditional halt if the instruction created
         -- a signed overflow.
-      , isaMakeSymbolicJump :: SymbolicAddress -> [TaggedInstruction i a]
+      , isaMakeSymbolicJump :: SymbolicAddress -> [TaggedInstruction arch (InstructionAnnotation arch)]
       -- ^ Make an unconditional jump that takes execution to the given symbolic
       -- target.
-      , isaPrettyInstruction :: forall t . i t -> String
+      , isaPrettyInstruction :: forall t . Instruction arch t -> String
       -- ^ Pretty print an instruction for diagnostic purposes
       }
 

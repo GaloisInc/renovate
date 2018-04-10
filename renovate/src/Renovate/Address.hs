@@ -1,5 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 -- | This module defines opaque concrete and symbolic address types.
 module Renovate.Address (
   SymbolicAddress(..),
@@ -19,7 +21,7 @@ import           Data.Word ( Word64 )
 import qualified Numeric as N
 
 import qualified Data.Macaw.Memory as MM
-
+import qualified Data.Macaw.CFG as MM
 
 
 -- | Symbolic addresses that can be referenced abstractly and
@@ -48,26 +50,28 @@ instance PD.Pretty SymbolicAddress where
 -- library), and do not need inter-module references.  This representation
 -- discards segment information, which we can recover with a 'MM.Memory' object
 -- and the 'MM.resolveAbsoluteAddr' function.
-newtype ConcreteAddress w = ConcreteAddress (MM.MemAddr w)
-  deriving (Eq, Ord, Show)
+newtype ConcreteAddress arch = ConcreteAddress (MM.MemAddr (MM.ArchAddrWidth arch))
+  deriving (Eq, Ord)
 
-instance (MM.MemWidth w) => PD.Pretty (ConcreteAddress w) where
+deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (ConcreteAddress arch)
+
+instance (MM.MemWidth (MM.ArchAddrWidth arch)) => PD.Pretty (ConcreteAddress arch) where
   pretty (ConcreteAddress memAddr) = PD.pretty (show memAddr)
 
 -- | Construct a 'ConcreteAddress' from a 'MM.MemSegmentOff'
 --
 -- This can fail if the 'MM.MemSegmentOff' is not an absolute address (i.e., it
 -- is a pointer to a location in another module)
-concreteFromSegmentOff :: (L.HasCallStack, MM.MemWidth w)
-                       => MM.Memory w
-                       -> MM.MemSegmentOff w
-                       -> Maybe (ConcreteAddress w)
+concreteFromSegmentOff :: (L.HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch))
+                       => MM.Memory (MM.ArchAddrWidth arch)
+                       -> MM.MemSegmentOff (MM.ArchAddrWidth arch)
+                       -> Maybe (ConcreteAddress arch)
 concreteFromSegmentOff _mem segOff = do
   let memAddr = MM.relativeSegmentAddr segOff
   _ <- MM.asAbsoluteAddr memAddr
   return (ConcreteAddress memAddr)
 
-concreteAsSegmentOff :: (MM.MemWidth w) => MM.Memory w -> ConcreteAddress w -> Maybe (MM.MemSegmentOff w)
+concreteAsSegmentOff :: (MM.MemWidth (MM.ArchAddrWidth arch)) => MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> Maybe (MM.MemSegmentOff (MM.ArchAddrWidth arch))
 concreteAsSegmentOff mem (ConcreteAddress memAddr) = MM.asSegmentOff mem memAddr
 
 -- | Construct a 'ConcreteAddress' from a concrete address specified as a
@@ -77,16 +81,16 @@ concreteAsSegmentOff mem (ConcreteAddress memAddr) = MM.asSegmentOff mem memAddr
 --
 -- This function does not ensure that the address is mapped in the underlying
 -- 'MM.Memory'.
-concreteFromAbsolute :: (MM.MemWidth w)
-                     => MM.MemWord w
-                     -> ConcreteAddress w
+concreteFromAbsolute :: (MM.MemWidth (MM.ArchAddrWidth arch))
+                     => MM.MemWord (MM.ArchAddrWidth arch)
+                     -> ConcreteAddress arch
 concreteFromAbsolute = ConcreteAddress . MM.absoluteAddr
 
 -- | Convert a 'ConcreteAddress' into an absolute address (a 'MM.MemWord')
 --
 -- This always succeeds, because our 'ConcreteAddress' is a wrapper that
 -- guarantees we only have absolute addresses.
-absoluteAddress :: (MM.MemWidth w) => ConcreteAddress w -> MM.MemWord w
+absoluteAddress :: (MM.MemWidth (MM.ArchAddrWidth arch)) => ConcreteAddress arch -> MM.MemWord (MM.ArchAddrWidth arch)
 absoluteAddress (ConcreteAddress memAddr) = absAddr
   where
     Just absAddr = MM.asAbsoluteAddr memAddr
@@ -96,10 +100,10 @@ absoluteAddress (ConcreteAddress memAddr) = absAddr
 --
 -- Since all of our 'ConcreteAddress'es are absolute, this is always legal.
 -- Note, we could wrap, and that isn't really checked.
-addressAddOffset :: (MM.MemWidth w)
-                 => ConcreteAddress w
-                 -> MM.MemWord w
-                 -> ConcreteAddress w
+addressAddOffset :: (MM.MemWidth (MM.ArchAddrWidth arch))
+                 => ConcreteAddress arch
+                 -> MM.MemWord (MM.ArchAddrWidth arch)
+                 -> ConcreteAddress arch
 addressAddOffset (ConcreteAddress memAddr) memWord =
   ConcreteAddress (MM.incAddr (fromIntegral memWord) memAddr)
 
@@ -107,7 +111,7 @@ addressAddOffset (ConcreteAddress memAddr) memWord =
 --
 -- This is actually total because all of our 'ConcreteAddress'es are absolute
 -- (and thus have the same base), so the difference is always valid.
-addressDiff :: (MM.MemWidth w) => ConcreteAddress w -> ConcreteAddress w -> Integer
+addressDiff :: (MM.MemWidth (MM.ArchAddrWidth arch)) => ConcreteAddress arch -> ConcreteAddress arch -> Integer
 addressDiff (ConcreteAddress memAddr1) (ConcreteAddress memAddr2) = diff
   where
     Just diff = MM.diffAddr memAddr1 memAddr2

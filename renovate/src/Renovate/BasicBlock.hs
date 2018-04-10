@@ -8,6 +8,8 @@ module Renovate.BasicBlock (
   BasicBlock(..),
   ConcreteBlock,
   SymbolicBlock,
+  Instruction,
+  InstructionAnnotation,
   AddressAssignedBlock(..),
   SymbolicInfo(..),
   concreteBlockSize,
@@ -20,7 +22,9 @@ module Renovate.BasicBlock (
   tagInstruction,
   hasNoSymbolicTarget,
   symbolicTarget,
-  projectInstruction
+  projectInstruction,
+  -- * Constraints
+  InstructionConstraints
   ) where
 
 import qualified GHC.Err.Located as L
@@ -29,7 +33,7 @@ import qualified Data.List as L
 import qualified Data.Traversable as T
 import           Data.Word ( Word64 )
 
-import qualified Data.Macaw.Memory as MC
+import qualified Data.Macaw.CFG as MC
 
 import           Renovate.Address
 import           Renovate.BasicBlock.Types
@@ -40,7 +44,7 @@ import           Renovate.ISA
 -- We cannot simply make a @Map a Address@ because two identical
 -- instructions could easily occur within the same 'BasicBlock', to
 -- say nothing of the entire program.
-instructionAddresses :: (MC.MemWidth w) => ISA i a w -> ConcreteBlock i w -> [(i (), ConcreteAddress w)]
+instructionAddresses :: (MC.MemWidth (MC.ArchAddrWidth arch)) => ISA arch -> ConcreteBlock arch -> [(Instruction arch (), ConcreteAddress arch)]
 instructionAddresses isa bb =
   instructionAddresses' isa id (basicBlockAddress bb) (basicBlockInstructions bb)
 
@@ -50,12 +54,12 @@ instructionAddresses isa bb =
 -- This variant is useful when computing the addresses of instructions
 -- in a symbolic block with a known desired start address (e.g., in
 -- 'concretize').
-instructionAddresses' :: (MC.MemWidth w)
-                      => ISA i a w
-                      -> (x -> i ())
-                      -> ConcreteAddress w
+instructionAddresses' :: (MC.MemWidth (MC.ArchAddrWidth arch))
+                      => ISA arch
+                      -> (x -> Instruction arch ())
+                      -> ConcreteAddress arch
                       -> [x]
-                      -> [(x, ConcreteAddress w)]
+                      -> [(x, ConcreteAddress arch)]
 instructionAddresses' isa accessor startAddr insns =
   snd $ T.mapAccumL computeAddress startAddr insns
   where
@@ -65,12 +69,12 @@ instructionAddresses' isa accessor startAddr insns =
       in (absAddr, (instr, addr))
 
 -- | Compute the size of a list of instructions, in bytes.
-instructionStreamSize :: ISA i a w -> [i t] -> Word64
+instructionStreamSize :: ISA arch -> [Instruction arch t] -> Word64
 instructionStreamSize isa insns =
   sum $ map (fromIntegral . isaInstructionSize isa) insns
 
 -- | Compute the size of a 'ConcreteBlock' in bytes.
-concreteBlockSize :: ISA i a w -> ConcreteBlock i w -> Word64
+concreteBlockSize :: ISA arch -> ConcreteBlock arch -> Word64
 concreteBlockSize isa = instructionStreamSize isa . basicBlockInstructions
 
 -- | Given a 'ConcreteBlock', compute its size *after* its jump(s) are
@@ -83,11 +87,11 @@ concreteBlockSize isa = instructionStreamSize isa . basicBlockInstructions
 --
 -- The address parameter is a dummy used as a stand in for the address of jump
 -- destinations.
-symbolicBlockSize :: (L.HasCallStack, MC.MemWidth w)
-                  => ISA i a w
-                  -> MC.Memory w
-                  -> ConcreteAddress w
-                  -> SymbolicBlock i a w
+symbolicBlockSize :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch))
+                  => ISA arch
+                  -> MC.Memory (MC.ArchAddrWidth arch)
+                  -> ConcreteAddress arch
+                  -> SymbolicBlock arch
                   -> Word64
 symbolicBlockSize isa mem addr sb = basicInstSize + fromIntegral jumpSizes
   where
@@ -95,7 +99,7 @@ symbolicBlockSize isa mem addr sb = basicInstSize + fromIntegral jumpSizes
     basicInstSize = sum (map (fromIntegral . isaInstructionSize isa . isaConcretizeAddresses isa mem addr . projectInstruction) standardInstructions)
     (standardInstructions, jumpsToRewrite) = L.partition hasNoSymbolicTarget (basicBlockInstructions sb)
 
-computeRewrittenJumpSize :: (L.HasCallStack) => ISA i a w -> MC.Memory w -> ConcreteAddress w -> i a -> Int
+computeRewrittenJumpSize :: (L.HasCallStack) => ISA arch -> MC.Memory (MC.ArchAddrWidth arch) -> ConcreteAddress arch -> Instruction arch (InstructionAnnotation arch) -> Int
 computeRewrittenJumpSize isa mem addr jmp
   | Just jmp' <- isaModifyJumpTarget isa concJmp addr addr
   , origSize == isaInstructionSize isa jmp' = fromIntegral origSize
@@ -110,7 +114,7 @@ computeRewrittenJumpSize isa mem addr jmp
 -- | Return the 'JumpType' of the terminator instruction (if any)
 --
 -- If the block is empty, it will return 'NoJump'.
-terminatorType :: (MC.MemWidth w) => ISA i a w -> MC.Memory w -> ConcreteBlock i w -> JumpType w
+terminatorType :: (MC.MemWidth (MC.ArchAddrWidth arch)) => ISA arch -> MC.Memory (MC.ArchAddrWidth arch) -> ConcreteBlock arch -> JumpType arch
 terminatorType isa mem b =
   case instructionAddresses isa b of
     [] -> NoJump
