@@ -47,16 +47,23 @@ instance (PD.Pretty addr, PD.Pretty (i a)) => PD.Pretty (BasicBlock addr i a) wh
   pretty (BasicBlock insns addr) =
     PD.pretty addr PD.<> ":" PD.<+> PD.align (PD.vsep (map PD.pretty insns))
 
+-- | The type of instructions for an architecture
+--
+-- Instructions are parameterized by an annotation type that is usually either
+-- '()' or @'InstructionAnnotation' arch@
 type family Instruction arch :: * -> *
+
+-- | The type of annotations used to carry relocation information while rewriting
 type family InstructionAnnotation arch :: *
+
+-- | The type of register values for the architecture
 type family RegisterType arch :: *
 
 -- | Constraints common to all instructions.
 --
--- Basically, all 'Instruction' instances must be 'Show'able and
--- 'Typeable'.  They are combined for convenience and to reduce noise
--- in type signatures, since those constraints are not very
--- interesting.
+-- All 'Instruction' instances must be 'Show'able and 'Typeable'.  They are
+-- combined for convenience and to reduce noise in type signatures, since those
+-- constraints are not very interesting.
 type InstructionConstraints arch =
   ( PD.Pretty (Instruction arch ())
   , PD.Pretty (Instruction arch (InstructionAnnotation arch))

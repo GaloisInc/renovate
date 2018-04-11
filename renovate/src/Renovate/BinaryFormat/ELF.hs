@@ -221,6 +221,7 @@ rewriteElf cfg e mem strat = do
       symmap <- withCurrentELF (buildSymbolMap mem)
       doRewrite cfg mem symmap strat
 
+-- | Run an analysis over an ELF file without performing any rewriting.
 analyzeElf :: (B.InstructionConstraints arch,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                R.ArchBits arch)

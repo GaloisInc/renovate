@@ -36,9 +36,16 @@ import qualified Renovate.Recovery as R
 -- | A wrapper around a 'RenovateConfig' that hides parameters and
 -- allows us to have collections of configs while capturing the
 -- necessary class dictionaries. The 'SomeConfig' is parameterized by
--- a constraint @c@ over the hidden 'RenovateConfig' params, which
--- supports exposing information about the hidden params, or bundling
--- up other functionality via a type class.
+-- a constraint @c@ over the hidden 'RenovateConfig' params and a result type @b@.
+--
+-- * The constraint @c@ supports exposing information about the hidden params, or
+--   bundling up other functionality via a type class.
+--
+-- * The result type @b@ is the type of results of the pre-rewriting analysis
+--   pass.  It is parameterized by the architecture of the analysis in such a
+--   way that there can be a list of 'SomeConfig' while still containing
+--   architecture-parameterized data (where the architecture is hidden by the
+--   existential).
 data SomeConfig c (b :: * -> *) = forall arch
                   . (B.InstructionConstraints arch,
                      R.ArchBits arch,
@@ -62,11 +69,8 @@ instance TrivialConfigConstraint arch b
 --
 -- The type parameters are as follows:
 --
--- * @i@ the type of instructions
--- * @a@ the type of annotations carried on operands
--- * @w@ the width of pointers
 -- * @arch@ the architecture type tag for the architecture
--- * @b@ the type of analysis results produced by the analysis and passed to the rewriter
+-- * @b@ (which is applied to @arch@) the type of analysis results produced by the analysis and passed to the rewriter
 data RenovateConfig arch (b :: * -> *) =
   RenovateConfig { rcISA           :: ISA.ISA arch
                  , rcArchInfo      :: MM.ArchitectureInfo arch
@@ -123,5 +127,7 @@ compose funcs = go funcs
 identity :: (Monad m) => b -> ISA.ISA arch -> MM.Memory (MM.ArchAddrWidth arch) -> B.SymbolicBlock arch -> m (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
 identity _ _ _ sb = return $! Just (B.basicBlockInstructions sb)
 
+-- | A basic block rewriter that leaves a block untouched, preventing the
+-- rewriter from trying to relocate it.
 nop :: Monad m => b -> ISA.ISA arch -> MM.Memory (MM.ArchAddrWidth arch) -> B.SymbolicBlock arch -> m (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
 nop _ _ _ _ = return Nothing

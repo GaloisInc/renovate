@@ -7,6 +7,7 @@ module Renovate.Arch (
   Architecture(..)
   ) where
 
+-- | The architectures supported by the binary analysis interface and rewriter
 data Architecture = X86_64
                   | PPC64
                   | PPC32
