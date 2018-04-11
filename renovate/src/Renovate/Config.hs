@@ -39,7 +39,7 @@ import qualified Renovate.Recovery as R
 -- a constraint @c@ over the hidden 'RenovateConfig' params, which
 -- supports exposing information about the hidden params, or bundling
 -- up other functionality via a type class.
-data SomeConfig c b = forall arch
+data SomeConfig c (b :: * -> *) = forall arch
                   . (B.InstructionConstraints arch,
                      R.ArchBits arch,
                      c arch b)
@@ -67,7 +67,7 @@ instance TrivialConfigConstraint arch b
 -- * @w@ the width of pointers
 -- * @arch@ the architecture type tag for the architecture
 -- * @b@ the type of analysis results produced by the analysis and passed to the rewriter
-data RenovateConfig arch b =
+data RenovateConfig arch (b :: * -> *) =
   RenovateConfig { rcISA           :: ISA.ISA arch
                  , rcArchInfo      :: MM.ArchitectureInfo arch
                  -- ^ Architecture info for macaw
@@ -84,9 +84,9 @@ data RenovateConfig arch b =
                  -- recovery info (a summary of the information returned by
                  -- macaw).  The 'Int' is the number of iterations before
                  -- calling the function callback.
-                 , rcAnalysis      :: ISA.ISA arch -> MM.Memory (MM.ArchAddrWidth arch) -> R.BlockInfo arch -> b
+                 , rcAnalysis      :: ISA.ISA arch -> MM.Memory (MM.ArchAddrWidth arch) -> R.BlockInfo arch -> b arch
                  -- ^ An analysis to run over the code discovered by macaw, generating a summary of type @b@
-                 , rcRewriter      :: b -> ISA.ISA arch -> MM.Memory (MM.ArchAddrWidth arch) -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+                 , rcRewriter      :: b arch -> ISA.ISA arch -> MM.Memory (MM.ArchAddrWidth arch) -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
                  -- ^ A rewriting pass to run over each basic block
                  , rcCodeLayoutBase :: Word64
                  -- ^ The base address to start laying out new code

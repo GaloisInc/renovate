@@ -212,7 +212,7 @@ rewriteElf :: (B.InstructionConstraints arch,
            -- (including statically-allocated data)
            -> RE.LayoutStrategy
            -- ^ The layout strategy for blocks in the new binary
-           -> IO (E.Elf (MM.ArchAddrWidth arch), b, RewriterInfo arch)
+           -> IO (E.Elf (MM.ArchAddrWidth arch), b arch, RewriterInfo arch)
 rewriteElf cfg e mem strat = do
     (analysisResult, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
     return (_riELF ri, analysisResult, ri)
@@ -231,7 +231,7 @@ analyzeElf :: (B.InstructionConstraints arch,
            -> MM.Memory (MM.ArchAddrWidth arch)
            -- ^ A representation of the contents of memory of the ELF file
            -- (including statically-allocated data)
-           -> IO (b, [RM.Diagnostic])
+           -> IO (b arch, [RM.Diagnostic])
 analyzeElf cfg e mem = do
     (b, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
     return (b, _riBlockRecoveryDiagnostics ri)
@@ -298,7 +298,7 @@ doRewrite :: (B.InstructionConstraints arch,
           -> MM.Memory (MM.ArchAddrWidth arch)
           -> RM.SymbolMap arch
           -> RE.LayoutStrategy
-          -> ElfRewriter arch b
+          -> ElfRewriter arch (b arch)
 doRewrite cfg mem symmap strat = do
   -- We pull some information from the unmodified initial binary: the text
   -- section, the entry point(s), and original symbol table (if any).
@@ -383,7 +383,7 @@ doAnalysis :: (B.InstructionConstraints arch,
            => RenovateConfig arch b
            -> MM.Memory (MM.ArchAddrWidth arch)
            -> RM.SymbolMap arch
-           -> ElfRewriter arch b
+           -> ElfRewriter arch (b arch)
 doAnalysis cfg mem symmap = do
 --  (entryPoint, _otherEntries) <- withCurrentELF (entryPoints mem)
 
@@ -803,7 +803,7 @@ instrumentTextSection :: forall w arch b
                       -- ^ The address to lay out the new data section
                       -> RM.SymbolMap arch
                       -- ^ meta data?
-                      -> ElfRewriter arch (b, B.ByteString, B.ByteString, Maybe B.ByteString, RM.NewSymbolsMap arch)
+                      -> ElfRewriter arch (b arch, B.ByteString, B.ByteString, Maybe B.ByteString, RM.NewSymbolsMap arch)
 instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes strat layoutAddr newGlobalBase symmap = do
   -- We use an irrefutable match on the entry point -- we are asserting that the
   -- entry point is mapped in the 'MM.Memory' object passed in.
@@ -869,7 +869,7 @@ analyzeTextSection :: forall w arch b
                    -> MM.Memory w
                    -- ^ The memory space
                    -> RM.SymbolMap arch
-                   -> ElfRewriter arch b
+                   -> ElfRewriter arch (b arch)
 analyzeTextSection cfg mem symmap = do
   elfEntryPoints <- withCurrentELF $ \e -> return (findEntryPoints cfg e mem)
 --  traceM ("analyzeTextSection entry point: " ++ show entryPoint)

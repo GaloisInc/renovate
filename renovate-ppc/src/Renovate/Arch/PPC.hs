@@ -40,8 +40,8 @@ import           Renovate.Arch.PPC.ISA
 
 config32 :: (MM.MemWidth w, w ~ 32, MC.ArchAddrWidth MP.PPC32 ~ w)
          => (MC.ArchSegmentOff MP.PPC32 -> Maybe (MA.AbsValue 32 (BVType 32)))
-         -> (R.ISA MP.PPC32 -> MM.Memory w -> R.BlockInfo MP.PPC32 -> a)
-         -> (a -> R.ISA MP.PPC32 -> MM.Memory w -> R.SymbolicBlock MP.PPC32
+         -> (R.ISA MP.PPC32 -> MM.Memory w -> R.BlockInfo MP.PPC32 -> a MP.PPC32)
+         -> (a MP.PPC32 -> R.ISA MP.PPC32 -> MM.Memory w -> R.SymbolicBlock MP.PPC32
                -> R.RewriteM MP.PPC32 (Maybe [R.TaggedInstruction MP.PPC32 (TargetAddress MP.PPC32)]))
          -> R.RenovateConfig MP.PPC32 a
 config32 tocMap analysis rewriter =
@@ -62,8 +62,8 @@ config32 tocMap analysis rewriter =
 
 config64 :: (MM.MemWidth w, w ~ 64, MC.ArchAddrWidth MP.PPC64 ~ w)
          => (MC.ArchSegmentOff MP.PPC64 -> Maybe (MA.AbsValue 64 (BVType 64)))
-         -> (R.ISA MP.PPC64 -> MM.Memory w -> R.BlockInfo MP.PPC64 -> a)
-         -> (a -> R.ISA MP.PPC64 -> MM.Memory w -> R.SymbolicBlock MP.PPC64
+         -> (R.ISA MP.PPC64 -> MM.Memory w -> R.BlockInfo MP.PPC64 -> a MP.PPC64)
+         -> (a MP.PPC64 -> R.ISA MP.PPC64 -> MM.Memory w -> R.SymbolicBlock MP.PPC64
                -> R.RewriteM MP.PPC64 (Maybe [R.TaggedInstruction MP.PPC64 (TargetAddress MP.PPC64)]))
          -> R.RenovateConfig MP.PPC64 a
 config64 tocMap analysis rewriter =
