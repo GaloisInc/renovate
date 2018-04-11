@@ -32,6 +32,7 @@ import           Text.Printf ( printf )
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.PPC as MP
 import           Data.Parameterized.Classes ( showF )
+import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Parameterized.TraversableFC as FC
 import qualified Dismantle.PPC as D
 
@@ -48,8 +49,10 @@ newtype Instruction a = I { unI :: D.AnnotatedInstruction a }
 
 type instance R.Instruction MP.PPC32 = Instruction
 type instance R.InstructionAnnotation MP.PPC32 = TargetAddress MP.PPC32
+type instance R.RegisterType MP.PPC32 = Some D.Operand
 type instance R.Instruction MP.PPC64 = Instruction
 type instance R.InstructionAnnotation MP.PPC64 = TargetAddress MP.PPC64
+type instance R.RegisterType MP.PPC64 = Some D.Operand
 
 instance PP.Pretty (Instruction a) where
   pretty = PP.pretty . ppcPrettyInstruction
