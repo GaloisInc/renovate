@@ -8,6 +8,7 @@ module Renovate.BasicBlock.Types (
   BasicBlock(..),
   Instruction,
   InstructionAnnotation,
+  RegisterType,
   ConcreteBlock,
   SymbolicBlock,
   SymbolicInfo(..),
@@ -48,6 +49,7 @@ instance (PD.Pretty addr, PD.Pretty (i a)) => PD.Pretty (BasicBlock addr i a) wh
 
 type family Instruction arch :: * -> *
 type family InstructionAnnotation arch :: *
+type family RegisterType arch :: *
 
 -- | Constraints common to all instructions.
 --
@@ -63,6 +65,8 @@ type InstructionConstraints arch =
   , Typeable (Instruction arch (InstructionAnnotation arch))
   , Typeable (Instruction arch ())
   , MC.MemWidth (MC.ArchAddrWidth arch)
+  , Eq (RegisterType arch)
+  , Ord (RegisterType arch)
   )
 
 -- | The type of concrete 'BasicBlock's that have been assigned real

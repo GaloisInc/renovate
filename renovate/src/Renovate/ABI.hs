@@ -1,5 +1,4 @@
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TypeFamilies #-}
 -- | An abstract interface for 'ABI's.
 --
 -- There can be more than one 'ABI' for a given 'ISA'.
@@ -7,15 +6,12 @@
 -- The implementations of 'ABI's will be under the Renovate.Arch module
 -- hierarchy.
 module Renovate.ABI (
-  ABI(..),
-  RegisterType
+  ABI(..)
   ) where
 
 import Data.Word ( Word8, Word32 )
 import Renovate.Address
 import Renovate.BasicBlock
-
-type family RegisterType arch :: *
 
 -- | A description of the properties of an Application Binary
 -- Interface (ABI) that we currently care about.  Right now, it is
