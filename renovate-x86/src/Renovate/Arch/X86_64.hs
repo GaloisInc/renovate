@@ -71,7 +71,11 @@ config analysis rewriter =
     }
 
 instance R.ArchInfo X86.X86_64 where
-  archFunctions _ = Just SX86.x86_64MacawSymbolicFns
+  archVals _ = Just (R.ArchVals { R.archFunctions = SX86.x86_64MacawSymbolicFns
+                                , R.withArchEval = \sym k -> do
+                                    sfns <- SX86.newSymFuns sym
+                                    k (SX86.x86_64MacawEvalFn sfns)
+                                })
 
 {- Note [Layout Addresses]
 

@@ -99,10 +99,10 @@ config64 tocMap analysis rewriter =
                    }
 
 instance R.ArchInfo MP.PPC64 where
-  archFunctions _ = Nothing
+  archVals _ = Nothing
 
 instance R.ArchInfo MP.PPC32 where
-  archFunctions _ = Nothing
+  archVals _ = Nothing
 
 {- Note [Layout Addresses]
 

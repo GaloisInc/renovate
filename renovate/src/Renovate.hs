@@ -24,6 +24,7 @@ module Renovate
   LB.CompactOrdering(..),
   C.RenovateConfig(..),
   Recovery.ArchInfo(..),
+  Recovery.ArchVals(..),
   -- * ELF entry point
   E.withElfConfig,
   E.rewriteElf,
