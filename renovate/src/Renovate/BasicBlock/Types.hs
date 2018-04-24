@@ -72,8 +72,6 @@ type InstructionConstraints arch =
   , Typeable (Instruction arch (InstructionAnnotation arch))
   , Typeable (Instruction arch ())
   , MC.MemWidth (MC.ArchAddrWidth arch)
-  , Eq (RegisterType arch)
-  , Ord (RegisterType arch)
   )
 
 -- | The type of concrete 'BasicBlock's that have been assigned real

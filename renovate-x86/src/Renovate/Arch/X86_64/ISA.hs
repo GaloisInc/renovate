@@ -15,7 +15,7 @@ import qualified Data.ByteString.Lazy.Builder as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Functor.Identity as I
 import qualified Data.Text.Prettyprint.Doc as PD
-import           Data.Int ( Int32, Int64 )
+import           Data.Int ( Int32 )
 import           Data.Word ( Word8, Word64 )
 
 import qualified Data.Macaw.Memory as MM
@@ -104,8 +104,9 @@ x64JumpType xi@(XI ii) _mem addr =
 -- instruction is executing.  To get our jumps to point to the right
 -- place, we have to add the size of the jump instruction to the
 -- offset for relative jumps.
-fixJumpOffset :: (MM.MemWidth w) => Word8 -> Int64 -> MM.MemWord w
-fixJumpOffset sz off = fromIntegral (off + fromIntegral sz)
+fixJumpOffset :: (MM.MemWidth w) => Word8 -> D.JumpOffset -> MM.MemWord w
+fixJumpOffset sz (D.FixedOffset off) = fromIntegral (off + fromIntegral sz)
+fixJumpOffset _ o@(D.RelativeOffset {}) = error ("Relative offsets for relocations are not yet supported: " ++ show o)
 
 -- | Encode a relative jump using a 32 bit immediate.  This gives us a maximum range of
 -- +/- 2GB.
@@ -123,7 +124,7 @@ x64MakeRelativeJumpTo srcAddr targetAddr
   | otherwise = [jmpInstr]
   where
     jmpInstr = makeInstr "jmp"
-      [D.JumpOffset D.ZSize (fromIntegral jmpOffset)]
+      [D.JumpOffset D.JSize32 (D.FixedOffset (fromIntegral jmpOffset))]
     jmpInstrSize = fromIntegral $ x64Size jmpInstr
     -- We need to know the size of the generated jump instruction to
     -- generate it, so we guess now and check that we were right after
@@ -147,7 +148,7 @@ x64MakeSymbolicJump :: R.SymbolicAddress -> [R.TaggedInstruction X86.X86_64 Targ
 x64MakeSymbolicJump sa = [R.tagInstruction (Just sa) i]
   where
     i = annotateInstr (makeInstr "jmp" [off]) NoAddress
-    off = D.JumpOffset D.ZSize 0
+    off = D.JumpOffset D.JSize32 (D.FixedOffset 0)
 
 x64ModifyJumpTarget :: Instruction () -> R.ConcreteAddress X86.X86_64 -> R.ConcreteAddress X86.X86_64 -> Maybe (Instruction ())
 x64ModifyJumpTarget (XI ii) srcAddr targetAddr
@@ -170,13 +171,13 @@ x64ModifyJumpTarget (XI ii) srcAddr targetAddr
         -- guess.  This should never fail the size check.  We have to
         -- generate an instruction and check its size because some jumps
         -- could be 5 bytes, while others could be 6.
-        dummyJumpInstr = makeInstr (D.iiOp ii) [D.JumpOffset D.ZSize 0]
+        dummyJumpInstr = makeInstr (D.iiOp ii) [D.JumpOffset D.JSize32 (D.FixedOffset 0)]
         jmpInstrSizeGuess = x64Size dummyJumpInstr
-        jmpInstr = makeInstr (D.iiOp ii) [D.JumpOffset D.ZSize (fromIntegral jmpOffset)]
+        jmpInstr = makeInstr (D.iiOp ii) [D.JumpOffset D.JSize32 (D.FixedOffset (fromIntegral jmpOffset))]
         jmpInstrSize = fromIntegral $ x64Size jmpInstr
 
         extendDirectJump = case aoOperand <$> D.iiArgs ii of
-          [(D.JumpOffset D.ZSize _, _)] -> jmpInstr
+          [(D.JumpOffset D.JSize32 _, _)] -> jmpInstr
           [(D.JumpOffset _ _, _)] -> error ("Expected a 4-byte jump offset: " ++ show ii)
           _ -> XI ii
 
@@ -206,7 +207,7 @@ x64MakeTrapIf _ii tp =
                           ]
   where
     trap = makeInstr "int3" []
-    jmpOff = D.JumpOffset D.ZSize (fromIntegral (x64Size trap))
+    jmpOff = D.JumpOffset D.JSize32 (D.FixedOffset (fromIntegral (x64Size trap)))
 
 addrRefToAddress :: (D.AddrRef -> TargetAddress) -> D.Value -> TargetAddress
 addrRefToAddress f v =
@@ -258,7 +259,7 @@ x64SymbolizeAddresses mem _lookup insnAddr mSymbolicTarget xi@(XI ii)
   | otherwise = [R.tagInstruction mSymbolicTarget newInsn]
   where
     newInsn = XI (ii { D.iiArgs = fmap (saveAbsoluteRipAddresses mem insnAddr xi) (D.iiArgs ii) })
-    XI jmpInstr0 = makeInstr (D.iiOp ii) [D.JumpOffset D.ZSize 0]
+    XI jmpInstr0 = makeInstr (D.iiOp ii) [D.JumpOffset D.JSize32 (D.FixedOffset 0)]
     jmpInstr = XI (jmpInstr0 { D.iiArgs = fmap (saveAbsoluteRipAddresses mem insnAddr xi) (D.iiArgs jmpInstr0) })
 
 

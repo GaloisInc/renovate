@@ -10,8 +10,7 @@ module Renovate.Arch.X86_64.ABI
 ) where
 
 import           Data.Bits
-import           Data.Int ( Int64 )
-import           Data.Word ( Word32 )
+import           Data.Word ( Word32, Word64 )
 
 import qualified Data.Macaw.X86 as X86
 
@@ -89,7 +88,7 @@ x64AllocateMemory nBytes addr = [ noAddr $ makeInstr "push" [D.QWordReg D.RAX]
                                 , noAddr $ makeInstr "mov" [D.QWordReg D.RSI, D.QWordImm (fromIntegral nBytes)] -- Amount to map
                                 , noAddr $ makeInstr "mov" [D.QWordReg D.RDX, D.QWordImm (prot_Read .|. prot_Write)] -- Memory protection
                                 , noAddr $ makeInstr "mov" [D.QWordReg (D.Reg64 10), D.QWordImm map_Anon] -- An anonymous mapping
-                                , noAddr $ makeInstr "mov" [D.QWordReg (D.Reg64 8), D.QWordImm (-1)] -- FD (should be -1)
+                                , noAddr $ makeInstr "mov" [D.QWordReg (D.Reg64 8), D.QWordImm maxBound] -- FD (should be -1)
                                 , noAddr $ makeInstr "xor" [D.QWordReg (D.Reg64 9), D.QWordReg (D.Reg64 9)]
                                 , noAddr $ makeInstr "syscall" []
                                 -- Save the result FIXME: Error checking
@@ -108,13 +107,13 @@ x64AllocateMemory nBytes addr = [ noAddr $ makeInstr "push" [D.QWordReg D.RAX]
   where
     destAddr = D.Addr_64 D.DS (Just D.RDI) Nothing D.NoDisplacement
 
-prot_Read :: Int64
+prot_Read :: Word64
 prot_Read = 0x1
 
-prot_Write :: Int64
+prot_Write :: Word64
 prot_Write = 0x2
 
-map_Anon :: Int64
+map_Anon :: Word64
 map_Anon = 0x20
 
 noAddr :: Instruction () -> Instruction TargetAddress
@@ -180,4 +179,4 @@ x64CheckShadowStack memAddr =
     retAddrRef = D.Addr_64 D.DS (Just D.RSP) Nothing (D.Disp8 8)
 
     trap = makeInstr "int3" []
-    jmpOff = D.JumpOffset D.ZSize (fromIntegral (x64Size trap))
+    jmpOff = D.JumpOffset D.JSize32 (D.FixedOffset (fromIntegral (x64Size trap)))
