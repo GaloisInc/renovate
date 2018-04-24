@@ -58,4 +58,5 @@ instance SG.Semigroup Diagnostics where
 
 instance Monoid Diagnostics where
   mempty = Diagnostics { diagnosticMessages = Seq.empty }
+  mappend = (SG.<>)
 
