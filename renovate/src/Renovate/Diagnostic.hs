@@ -9,6 +9,7 @@ module Renovate.Diagnostic
 where
 
 import qualified Control.Monad.Catch as E
+import qualified Data.Semigroup as SG
 import qualified Data.Sequence as Seq
 import           Data.Typeable ( Typeable )
 import           Data.Word ( Word64 )
@@ -52,7 +53,9 @@ instance E.Exception Diagnostic
 data Diagnostics = Diagnostics { diagnosticMessages :: !(Seq.Seq Diagnostic) }
                  deriving (Show)
 
+instance SG.Semigroup Diagnostics where
+  (<>) !d1 !d2 = Diagnostics { diagnosticMessages = diagnosticMessages d1 `mappend` diagnosticMessages d2 }
+
 instance Monoid Diagnostics where
   mempty = Diagnostics { diagnosticMessages = Seq.empty }
-  mappend !d1 !d2 = Diagnostics { diagnosticMessages = diagnosticMessages d1 `mappend` diagnosticMessages d2 }
 

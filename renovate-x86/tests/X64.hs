@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs            #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 -- | Tests for the x64 ABI
 module X64 ( x64Tests ) where
@@ -69,7 +70,7 @@ data ExpectedResult = ExpectedResult { expectedBlocks :: [ExpectedBlock]
                                      }
                     deriving (Read, Show, Eq)
 
-class (KnownNat (MM.ArchAddrWidth arch)) => TestConstraint arch b where
+class (KnownNat (MM.ArchAddrWidth arch)) => TestConstraint arch (b :: * -> *) where
 instance TestConstraint R64.X86_64 b
 
 mkTest :: FilePath -> T.TestTree
@@ -78,18 +79,18 @@ mkTest fp = T.testCase fp $ withELF elfFilename testRewrite
     testRewrite :: E.Elf 64 -> IO ()
     testRewrite elf = do
       Just expected <- readMaybe <$> readFile (fp <.> "expected")
-      let cfg :: [(R.Architecture, R.SomeConfig TestConstraint (Bool, [String]))]
+      let cfg :: [(R.Architecture, R.SomeConfig TestConstraint TestConfig)]
           cfg = [(R.X86_64, R.SomeConfig NR.knownNat (R64.config (analysis expected) R.identity))]
       R.withElfConfig (E.Elf64 elf) cfg testBlockRecovery
 
     elfFilename = replaceExtension fp "exe"
 
-analysis :: ExpectedResult -> R.ISA R64.X86_64 -> MM.Memory 64 -> R.BlockInfo R64.X86_64 -> (Bool,[String])
+analysis :: ExpectedResult -> R.ISA R64.X86_64 -> MM.Memory 64 -> R.BlockInfo R64.X86_64 -> TestConfig R64.X86_64
 analysis expected isa _mem blocks =
-  foldr go (True,[]) (R.biBlocks blocks)
+  foldr go (TestCfg True []) (R.biBlocks blocks)
   where
-    go :: R.ConcreteBlock R64.X86_64 -> (Bool,[String]) -> (Bool,[String])
-    go b (bacc,sacc) =
+    go :: R.ConcreteBlock R64.X86_64 -> TestConfig R64.X86_64 -> TestConfig R64.X86_64
+    go b inp@(TestCfg _bacc sacc) =
       let actual = ExpectedBlock { addr = fromIntegral (R.absoluteAddress (R.basicBlockAddress b))
                                  , byteCount = R.concreteBlockSize isa b
                                  , insnCount = length (R.basicBlockInstructions b)
@@ -97,13 +98,15 @@ analysis expected isa _mem blocks =
           blockStr = unlines (map (R.isaPrettyInstruction isa) (R.basicBlockInstructions b))
       in case M.lookup (addr actual) expectedMap of
         Nothing
-          | S.member (addr actual) ignoreSet -> (bacc,sacc)
-          | otherwise -> (False,("Unexpected block: " ++ show actual ++ " with instructions\n" ++ blockStr):sacc)
+          | S.member (addr actual) ignoreSet -> inp
+          | otherwise -> TestCfg False (("Unexpected block: " ++ show actual ++ " with instructions\n" ++ blockStr):sacc)
         Just eb -> case eb == actual of
-                   True  -> (bacc, sacc)
-                   False -> (False, ("Block mismatch:\n" ++ blockStr):sacc)
+                   True  -> inp
+                   False -> TestCfg False $ ("Block mismatch:\n" ++ blockStr):sacc
     expectedMap = M.fromList [ (addr eb, eb) | eb <- expectedBlocks expected ]
     ignoreSet = S.fromList (ignoreBlocks expected)
+
+data TestConfig a = TestCfg Bool [String]
 
 testBlockRecovery :: (w ~ MM.ArchAddrWidth arch,
                       R.InstructionConstraints arch,
@@ -111,12 +114,12 @@ testBlockRecovery :: (w ~ MM.ArchAddrWidth arch,
                       KnownNat w,
                       Typeable w,
                       R.ArchBits arch)
-                  => R.RenovateConfig arch (Bool,[String])
+                  => R.RenovateConfig arch TestConfig
                   -> E.Elf w
                   -> MM.Memory w
                   -> T.Assertion
 testBlockRecovery rc elf mem = do
-  ((status, msgs), _) <- R.analyzeElf rc elf mem
+  ((TestCfg status msgs), _) <- R.analyzeElf rc elf mem
   T.assertBool (unlines ("Analysis Failed:" : msgs)) status
 
 withELF :: FilePath -> (E.Elf 64 -> IO ()) -> IO ()

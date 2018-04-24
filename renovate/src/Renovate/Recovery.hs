@@ -15,6 +15,7 @@ module Renovate.Recovery (
   isIncompleteBlockAddress,
   ArchBits,
   ArchInfo(..),
+  ArchVals(..),
   Diagnostic(..)
   ) where
 
@@ -44,6 +45,7 @@ import qualified Lang.Crucible.CFG.Core as C
 import qualified Lang.Crucible.FunctionHandle as C
 import qualified Lang.Crucible.FunctionName as C
 import qualified Lang.Crucible.ProgramLoc as C
+import qualified Lang.Crucible.Solver.SimpleBackend as C
 
 import           Renovate.Address
 import           Renovate.BasicBlock
@@ -96,13 +98,18 @@ analyzeDiscoveredFunctions recovery mem info !iterations =
         _ -> return ()
       analyzeDiscoveredFunctions recovery mem info' (iterations + 1)
 
+data ArchVals arch =
+  ArchVals { archFunctions :: MS.MacawSymbolicArchFunctions arch
+           , withArchEval :: forall a t . C.SimpleBackend t -> (MS.MacawArchEvalFn (C.SimpleBackend t) arch -> IO a) -> IO a
+           }
+
 -- | A class to capture the architecture-specific information required to
 -- perform block recovery and translation into a Crucible CFG.
 --
 -- For architectures that do not have a symbolic backend yet, have this function
 -- return 'Nothing'.
 class ArchInfo arch where
-  archFunctions :: proxy arch -> Maybe (MS.MacawSymbolicArchFunctions arch)
+  archVals :: proxy arch -> Maybe (ArchVals arch)
 
 toCFG :: forall arch ids s
        . (ArchBits arch)
@@ -110,7 +117,7 @@ toCFG :: forall arch ids s
       -> MC.DiscoveryFunInfo arch ids
       -> Maybe (ST s (C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch)))
 toCFG halloc dfi = do
-  archFns <- archFunctions (Proxy @arch)
+  archFns <- archFunctions <$> archVals (Proxy @arch)
   -- We only support statically linked binaries right now, so we don't have
   -- to deal with segments
   let memBaseVarMap = M.empty
