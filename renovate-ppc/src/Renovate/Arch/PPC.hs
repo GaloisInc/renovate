@@ -34,6 +34,7 @@ import qualified Data.Macaw.Memory as MM
 import           Data.Macaw.Types ( BVType )
 
 import qualified Data.Macaw.PPC as MP
+import qualified Data.Macaw.PPC.Symbolic as MPS
 
 import qualified Renovate as R
 import           Renovate.Arch.PPC.ISA
@@ -99,10 +100,18 @@ config64 tocMap analysis rewriter =
                    }
 
 instance R.ArchInfo MP.PPC64 where
-  archVals _ = Nothing
+  archVals _ = Just (R.ArchVals { R.archFunctions = MPS.ppc64MacawSymbolicFns
+                                , R.withArchEval = \sym k -> do
+                                    sfns <- MPS.newSymFuns sym
+                                    k (MPS.ppc64MacawEvalFn sfns)
+                                })
 
 instance R.ArchInfo MP.PPC32 where
-  archVals _ = Nothing
+  archVals _ = Just (R.ArchVals { R.archFunctions = MPS.ppc32MacawSymbolicFns
+                                , R.withArchEval = \sym k -> do
+                                    sfns <- MPS.newSymFuns sym
+                                    k (MPS.ppc32MacawEvalFn sfns)
+                                })
 
 {- Note [Layout Addresses]
 

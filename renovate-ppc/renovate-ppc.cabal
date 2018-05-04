@@ -26,6 +26,7 @@ library
                        parameterized-utils,
                        macaw-base,
                        macaw-ppc,
+                       macaw-ppc-symbolic,
                        dismantle-tablegen,
                        dismantle-ppc,
                        renovate
