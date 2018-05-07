@@ -42,6 +42,7 @@ import qualified Data.Macaw.Symbolic as MS
 import qualified Data.Parameterized.Context as Ctx
 import qualified Data.Parameterized.Some as PU
 import qualified Lang.Crucible.CFG.Core as C
+import qualified Lang.Crucible.CFG.Extension as C
 import qualified Lang.Crucible.FunctionHandle as C
 import qualified Lang.Crucible.FunctionName as C
 import qualified Lang.Crucible.ProgramLoc as C
@@ -101,6 +102,7 @@ analyzeDiscoveredFunctions recovery mem info !iterations =
 data ArchVals arch =
   ArchVals { archFunctions :: MS.MacawSymbolicArchFunctions arch
            , withArchEval :: forall a t . C.SimpleBackend t -> (MS.MacawArchEvalFn (C.SimpleBackend t) arch -> IO a) -> IO a
+           , withArchConstraints :: forall a . ((C.IsSyntaxExtension (MS.MacawExt arch), MC.MemWidth (MC.ArchAddrWidth arch)) => a) -> a
            }
 
 -- | A class to capture the architecture-specific information required to

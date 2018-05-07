@@ -34,6 +34,9 @@ import qualified Data.Macaw.Memory as MM
 import           Data.Macaw.Types ( BVType )
 
 import qualified Data.Macaw.PPC as MP
+-- FIXME: We probably shouldn't need this import, since the PPCReg type is
+-- re-exported from Data.Macaw.PPC
+import           Data.Macaw.PPC.PPCReg ()
 import qualified Data.Macaw.PPC.Symbolic as MPS
 
 import qualified Renovate as R
@@ -104,6 +107,7 @@ instance R.ArchInfo MP.PPC64 where
                                 , R.withArchEval = \sym k -> do
                                     sfns <- MPS.newSymFuns sym
                                     k (MPS.ppc64MacawEvalFn sfns)
+                                , R.withArchConstraints = \x -> x
                                 })
 
 instance R.ArchInfo MP.PPC32 where
@@ -111,6 +115,7 @@ instance R.ArchInfo MP.PPC32 where
                                 , R.withArchEval = \sym k -> do
                                     sfns <- MPS.newSymFuns sym
                                     k (MPS.ppc32MacawEvalFn sfns)
+                                , R.withArchConstraints = \x -> x
                                 })
 
 {- Note [Layout Addresses]

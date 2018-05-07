@@ -75,6 +75,7 @@ instance R.ArchInfo X86.X86_64 where
                                 , R.withArchEval = \sym k -> do
                                     sfns <- SX86.newSymFuns sym
                                     k (SX86.x86_64MacawEvalFn sfns)
+                                , R.withArchConstraints = \x -> x
                                 })
 
 {- Note [Layout Addresses]
