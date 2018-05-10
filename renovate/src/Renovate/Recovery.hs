@@ -12,6 +12,8 @@ module Renovate.Recovery (
   Recovery(..),
   recoverBlocks,
   BlockInfo(..),
+  SymbolicCFG,
+  getSymbolicCFG,
   isIncompleteBlockAddress,
   ArchBits,
   ArchInfo(..),
@@ -22,10 +24,12 @@ module Renovate.Recovery (
 import qualified GHC.Err.Located as L
 import qualified Control.Lens as L
 import qualified Control.Monad.Catch as C
+import           Control.Monad ( guard )
 import           Control.Monad.ST ( stToIO, ST, RealWorld )
 import qualified Data.ByteString as B
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Foldable as F
+import qualified Data.IORef as IO
 import qualified Data.Map as M
 import           Data.Maybe ( catMaybes, fromMaybe, mapMaybe )
 import           Data.Proxy ( Proxy(..) )
@@ -61,6 +65,23 @@ type ArchBits arch = (  MC.ArchConstraints arch,
                         ArchInfo arch,
                         Show (MC.ArchReg arch (MC.BVType (MC.ArchAddrWidth arch))))
 
+type SCFG arch = C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch)
+data SymbolicCFG arch = SymbolicCFG (IO.IORef (Maybe (SCFG arch))) (IO (SCFG arch))
+
+-- | Construct or return the cached symbolic CFG
+--
+-- We have this representation to let us lazily construct CFGs, as we won't
+-- usually need all of them
+getSymbolicCFG :: SymbolicCFG arch -> IO (C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch))
+getSymbolicCFG (SymbolicCFG r gen) = do
+  v0 <- IO.readIORef r
+  case v0 of
+    Just c -> return c
+    Nothing -> do
+      c <- gen
+      IO.writeIORef r (Just c)
+      return c
+
 -- | Information on recovered basic blocks
 data BlockInfo arch = BlockInfo
   { biBlocks           :: [ConcreteBlock arch]
@@ -70,7 +91,7 @@ data BlockInfo arch = BlockInfo
   , biIncomplete       :: S.Set (ConcreteAddress arch)
   -- ^ The set of blocks that reside in incomplete functions (i.e., functions
   -- for which we cannot find all of the code)
-  , biCFG              :: M.Map (ConcreteAddress arch) (C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch))
+  , biCFG              :: M.Map (ConcreteAddress arch) (SymbolicCFG arch)
   -- ^ The Crucible CFG for each function (if possible to construct), see
   -- Note [CrucibleCFG]
   }
@@ -158,19 +179,20 @@ blockInfo recovery mem di = do
                               , Just funcAddr <- [concreteFromSegmentOff mem (MC.discoveredFunAddr dfi)]
                               , let blockAddrs = mapMaybe (concreteFromSegmentOff mem) (M.keys (dfi L.^. MC.parsedBlocks))
                               ]
-  let cfgs = M.fromList [ (funcAddr, stToIO cfg)
-                        | PU.Some dfi <- M.elems (di L.^. MC.funInfo)
-                        , not (isIncompleteFunction dfi)
-                        , Just funcAddr <- [concreteFromSegmentOff mem (MC.discoveredFunAddr dfi)]
-                        , Just cfg <- [toCFG (recoveryHandleAllocator recovery) dfi]
-                        ]
-  cfgs' <- T.sequence cfgs
+  mcfgs <- T.forM (M.elems (di L.^. MC.funInfo)) $ \(PU.Some dfi) -> do
+    ior <- IO.newIORef Nothing
+    fromMaybe (return Nothing) $ do
+      guard (not (isIncompleteFunction dfi))
+      funcAddr <- concreteFromSegmentOff mem (MC.discoveredFunAddr dfi)
+      cfgGen <- toCFG (recoveryHandleAllocator recovery) dfi
+      return (return (Just (funcAddr, SymbolicCFG ior (stToIO cfgGen))))
+
   return BlockInfo { biBlocks = blocks
                    , biFunctionEntries = mapMaybe (concreteFromSegmentOff mem) funcEntries
                    , biFunctionBlocks = funcBlocks
                    , biDiscoveryFunInfo = infos
                    , biIncomplete = indexIncompleteBlocks mem infos
-                   , biCFG = cfgs'
+                   , biCFG = M.fromList (catMaybes mcfgs)
                    }
   where
     absoluteBlockStarts = S.fromList [ entry

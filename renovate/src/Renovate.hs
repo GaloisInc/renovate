@@ -36,6 +36,8 @@ module Renovate
   B.SymbolicInfo(..),
   Recovery.BlockInfo(..),
   Recovery.isIncompleteBlockAddress,
+  Recovery.SymbolicCFG,
+  Recovery.getSymbolicCFG,
   B.instructionAddresses,
   B.instructionAddresses',
   B.concreteBlockSize,
