@@ -69,6 +69,7 @@ type InstructionConstraints arch =
   , PD.Pretty (Instruction arch (InstructionAnnotation arch))
   , Show (Instruction arch (InstructionAnnotation arch))
   , Show (Instruction arch ())
+  , Ord (RegisterType arch)
   , Typeable (Instruction arch (InstructionAnnotation arch))
   , Typeable (Instruction arch ())
   , MC.MemWidth (MC.ArchAddrWidth arch)
