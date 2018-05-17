@@ -18,8 +18,10 @@ module Renovate.Arch.PPC (
   Instruction,
   TargetAddress(..),
   -- * ELF Support
-  MP.tocBaseForELF,
-  MP.tocEntryAddrsForElf,
+  MP.TOC,
+  MP.parseTOC,
+  MP.lookupTOC,
+  MP.entryPoints,
   -- * Instruction Helpers
   toInst,
   fromInst,
@@ -27,11 +29,8 @@ module Renovate.Arch.PPC (
   InstructionDisassemblyFailure(..)
   ) where
 
-import           Data.Proxy ( Proxy(..) )
-import qualified Data.Macaw.AbsDomain.AbsState as MA
 import qualified Data.Macaw.CFG.Core as MC
 import qualified Data.Macaw.Memory as MM
-import           Data.Macaw.Types ( BVType )
 
 import qualified Data.Macaw.PPC as MP
 -- FIXME: We probably shouldn't need this import, since the PPCReg type is
@@ -44,7 +43,7 @@ import           Renovate.Arch.PPC.ISA
 
 -- | A renovate configuration for 32 bit PowerPC
 config32 :: (MM.MemWidth w, w ~ 32, MC.ArchAddrWidth MP.PPC32 ~ w)
-         => (MC.ArchSegmentOff MP.PPC32 -> Maybe (MA.AbsValue 32 (BVType 32)))
+         => MP.TOC MP.PPC32
          -- ^ A mapping from a function entry point address to a (macaw)
          -- abstract value that represents the value in the TOC register at the
          -- entry point to that function.  The value is the address of the table
@@ -63,7 +62,7 @@ config32 tocMap analysis rewriter =
                    , R.rcDisassembler = disassemble
                    , R.rcBlockCallback = Nothing
                    , R.rcFunctionCallback = Nothing
-                   , R.rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC32)
+                   , R.rcELFEntryPoints = \_elf -> MP.entryPoints tocMap -- MP.tocEntryAddrsForElf (Proxy @MP.PPC32)
                    , R.rcAnalysis = analysis
                    , R.rcRewriter = rewriter
                    , R.rcUpdateSymbolTable = False
@@ -74,7 +73,7 @@ config32 tocMap analysis rewriter =
 
 -- | A renovate configuration for 64 bit PowerPC
 config64 :: (MM.MemWidth w, w ~ 64, MC.ArchAddrWidth MP.PPC64 ~ w)
-         => (MC.ArchSegmentOff MP.PPC64 -> Maybe (MA.AbsValue 64 (BVType 64)))
+         => MP.TOC MP.PPC64
          -- ^ A mapping from a function entry point address to a (macaw)
          -- abstract value that represents the value in the TOC register at the
          -- entry point to that function.  The value is the address of the table
@@ -93,7 +92,7 @@ config64 tocMap analysis rewriter =
                    , R.rcDisassembler = disassemble
                    , R.rcBlockCallback = Nothing
                    , R.rcFunctionCallback = Nothing
-                   , R.rcELFEntryPoints = MP.tocEntryAddrsForElf (Proxy @MP.PPC64)
+                   , R.rcELFEntryPoints = \_elf -> MP.entryPoints tocMap -- tocEntryAddrsForElf (Proxy @MP.PPC64)
                    , R.rcAnalysis = analysis
                    , R.rcRewriter = rewriter
                    , R.rcUpdateSymbolTable = False
