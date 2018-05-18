@@ -65,6 +65,8 @@ module Renovate
   FR.FunctionCFG(..),
   -- * Rewriting API
   RW.RewriteM,
+  RW.BlockCFGIndex,
+  RW.mkBlockCFGIndex,
   RW.recordRewrite,
   RW.lookupGlobalVar,
   RW.newGlobalVar,

@@ -6,6 +6,8 @@ module Renovate.Rewrite (
   RewriteM,
   RewriteInfo(..),
   RewriteSite(..),
+  BlockCFGIndex,
+  mkBlockCFGIndex,
   runRewriteM,
   lookupBlockCFG,
   lookupEntryAddress,
@@ -52,12 +54,14 @@ data RewriteInfo arch =
 data RewriteEnv arch =
   RewriteEnv { envCFGs :: M.Map (A.ConcreteAddress arch) (FR.FunctionCFG arch)
              -- ^ A map of function entry point addresses to CFGs
-             , envBlockCFGIndex :: M.Map (A.ConcreteAddress arch) (FR.FunctionCFG arch)
+             , envBlockCFGIndex :: BlockCFGIndex arch
              -- ^ A map of block addresses to the CFG that contains them (if
              -- any)
              , envEntryAddress :: A.ConcreteAddress arch
              , envMemory :: MM.Memory (MM.ArchAddrWidth arch)
              }
+-- | A map of block addresses to the CFG that contains them (if any).
+type BlockCFGIndex arch = M.Map (A.ConcreteAddress arch) (FR.FunctionCFG arch)
 
 -- | A monadic environment for binary rewriting
 newtype RewriteM arch a = RewriteM { unRewriteM :: RWS.RWS (RewriteEnv arch) () (RewriteInfo arch) a }
@@ -66,6 +70,18 @@ newtype RewriteM arch a = RewriteM { unRewriteM :: RWS.RWS (RewriteEnv arch) () 
             Monad,
             RWS.MonadReader (RewriteEnv arch),
             RWS.MonadState (RewriteInfo arch))
+
+-- | Make a mapping from block addresses to their CFGs.
+--
+-- Note: this was factored out of 'runRewriteM' when splitting SFE's
+-- shadow-stack transform into separate analysis and application
+-- phases, since the analysis phase needs access to the CFG. Another
+-- option would be to also run analysis in 'RewriteM'.
+mkBlockCFGIndex :: [FR.FunctionCFG arch] -> BlockCFGIndex arch
+mkBlockCFGIndex cfgs = F.foldl' indexCFGBlocks M.empty cfgs
+  where
+    indexCFGBlocks m c = F.foldl' (indexCFGBlock c) m (FR.cfgBlocks c)
+    indexCFGBlock c m b = M.insert (B.basicBlockAddress b) c m
 
 -- | Run rewriting computation and return its value, along with metadata about
 -- transformations applied.
@@ -87,13 +103,11 @@ runRewriteM mem entryAddr newGlobalBase cfgs i = (res, st)
                             , nextGlobalAddress = newGlobalBase
                             }
     env = RewriteEnv { envCFGs = F.foldl' addCFG M.empty cfgs
-                     , envBlockCFGIndex = F.foldl' indexCFGBlocks M.empty cfgs
+                     , envBlockCFGIndex = mkBlockCFGIndex cfgs
                      , envEntryAddress = entryAddr
                      , envMemory = mem
                      }
     addCFG m c = M.insert (FR.cfgEntry c) c m
-    indexCFGBlocks m c = F.foldl' (indexCFGBlock c) m (FR.cfgBlocks c)
-    indexCFGBlock c m b = M.insert (B.basicBlockAddress b) c m
 
 -- | A function for instrumentors to call when they add
 -- instrumentation to a binary.
