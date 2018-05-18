@@ -48,9 +48,9 @@ import qualified Data.Parameterized.Some as PU
 import qualified Lang.Crucible.CFG.Core as C
 import qualified Lang.Crucible.CFG.Extension as C
 import qualified Lang.Crucible.FunctionHandle as C
-import qualified Lang.Crucible.FunctionName as C
-import qualified Lang.Crucible.ProgramLoc as C
-import qualified Lang.Crucible.Solver.SimpleBackend as C
+import qualified What4.FunctionName as C
+import qualified What4.ProgramLoc as C
+import qualified Lang.Crucible.Backend.Simple as C
 
 import           Renovate.Address
 import           Renovate.BasicBlock
