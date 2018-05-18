@@ -27,6 +27,8 @@ library
                        macaw-x86,
                        macaw-x86-symbolic,
                        macaw-base,
+                       -- macaw-semmc is only being used for the definition of BinaryLoader
+                       macaw-semmc,
                        ansi-wl-pprint,
                        exceptions,
                        prettyprinter,

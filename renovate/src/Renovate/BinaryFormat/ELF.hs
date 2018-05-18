@@ -75,6 +75,7 @@ import           Text.Printf ( printf )
 import           Prelude
 
 import qualified Data.ElfEdit as E
+import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.Memory.ElfLoader as MM
 import qualified Data.Parameterized.Classes as PC
@@ -160,39 +161,45 @@ withElfConfig :: (C.MonadThrow m)
               -- ^ The ELF file to analyze
               -> [(Arch.Architecture, SomeConfig c b)]
               -> (forall arch . (R.ArchBits arch,
+                                  MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch)),
                                   E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                                   B.InstructionConstraints arch,
                                   c arch b)
-                                   => RenovateConfig arch b
+                                   => RenovateConfig arch (E.Elf (MM.ArchAddrWidth arch)) b
                                    -> E.Elf (MM.ArchAddrWidth arch)
-                                   -> MM.Memory (MM.ArchAddrWidth arch)
+                                   -> MBL.LoadedBinary arch (E.Elf (MM.ArchAddrWidth arch))
                                    -> m t)
               -> m t
-withElfConfig e0 configs k =
+withElfConfig e0 configs k = do
   case (e0, withElf e0 E.elfMachine) of
     (E.Elf32 e, E.EM_PPC) ->
       case lookup Arch.PPC32 configs of
         Nothing -> C.throwM (UnsupportedArchitecture E.EM_PPC)
-        Just (SomeConfig nr cfg)
-          | Just PC.Refl <- PC.testEquality nr (NR.knownNat @32) ->
-            withMemory e (k cfg e)
+        Just (SomeConfig nr binRep cfg)
+          | Just PC.Refl <- PC.testEquality nr (NR.knownNat @32)
+          , Just PC.Refl <- PC.testEquality binRep MBL.Elf32Repr -> do
+              MBL.loadBinary loadOpts e >>= k cfg e
           | otherwise -> error ("Invalid NatRepr for PPC32: " ++ show nr)
     (E.Elf32 _, mach) -> C.throwM (UnsupportedArchitecture mach)
     (E.Elf64 e, E.EM_X86_64) ->
       case lookup Arch.X86_64 configs of
         Nothing -> C.throwM (UnsupportedArchitecture E.EM_X86_64)
-        Just (SomeConfig nr cfg)
-          | Just PC.Refl <- PC.testEquality nr (NR.knownNat @64) ->
-              withMemory e (k cfg e)
+        Just (SomeConfig nr binRep cfg)
+          | Just PC.Refl <- PC.testEquality nr (NR.knownNat @64)
+          , Just PC.Refl <- PC.testEquality binRep MBL.Elf64Repr ->
+              MBL.loadBinary loadOpts e >>= k cfg e
           | otherwise -> error ("Invalid NatRepr for X86_64: " ++ show nr)
     (E.Elf64 e, E.EM_PPC64) ->
       case lookup Arch.PPC64 configs of
         Nothing -> C.throwM (UnsupportedArchitecture E.EM_PPC64)
-        Just (SomeConfig nr cfg)
-          | Just PC.Refl <- PC.testEquality nr (NR.knownNat @64) ->
-            withMemory e (k cfg e)
+        Just (SomeConfig nr binRep cfg)
+          | Just PC.Refl <- PC.testEquality nr (NR.knownNat @64)
+          , Just PC.Refl <- PC.testEquality binRep MBL.Elf64Repr ->
+              MBL.loadBinary loadOpts e >>= k cfg e
           | otherwise -> error ("Invalid NatRepr for PPC64: " ++ show nr)
     (E.Elf64 _, mach) -> C.throwM (UnsupportedArchitecture mach)
+  where
+    loadOpts = MM.defaultLoadOptions { MM.loadRegionIndex = Just 0 }
 
 -- | Apply a rewriter to an ELF file using the chosen layout strategy.
 --
@@ -203,43 +210,46 @@ withElfConfig e0 configs k =
 rewriteElf :: (B.InstructionConstraints arch,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                R.ArchBits arch)
-           => RenovateConfig arch b
+           => RenovateConfig arch binFmt b
            -- ^ The configuration for the rewriter
            -> E.Elf (MM.ArchAddrWidth arch)
            -- ^ The ELF file to rewrite
-           -> MM.Memory (MM.ArchAddrWidth arch)
+           -> MBL.LoadedBinary arch binFmt
            -- ^ A representation of the contents of memory of the ELF file
            -- (including statically-allocated data)
            -> RE.LayoutStrategy
            -- ^ The layout strategy for blocks in the new binary
            -> IO (E.Elf (MM.ArchAddrWidth arch), b arch, RewriterInfo arch)
-rewriteElf cfg e mem strat = do
+rewriteElf cfg e loadedBinary strat = do
     (analysisResult, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
     return (_riELF ri, analysisResult, ri)
   where
     act = do
+      let mem = MBL.memoryImage loadedBinary
+      -- FIXME: Use the symbol map from the loaded binary (which we still need to add)
       symmap <- withCurrentELF (buildSymbolMap mem)
-      doRewrite cfg mem symmap strat
+      doRewrite cfg loadedBinary symmap strat
 
 -- | Run an analysis over an ELF file without performing any rewriting.
 analyzeElf :: (B.InstructionConstraints arch,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                R.ArchBits arch)
-           => RenovateConfig arch b
+           => RenovateConfig arch binFmt b
            -- ^ The configuration for the analysis
            -> E.Elf (MM.ArchAddrWidth arch)
            -- ^ The ELF file to analyze
-           -> MM.Memory (MM.ArchAddrWidth arch)
+           -> MBL.LoadedBinary arch binFmt
            -- ^ A representation of the contents of memory of the ELF file
            -- (including statically-allocated data)
            -> IO (b arch, [RM.Diagnostic])
-analyzeElf cfg e mem = do
+analyzeElf cfg e loadedBinary = do
     (b, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
     return (b, _riBlockRecoveryDiagnostics ri)
   where
     act = do
+      let mem = MBL.memoryImage loadedBinary
       symmap <- withCurrentELF (buildSymbolMap mem)
-      doAnalysis cfg mem symmap
+      doAnalysis cfg loadedBinary symmap
 
 withElf :: E.SomeElf E.Elf -> (forall w . E.Elf w -> a) -> a
 withElf e k =
@@ -248,15 +258,15 @@ withElf e k =
     E.Elf64 e64 -> k e64
 
 -- | Extract the 'MM.Memory' from an ELF file.
-withMemory :: forall w m a
-            . (C.MonadThrow m, MM.MemWidth w, Integral (E.ElfWordType w))
+withMemory :: forall w m a arch
+            . (C.MonadThrow m, MM.MemWidth w, Integral (E.ElfWordType w),
+               w ~ MM.ArchAddrWidth arch,
+               MBL.BinaryLoader arch (E.Elf w))
            => E.Elf w
-           -> (MM.Memory w -> m a)
+           -> (MBL.LoadedBinary arch (E.Elf w) -> m a)
            -> m a
-withMemory e k =
-  case MM.memoryForElf loadOpts e of
-    Left err -> C.throwM (MemoryLoadError err)
-    Right (_sim, mem, _warnings) -> k mem
+withMemory e k = do
+  MBL.loadBinary loadOpts e >>= k
   where
     loadOpts = MM.defaultLoadOptions { MM.loadRegionIndex = Just 0 }
 
@@ -295,12 +305,12 @@ modifyCurrentELF k = do
 doRewrite :: (B.InstructionConstraints arch,
               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
               R.ArchBits arch)
-          => RenovateConfig arch b
-          -> MM.Memory (MM.ArchAddrWidth arch)
+          => RenovateConfig arch binFmt b
+          -> MBL.LoadedBinary arch binFmt
           -> RM.SymbolMap arch
           -> RE.LayoutStrategy
           -> ElfRewriter arch (b arch)
-doRewrite cfg mem symmap strat = do
+doRewrite cfg loadedBinary symmap strat = do
   -- We pull some information from the unmodified initial binary: the text
   -- section, the entry point(s), and original symbol table (if any).
   textSection <- withCurrentELF findTextSection
@@ -340,7 +350,7 @@ doRewrite cfg mem symmap strat = do
     , overwrittenBytes
     , instrumentedBytes
     , mNewData
-    , newSyms ) <- instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr
+    , newSyms ) <- instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr
                                        (E.elfSectionData textSection) strat layoutAddr dataAddr symmap
 
   (extraTextSecIdx, instrumentationSeg) <- withCurrentELF (newInstrumentationSegment nextSegmentAddress instrumentedBytes)
@@ -381,11 +391,11 @@ doRewrite cfg mem symmap strat = do
 doAnalysis :: (B.InstructionConstraints arch,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                R.ArchBits arch)
-           => RenovateConfig arch b
-           -> MM.Memory (MM.ArchAddrWidth arch)
+           => RenovateConfig arch binFmt b
+           -> MBL.LoadedBinary arch binFmt
            -> RM.SymbolMap arch
            -> ElfRewriter arch (b arch)
-doAnalysis cfg mem symmap = do
+doAnalysis cfg loadedBinary symmap = do
 --  (entryPoint, _otherEntries) <- withCurrentELF (entryPoints mem)
 
   -- We need to compute our instrumentation address *after* we have
@@ -395,7 +405,7 @@ doAnalysis cfg mem symmap = do
 --  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral nextSegmentAddress :: Word64)
   riSegmentVirtualAddress L..= Just (fromIntegral nextSegmentAddress)
 
-  analysisResult <- analyzeTextSection cfg mem symmap
+  analysisResult <- analyzeTextSection cfg loadedBinary symmap
   return analysisResult
 
 buildSymbolMap :: (w ~ MM.ArchAddrWidth arch, Integral (E.ElfWordType w), MM.MemWidth w)
@@ -742,7 +752,7 @@ newInstrumentationSegment startAddr bytes e = do
 -- points to the address of the Table of Contents (TOC) entry for the entry
 -- point.
 findEntryPoints :: (w ~ MM.ArchAddrWidth arch, MM.MemWidth w, Integral (E.ElfWordType w))
-                => RenovateConfig arch b
+                => RenovateConfig arch binFmt b
                 -> E.Elf w
                 -> MM.Memory w
                 -> NEL.NonEmpty (MM.MemSegmentOff w)
@@ -782,13 +792,13 @@ findEntryPoints cfg elf mem =
 -- As a side effect of running the instrumentor, we get information
 -- about how much extra space needs to be reserved in a new data
 -- section.  The new data section is rooted at @newGlobalBase@.
-instrumentTextSection :: forall w arch b
+instrumentTextSection :: forall w arch binFmt b
                        . (w ~ MM.ArchAddrWidth arch,
                           B.InstructionConstraints arch,
                           Integral (E.ElfWordType w),
                           R.ArchBits arch)
-                      => RenovateConfig arch b
-                      -> MM.Memory w
+                      => RenovateConfig arch binFmt b
+                      -> MBL.LoadedBinary arch binFmt
                       -- ^ The memory space
                       -> RA.ConcreteAddress arch
                       -- ^ The address of the start of the text section
@@ -805,7 +815,8 @@ instrumentTextSection :: forall w arch b
                       -> RM.SymbolMap arch
                       -- ^ meta data?
                       -> ElfRewriter arch (b arch, B.ByteString, B.ByteString, Maybe B.ByteString, RM.NewSymbolsMap arch)
-instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes strat layoutAddr newGlobalBase symmap = do
+instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr textBytes strat layoutAddr newGlobalBase symmap = do
+  let mem = MBL.memoryImage loadedBinary
   -- We use an irrefutable match on the entry point -- we are asserting that the
   -- entry point is mapped in the 'MM.Memory' object passed in.
 --  let Just entrySegOff = RA.concreteAsSegmentOff mem entryPoint
@@ -831,14 +842,14 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
     -- This pattern match is only here to deal with the existential
     -- quantification inside of RenovateConfig.
     RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } ->
-      let analysisResult = analysis isa mem blockInfo
+      let analysisResult = analysis isa loadedBinary blockInfo
           Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
       in
       case RW.runRewriteM mem
                           concEntryPoint
                           newGlobalBase
                           cfgs
-                          (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult isa mem) mem strat layoutAddr blocks symmap)
+                          (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult isa loadedBinary) mem strat layoutAddr blocks symmap)
       of
         (rres, info) ->
           case RE.checkRedirection rres of
@@ -861,17 +872,18 @@ instrumentTextSection cfg mem textSectionStartAddr textSectionEndAddr textBytes 
                   let newDataBytes = mkNewDataSection newGlobalBase info
                   return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
 
-analyzeTextSection :: forall w arch b
+analyzeTextSection :: forall w arch binFmt b
                     . (w ~ MM.ArchAddrWidth arch,
                        B.InstructionConstraints arch,
                        Integral (E.ElfWordType w),
                        R.ArchBits arch)
-                   => RenovateConfig arch b
-                   -> MM.Memory w
+                   => RenovateConfig arch binFmt b
+                   -> MBL.LoadedBinary arch binFmt
                    -- ^ The memory space
                    -> RM.SymbolMap arch
                    -> ElfRewriter arch (b arch)
-analyzeTextSection cfg mem symmap = do
+analyzeTextSection cfg loadedBinary symmap = do
+  let mem = MBL.memoryImage loadedBinary
   elfEntryPoints <- withCurrentELF $ \e -> return (findEntryPoints cfg e mem)
 --  traceM ("analyzeTextSection entry point: " ++ show entryPoint)
 --  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
@@ -889,7 +901,7 @@ analyzeTextSection cfg mem symmap = do
   riBlockRecoveryDiagnostics L..= []
   let blocks = R.biBlocks blockInfo
   riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
-  return $! (rcAnalysis cfg) isa mem blockInfo
+  return $! (rcAnalysis cfg) isa loadedBinary blockInfo
 
 mkNewDataSection :: (MM.MemWidth (MM.ArchAddrWidth arch)) => RA.ConcreteAddress arch -> RW.RewriteInfo arch -> Maybe B.ByteString
 mkNewDataSection baseAddr info = do

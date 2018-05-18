@@ -24,6 +24,7 @@ import           Data.Word ( Word64 )
 
 import qualified Data.ElfEdit as E
 import qualified Data.Parameterized.NatRepr as NR
+import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Architecture.Info as MM
 import qualified Data.Macaw.CFG as MM
@@ -46,11 +47,12 @@ import qualified Renovate.Recovery as R
 --   way that there can be a list of 'SomeConfig' while still containing
 --   architecture-parameterized data (where the architecture is hidden by the
 --   existential).
-data SomeConfig c (b :: * -> *) = forall arch
+data SomeConfig c (b :: * -> *) = forall arch binFmt
                   . (B.InstructionConstraints arch,
                      R.ArchBits arch,
+                     MBL.BinaryLoader arch binFmt,
                      c arch b)
-                  => SomeConfig (NR.NatRepr (MM.ArchAddrWidth arch)) (RenovateConfig arch b)
+                  => SomeConfig (NR.NatRepr (MM.ArchAddrWidth arch)) (MBL.BinaryRepr binFmt) (RenovateConfig arch binFmt b)
 
 -- | A trivial constraint for use with 'SomeConfig'.
 class TrivialConfigConstraint arch b
@@ -71,7 +73,7 @@ instance TrivialConfigConstraint arch b
 --
 -- * @arch@ the architecture type tag for the architecture
 -- * @b@ (which is applied to @arch@) the type of analysis results produced by the analysis and passed to the rewriter
-data RenovateConfig arch (b :: * -> *) =
+data RenovateConfig arch binFmt (b :: * -> *) =
   RenovateConfig { rcISA           :: ISA.ISA arch
                  , rcArchInfo      :: MM.ArchitectureInfo arch
                  -- ^ Architecture info for macaw
@@ -88,9 +90,9 @@ data RenovateConfig arch (b :: * -> *) =
                  -- recovery info (a summary of the information returned by
                  -- macaw).  The 'Int' is the number of iterations before
                  -- calling the function callback.
-                 , rcAnalysis      :: ISA.ISA arch -> MM.Memory (MM.ArchAddrWidth arch) -> R.BlockInfo arch -> b arch
+                 , rcAnalysis      :: ISA.ISA arch -> MBL.LoadedBinary arch binFmt -> R.BlockInfo arch -> b arch
                  -- ^ An analysis to run over the code discovered by macaw, generating a summary of type @b@
-                 , rcRewriter      :: b arch -> ISA.ISA arch -> MM.Memory (MM.ArchAddrWidth arch) -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+                 , rcRewriter      :: b arch -> ISA.ISA arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
                  -- ^ A rewriting pass to run over each basic block
                  , rcCodeLayoutBase :: Word64
                  -- ^ The base address to start laying out new code
@@ -124,10 +126,10 @@ compose funcs = go funcs
 
 -- | An identity rewriter (i.e., a rewriter that makes no changes, but forces
 -- everything to be redirected).
-identity :: (Monad m) => b -> ISA.ISA arch -> MM.Memory (MM.ArchAddrWidth arch) -> B.SymbolicBlock arch -> m (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+identity :: (Monad m) => b -> ISA.ISA arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> m (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
 identity _ _ _ sb = return $! Just (B.basicBlockInstructions sb)
 
 -- | A basic block rewriter that leaves a block untouched, preventing the
 -- rewriter from trying to relocate it.
-nop :: Monad m => b -> ISA.ISA arch -> MM.Memory (MM.ArchAddrWidth arch) -> B.SymbolicBlock arch -> m (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+nop :: Monad m => b -> ISA.ISA arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> m (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
 nop _ _ _ _ = return Nothing

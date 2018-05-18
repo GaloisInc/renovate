@@ -55,6 +55,8 @@ library
                        prettyprinter,
                        parameterized-utils,
                        macaw-base,
+                       -- macaw-semmc is only for the binary loader (for now)
+                       macaw-semmc,
                        macaw-symbolic,
                        crucible,
                        elf-edit >= 0.28,

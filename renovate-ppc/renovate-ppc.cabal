@@ -25,6 +25,8 @@ library
                        exceptions,
                        parameterized-utils,
                        macaw-base,
+                       -- macaw-semmc is only being used for the definition of the BinaryLoader
+                       macaw-semmc,
                        macaw-ppc,
                        macaw-ppc-symbolic,
                        dismantle-tablegen,
