@@ -22,7 +22,6 @@ import           Control.Monad.ST ( ST, RealWorld )
 import qualified Data.ByteString as B
 import           Data.Word ( Word64 )
 
-import qualified Data.ElfEdit as E
 import qualified Data.Parameterized.NatRepr as NR
 import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.CFG as MC
@@ -75,16 +74,16 @@ instance TrivialConfigConstraint arch b
 -- * @b@ (which is applied to @arch@) the type of analysis results produced by the analysis and passed to the rewriter
 data RenovateConfig arch binFmt (b :: * -> *) =
   RenovateConfig { rcISA           :: ISA.ISA arch
-                 , rcArchInfo      :: MM.ArchitectureInfo arch
+                 , rcArchInfo      :: MBL.LoadedBinary arch binFmt -> MM.ArchitectureInfo arch
                  -- ^ Architecture info for macaw
                  , rcAssembler     :: forall m . (C.MonadThrow m) => B.Instruction arch () -> m B.ByteString
                  , rcDisassembler  :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, B.Instruction arch ())
-                 , rcELFEntryPoints :: E.Elf (MM.ArchAddrWidth arch) -> [MM.MemAddr (MM.ArchAddrWidth arch)]
+                 , rcELFEntryPoints :: MBL.LoadedBinary arch binFmt -> [MM.MemAddr (MM.ArchAddrWidth arch)]
                  -- ^ Extra entry points that can be discovered from ELF files
                  , rcBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
                  -- ^ A callback called for each discovered block; the argument
                  -- is the address of the discovered block
-                 , rcFunctionCallback :: Maybe (Int, MC.ArchSegmentOff arch -> R.BlockInfo arch -> IO ())
+                 , rcFunctionCallback :: Maybe (Int, MBL.LoadedBinary arch binFmt -> MC.ArchSegmentOff arch -> R.BlockInfo arch -> IO ())
                  -- ^ A callback called for each discovered function.  The
                  -- arguments are the address of the discovered function and the
                  -- recovery info (a summary of the information returned by

@@ -50,6 +50,7 @@ module Renovate.BinaryFormat.ELF (
 import           GHC.Generics ( Generic )
 
 import           Control.Applicative
+import           Control.Arrow ( second )
 import qualified Control.Lens as L
 import           Control.Monad ( guard, when )
 import qualified Control.Monad.Catch as C
@@ -754,23 +755,25 @@ newInstrumentationSegment startAddr bytes e = do
 findEntryPoints :: (w ~ MM.ArchAddrWidth arch, MM.MemWidth w, Integral (E.ElfWordType w))
                 => RenovateConfig arch binFmt b
                 -> E.Elf w
-                -> MM.Memory w
+                -> MBL.LoadedBinary arch binFmt
                 -> NEL.NonEmpty (MM.MemSegmentOff w)
-findEntryPoints cfg elf mem =
+findEntryPoints cfg elf loadedBinary =
   case E.elfMachine elf of
     E.EM_PPC64 ->
       let tocEntryAddr = E.elfEntry elf
           Right addr = MM.readAddr mem MM.BigEndian (MM.absoluteAddr (MM.memWord (fromIntegral tocEntryAddr)))
           Just entryPoint = MM.asSegmentOff mem addr
-      in entryPoint NEL.:| mapMaybe (MM.asSegmentOff mem) (rcELFEntryPoints cfg elf)
+      in entryPoint NEL.:| mapMaybe (MM.asSegmentOff mem) (rcELFEntryPoints cfg loadedBinary)
     E.EM_PPC ->
       let tocEntryAddr = E.elfEntry elf
           Right addr = MM.readAddr mem MM.BigEndian (MM.absoluteAddr (MM.memWord (fromIntegral tocEntryAddr)))
           Just entryPoint = MM.asSegmentOff mem addr
-      in entryPoint NEL.:| mapMaybe (MM.asSegmentOff mem) (rcELFEntryPoints cfg elf)
+      in entryPoint NEL.:| mapMaybe (MM.asSegmentOff mem) (rcELFEntryPoints cfg loadedBinary)
     _ ->
       let Just entryPoint = MM.asSegmentOff mem (MM.absoluteAddr (MM.memWord (fromIntegral (E.elfEntry elf))))
-      in entryPoint NEL.:| mapMaybe (MM.asSegmentOff mem) (rcELFEntryPoints cfg elf)
+      in entryPoint NEL.:| mapMaybe (MM.asSegmentOff mem) (rcELFEntryPoints cfg loadedBinary)
+  where
+    mem = MBL.memoryImage loadedBinary
 
 
 -- | Apply the instrumentor to the given section (which should be the
@@ -823,15 +826,15 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
 --  traceM ("instrumentTextSection entry point: " ++ show entryPoint)
 --  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entrySegOff)
   hdlAlloc <- IO.liftIO C.newHandleAllocator
-  elfEntryPoints@(entryPoint NEL.:| _) <- withCurrentELF $ \e -> return (findEntryPoints cfg e mem)
+  elfEntryPoints@(entryPoint NEL.:| _) <- withCurrentELF $ \e -> return (findEntryPoints cfg e loadedBinary)
   let isa = rcISA cfg
-      archInfo = rcArchInfo cfg
+      archInfo = rcArchInfo cfg loadedBinary
       recovery = R.Recovery { R.recoveryISA = isa
                             , R.recoveryDis = rcDisassembler cfg
                             , R.recoveryArchInfo = archInfo
                             , R.recoveryHandleAllocator = hdlAlloc
                             , R.recoveryBlockCallback = rcBlockCallback cfg
-                            , R.recoveryFuncCallback = rcFunctionCallback cfg
+                            , R.recoveryFuncCallback = fmap (second ($ loadedBinary)) (rcFunctionCallback cfg)
                             }
   blockInfo <- IO.liftIO (R.recoverBlocks recovery mem symmap elfEntryPoints)
   riBlockRecoveryDiagnostics L..= []
@@ -884,18 +887,18 @@ analyzeTextSection :: forall w arch binFmt b
                    -> ElfRewriter arch (b arch)
 analyzeTextSection cfg loadedBinary symmap = do
   let mem = MBL.memoryImage loadedBinary
-  elfEntryPoints <- withCurrentELF $ \e -> return (findEntryPoints cfg e mem)
+  elfEntryPoints <- withCurrentELF $ \e -> return (findEntryPoints cfg e loadedBinary)
 --  traceM ("analyzeTextSection entry point: " ++ show entryPoint)
 --  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
   hdlAlloc <- IO.liftIO C.newHandleAllocator
   let isa      = rcISA cfg
-      archInfo = rcArchInfo cfg
+      archInfo = rcArchInfo cfg loadedBinary
       recovery = R.Recovery { R.recoveryISA = isa
                             , R.recoveryDis = rcDisassembler cfg
                             , R.recoveryArchInfo = archInfo
                             , R.recoveryHandleAllocator = hdlAlloc
                             , R.recoveryBlockCallback = rcBlockCallback cfg
-                            , R.recoveryFuncCallback = rcFunctionCallback cfg
+                            , R.recoveryFuncCallback = fmap (second ($ loadedBinary)) (rcFunctionCallback cfg)
                             }
   blockInfo <- IO.liftIO (R.recoverBlocks recovery mem symmap elfEntryPoints)
   riBlockRecoveryDiagnostics L..= []

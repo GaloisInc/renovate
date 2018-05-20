@@ -56,7 +56,7 @@ config :: (R.ISA X86.X86_64 -> MBL.LoadedBinary X86.X86_64 binFmt -> R.BlockInfo
 config analysis rewriter =
   R.RenovateConfig
     { R.rcISA           = isa
-    , R.rcArchInfo      = X86.x86_64_linux_info
+    , R.rcArchInfo      = const X86.x86_64_linux_info
     , R.rcAssembler     = assemble
     , R.rcDisassembler  = disassemble
     , R.rcBlockCallback = Nothing
