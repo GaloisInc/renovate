@@ -20,6 +20,8 @@ import qualified Test.Tasty.HUnit as T
 import Text.Read ( readMaybe )
 
 import qualified Data.Parameterized.NatRepr as NR
+import qualified Data.Macaw.BinaryLoader as MBL
+import           Data.Macaw.BinaryLoader.X86 ()
 import qualified Data.Macaw.CFG as MM
 
 import qualified Renovate as R
@@ -80,12 +82,12 @@ mkTest fp = T.testCase fp $ withELF elfFilename testRewrite
     testRewrite elf = do
       Just expected <- readMaybe <$> readFile (fp <.> "expected")
       let cfg :: [(R.Architecture, R.SomeConfig TestConstraint TestConfig)]
-          cfg = [(R.X86_64, R.SomeConfig NR.knownNat (R64.config (analysis expected) R.identity))]
+          cfg = [(R.X86_64, R.SomeConfig NR.knownNat MBL.Elf64Repr (R64.config (analysis expected) R.identity))]
       R.withElfConfig (E.Elf64 elf) cfg testBlockRecovery
 
     elfFilename = replaceExtension fp "exe"
 
-analysis :: ExpectedResult -> R.ISA R64.X86_64 -> MM.Memory 64 -> R.BlockInfo R64.X86_64 -> TestConfig R64.X86_64
+analysis :: ExpectedResult -> R.ISA R64.X86_64 -> MBL.LoadedBinary R64.X86_64 binFmt -> R.BlockInfo R64.X86_64 -> TestConfig R64.X86_64
 analysis expected isa _mem blocks =
   foldr go (TestCfg True []) (R.biBlocks blocks)
   where
@@ -110,16 +112,17 @@ data TestConfig a = TestCfg Bool [String]
 
 testBlockRecovery :: (w ~ MM.ArchAddrWidth arch,
                       R.InstructionConstraints arch,
+                      MBL.BinaryLoader arch binFmt,
                       E.ElfWidthConstraints w,
                       KnownNat w,
                       Typeable w,
                       R.ArchBits arch)
-                  => R.RenovateConfig arch TestConfig
+                  => R.RenovateConfig arch binFmt TestConfig
                   -> E.Elf w
-                  -> MM.Memory w
+                  -> MBL.LoadedBinary arch binFmt
                   -> T.Assertion
-testBlockRecovery rc elf mem = do
-  ((TestCfg status msgs), _) <- R.analyzeElf rc elf mem
+testBlockRecovery rc elf loadedBinary = do
+  ((TestCfg status msgs), _) <- R.analyzeElf rc elf loadedBinary
   T.assertBool (unlines ("Analysis Failed:" : msgs)) status
 
 withELF :: FilePath -> (E.Elf 64 -> IO ()) -> IO ()
