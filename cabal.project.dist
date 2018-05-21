@@ -8,7 +8,7 @@ packages: deps/elf-edit/
           deps/macaw/x86_symbolic/
           deps/parameterized-utils/
           deps/crucible/crucible/
-          deps/crucible/galois-matlab/
+          deps/crucible/what4/
           deps/crucible/crucible-llvm/
           deps/llvm-pretty/
           deps/dismantle/dismantle-tablegen/
