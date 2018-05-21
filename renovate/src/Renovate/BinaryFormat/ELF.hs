@@ -65,7 +65,7 @@ import qualified Data.Functor.Identity as I
 import qualified Data.Generics.Product as GL
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
-import           Data.Maybe ( catMaybes, maybeToList, listToMaybe, mapMaybe )
+import           Data.Maybe ( catMaybes, maybeToList, listToMaybe )
 import qualified Data.Vector as V
 import           Data.Monoid
 import qualified Data.Sequence as Seq
@@ -209,6 +209,7 @@ withElfConfig e0 configs k = do
 -- file and some metadata describing the changes made to the file.  Some of the
 -- metadata is provided by rewriter passes in the 'RW.RewriteM' environment.
 rewriteElf :: (B.InstructionConstraints arch,
+               MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                R.ArchBits arch)
            => RenovateConfig arch binFmt b
@@ -233,6 +234,7 @@ rewriteElf cfg e loadedBinary strat = do
 
 -- | Run an analysis over an ELF file without performing any rewriting.
 analyzeElf :: (B.InstructionConstraints arch,
+               MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                R.ArchBits arch)
            => RenovateConfig arch binFmt b
@@ -304,6 +306,7 @@ modifyCurrentELF k = do
 
 -- | The rewriter driver
 doRewrite :: (B.InstructionConstraints arch,
+              MBL.BinaryLoader arch binFmt,
               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
               R.ArchBits arch)
           => RenovateConfig arch binFmt b
@@ -390,6 +393,7 @@ doRewrite cfg loadedBinary symmap strat = do
 
 -- | The analysis driver
 doAnalysis :: (B.InstructionConstraints arch,
+               MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                R.ArchBits arch)
            => RenovateConfig arch binFmt b
@@ -397,8 +401,6 @@ doAnalysis :: (B.InstructionConstraints arch,
            -> RM.SymbolMap arch
            -> ElfRewriter arch (b arch)
 doAnalysis cfg loadedBinary symmap = do
---  (entryPoint, _otherEntries) <- withCurrentELF (entryPoints mem)
-
   -- We need to compute our instrumentation address *after* we have
   -- removed all of the possibly dynamic sections and ensured that
   -- everything will line up.
@@ -745,37 +747,6 @@ newInstrumentationSegment startAddr bytes e = do
                        }
   return (E.ElfSectionIndex txtIdx, seg)
 
--- | Architecture-specific entry point identification
---
--- Most architectures have a simple approach: take the entry point named in the
--- ELF file (and any entry points identified by symbols) and just use those.
--- PowerPC has special treatment because the ELF entry point value actually
--- points to the address of the Table of Contents (TOC) entry for the entry
--- point.
-findEntryPoints :: (w ~ MM.ArchAddrWidth arch, MM.MemWidth w, Integral (E.ElfWordType w))
-                => RenovateConfig arch binFmt b
-                -> E.Elf w
-                -> MBL.LoadedBinary arch binFmt
-                -> NEL.NonEmpty (MM.MemSegmentOff w)
-findEntryPoints cfg elf loadedBinary =
-  case E.elfMachine elf of
-    E.EM_PPC64 ->
-      let tocEntryAddr = E.elfEntry elf
-          Right addr = MM.readAddr mem MM.BigEndian (MM.absoluteAddr (MM.memWord (fromIntegral tocEntryAddr)))
-          Just entryPoint = MM.asSegmentOff mem addr
-      in entryPoint NEL.:| mapMaybe (MM.asSegmentOff mem) (rcELFEntryPoints cfg loadedBinary)
-    E.EM_PPC ->
-      let tocEntryAddr = E.elfEntry elf
-          Right addr = MM.readAddr mem MM.BigEndian (MM.absoluteAddr (MM.memWord (fromIntegral tocEntryAddr)))
-          Just entryPoint = MM.asSegmentOff mem addr
-      in entryPoint NEL.:| mapMaybe (MM.asSegmentOff mem) (rcELFEntryPoints cfg loadedBinary)
-    _ ->
-      let Just entryPoint = MM.asSegmentOff mem (MM.absoluteAddr (MM.memWord (fromIntegral (E.elfEntry elf))))
-      in entryPoint NEL.:| mapMaybe (MM.asSegmentOff mem) (rcELFEntryPoints cfg loadedBinary)
-  where
-    mem = MBL.memoryImage loadedBinary
-
-
 -- | Apply the instrumentor to the given section (which should be the
 -- .text section), while laying out the instrumented version of the
 -- code at the @layoutAddr@.
@@ -797,6 +768,7 @@ findEntryPoints cfg elf loadedBinary =
 -- section.  The new data section is rooted at @newGlobalBase@.
 instrumentTextSection :: forall w arch binFmt b
                        . (w ~ MM.ArchAddrWidth arch,
+                          MBL.BinaryLoader arch binFmt,
                           B.InstructionConstraints arch,
                           Integral (E.ElfWordType w),
                           R.ArchBits arch)
@@ -826,7 +798,7 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
 --  traceM ("instrumentTextSection entry point: " ++ show entryPoint)
 --  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entrySegOff)
   hdlAlloc <- IO.liftIO C.newHandleAllocator
-  elfEntryPoints@(entryPoint NEL.:| _) <- withCurrentELF $ \e -> return (findEntryPoints cfg e loadedBinary)
+  elfEntryPoints@(entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
   let isa = rcISA cfg
       archInfo = rcArchInfo cfg loadedBinary
       recovery = R.Recovery { R.recoveryISA = isa
@@ -877,6 +849,7 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
 
 analyzeTextSection :: forall w arch binFmt b
                     . (w ~ MM.ArchAddrWidth arch,
+                       MBL.BinaryLoader arch binFmt,
                        B.InstructionConstraints arch,
                        Integral (E.ElfWordType w),
                        R.ArchBits arch)
@@ -887,7 +860,7 @@ analyzeTextSection :: forall w arch binFmt b
                    -> ElfRewriter arch (b arch)
 analyzeTextSection cfg loadedBinary symmap = do
   let mem = MBL.memoryImage loadedBinary
-  elfEntryPoints <- withCurrentELF $ \e -> return (findEntryPoints cfg e loadedBinary)
+  elfEntryPoints <- MBL.entryPoints loadedBinary
 --  traceM ("analyzeTextSection entry point: " ++ show entryPoint)
 --  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
   hdlAlloc <- IO.liftIO C.newHandleAllocator
