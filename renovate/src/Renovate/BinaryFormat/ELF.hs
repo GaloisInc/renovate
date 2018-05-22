@@ -4,6 +4,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE NondecreasingIndentation #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -791,30 +792,11 @@ instrumentTextSection :: forall w arch binFmt b
                       -- ^ meta data?
                       -> ElfRewriter arch (b arch, B.ByteString, B.ByteString, Maybe B.ByteString, RM.NewSymbolsMap arch)
 instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr textBytes strat layoutAddr newGlobalBase symmap = do
-  let mem = MBL.memoryImage loadedBinary
-  -- We use an irrefutable match on the entry point -- we are asserting that the
-  -- entry point is mapped in the 'MM.Memory' object passed in.
---  let Just entrySegOff = RA.concreteAsSegmentOff mem entryPoint
---  traceM ("instrumentTextSection entry point: " ++ show entryPoint)
---  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entrySegOff)
-  elfEntryPoints@(entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
-  hdlAlloc <- IO.liftIO C.newHandleAllocator
+  withRewriteEnv cfg loadedBinary symmap $ \env -> do
   let isa = rcISA cfg
-      archInfo = rcArchInfo cfg loadedBinary
-      recovery = R.Recovery { R.recoveryISA = isa
-                            , R.recoveryDis = rcDisassembler cfg
-                            , R.recoveryArchInfo = archInfo
-                            , R.recoveryHandleAllocator = hdlAlloc
-                            , R.recoveryBlockCallback = rcBlockCallback cfg
-                            , R.recoveryFuncCallback = fmap (second ($ loadedBinary)) (rcFunctionCallback cfg)
-                            }
-  blockInfo <- IO.liftIO (R.recoverBlocks recovery mem symmap elfEntryPoints)
-  riBlockRecoveryDiagnostics L..= []
+  let blockInfo = RW.envBlockInfo env
   let blocks = R.biBlocks blockInfo
-  riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
-  let cfgs = FR.recoverFunctions isa mem blockInfo
-      Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
-      env = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo
+  let mem = RW.envMemory env
   case cfg of
     -- This pattern match is only here to deal with the existential
     -- quantification inside of RenovateConfig.
@@ -844,7 +826,9 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
                   let newDataBytes = mkNewDataSection newGlobalBase info
                   return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
 
-analyzeTextSection :: forall w arch binFmt b
+-- | The common code between 'analyzeTextSection' and
+-- 'instrumentTextSection' that sets up the 'RewriteEnv'.
+withRewriteEnv :: forall w arch binFmt b a
                     . (w ~ MM.ArchAddrWidth arch,
                        MBL.BinaryLoader arch binFmt,
                        B.InstructionConstraints arch,
@@ -854,9 +838,12 @@ analyzeTextSection :: forall w arch binFmt b
                    -> MBL.LoadedBinary arch binFmt
                    -- ^ The memory space
                    -> RM.SymbolMap arch
-                   -> ElfRewriter arch (b arch)
-analyzeTextSection cfg loadedBinary symmap = do
+                   -> (RW.RewriteEnv arch -> ElfRewriter arch a)
+                   -> ElfRewriter arch a
+withRewriteEnv cfg loadedBinary symmap k = do
   let mem = MBL.memoryImage loadedBinary
+  -- We use an irrefutable match on the entry point -- we are asserting that the
+  -- entry point is mapped in the 'MM.Memory' object passed in.
 --  traceM ("analyzeTextSection entry point: " ++ show entryPoint)
 --  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
   elfEntryPoints@(entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
@@ -877,6 +864,21 @@ analyzeTextSection cfg loadedBinary symmap = do
   let cfgs = FR.recoverFunctions isa mem blockInfo
       Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
       env = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo
+  k env
+
+analyzeTextSection :: forall w arch binFmt b
+                    . (w ~ MM.ArchAddrWidth arch,
+                       MBL.BinaryLoader arch binFmt,
+                       B.InstructionConstraints arch,
+                       Integral (E.ElfWordType w),
+                       R.ArchBits arch)
+                   => RenovateConfig arch binFmt b
+                   -> MBL.LoadedBinary arch binFmt
+                   -- ^ The memory space
+                   -> RM.SymbolMap arch
+                   -> ElfRewriter arch (b arch)
+analyzeTextSection cfg loadedBinary symmap = do
+  withRewriteEnv cfg loadedBinary symmap $ \env -> do
   return $! (rcAnalysis cfg) env loadedBinary
 
 mkNewDataSection :: (MM.MemWidth (MM.ArchAddrWidth arch)) => RA.ConcreteAddress arch -> RW.RewriteInfo arch -> Maybe B.ByteString
