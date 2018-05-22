@@ -29,6 +29,7 @@ import qualified Data.Macaw.CFG as MM
 import qualified Renovate.Address as A
 import qualified Renovate.BasicBlock as B
 import qualified Renovate.Analysis.FunctionRecovery as FR
+import qualified Renovate.Recovery as RR
 
 data RewriteSite arch =
   RewriteSite { siteDescriptor :: (B.SymbolicInfo arch, Word)
@@ -59,7 +60,11 @@ data RewriteEnv arch =
              -- ^ A map of block addresses to the CFG that contains them (if
              -- any)
              , envEntryAddress :: A.ConcreteAddress arch
+             -- ^ The address of the entry point of the program
              , envMemory :: MM.Memory (MM.ArchAddrWidth arch)
+             -- ^ The program memory
+             , envBlockInfo :: RR.BlockInfo arch
+             -- ^ Information on recovered basic blocks
              }
 -- | A map of block addresses to the CFG that contains them (if any).
 type BlockCFGIndex arch = M.Map (A.ConcreteAddress arch) (FR.FunctionCFG arch)
@@ -85,15 +90,15 @@ mkBlockCFGIndex cfgs = F.foldl' indexCFGBlocks M.empty cfgs
 mkRewriteEnv :: [FR.FunctionCFG arch]
                 -- ^ The control flow graphs discovered by previous analysis
              -> A.ConcreteAddress arch
-                -- ^ The address of the entry point of the program
              -> MM.Memory (MM.ArchAddrWidth arch)
-                -- ^ The program memory
+             -> RR.BlockInfo arch
              -> RewriteEnv arch
-mkRewriteEnv cfgs entryAddr mem =
+mkRewriteEnv cfgs entryAddr mem blockInfo =
   RewriteEnv { envCFGs = F.foldl' addCFG M.empty cfgs
              , envBlockCFGIndex = mkBlockCFGIndex cfgs
              , envEntryAddress = entryAddr
              , envMemory = mem
+             , envBlockInfo = blockInfo
              }
   where
     addCFG m c = M.insert (FR.cfgEntry c) c m

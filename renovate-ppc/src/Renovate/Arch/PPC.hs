@@ -45,7 +45,7 @@ import           Renovate.Arch.PPC.ISA
 
 -- | A renovate configuration for 32 bit PowerPC
 config32 :: (MM.MemWidth w, w ~ 32, MC.ArchAddrWidth MP.PPC32 ~ w, MBL.BinaryLoader MP.PPC32 binFmt, MBL.ArchBinaryData MP.PPC32 binFmt ~ MP.TOC MP.PPC32)
-         => (R.RewriteEnv MP.PPC32 -> MBL.LoadedBinary MP.PPC32 binFmt -> R.BlockInfo MP.PPC32 -> a MP.PPC32)
+         => (R.RewriteEnv MP.PPC32 -> MBL.LoadedBinary MP.PPC32 binFmt -> a MP.PPC32)
          -- ^ An analysis function that produces a summary result that will be
          -- fed into the rewriter
          -> (a MP.PPC32 -> R.ISA MP.PPC32 -> MBL.LoadedBinary MP.PPC32 binFmt -> R.SymbolicBlock MP.PPC32
@@ -70,7 +70,7 @@ config32 analysis rewriter =
 
 -- | A renovate configuration for 64 bit PowerPC
 config64 :: (MM.MemWidth w, w ~ 64, MC.ArchAddrWidth MP.PPC64 ~ w, MBL.BinaryLoader MP.PPC64 binFmt, MBL.ArchBinaryData MP.PPC64 binFmt ~ MP.TOC MP.PPC64)
-         => (R.RewriteEnv MP.PPC64 -> MBL.LoadedBinary MP.PPC64 binFmt -> R.BlockInfo MP.PPC64 -> a MP.PPC64)
+         => (R.RewriteEnv MP.PPC64 -> MBL.LoadedBinary MP.PPC64 binFmt -> a MP.PPC64)
          -- ^ An analysis function that produces a summary result that will be
          -- fed into the rewriter
          -> (a MP.PPC64 -> R.ISA MP.PPC64 -> MBL.LoadedBinary MP.PPC64 binFmt -> R.SymbolicBlock MP.PPC64

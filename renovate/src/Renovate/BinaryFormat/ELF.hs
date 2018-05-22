@@ -814,12 +814,12 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
   riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
   let cfgs = FR.recoverFunctions isa mem blockInfo
       Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
-      env = RW.mkRewriteEnv cfgs concEntryPoint mem
+      env = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo
   case cfg of
     -- This pattern match is only here to deal with the existential
     -- quantification inside of RenovateConfig.
     RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } -> do
-      let analysisResult = analysis env loadedBinary blockInfo
+      let analysisResult = analysis env loadedBinary
       case RW.runRewriteM env
                           newGlobalBase
                           (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult isa loadedBinary) mem strat layoutAddr blocks symmap) of
@@ -876,8 +876,8 @@ analyzeTextSection cfg loadedBinary symmap = do
   riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
   let cfgs = FR.recoverFunctions isa mem blockInfo
       Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
-      env = RW.mkRewriteEnv cfgs concEntryPoint mem
-  return $! (rcAnalysis cfg) env loadedBinary blockInfo
+      env = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo
+  return $! (rcAnalysis cfg) env loadedBinary
 
 mkNewDataSection :: (MM.MemWidth (MM.ArchAddrWidth arch)) => RA.ConcreteAddress arch -> RW.RewriteInfo arch -> Maybe B.ByteString
 mkNewDataSection baseAddr info = do
