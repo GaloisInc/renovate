@@ -797,8 +797,8 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
 --  let Just entrySegOff = RA.concreteAsSegmentOff mem entryPoint
 --  traceM ("instrumentTextSection entry point: " ++ show entryPoint)
 --  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entrySegOff)
-  hdlAlloc <- IO.liftIO C.newHandleAllocator
   elfEntryPoints@(entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
+  hdlAlloc <- IO.liftIO C.newHandleAllocator
   let isa = rcISA cfg
       archInfo = rcArchInfo cfg loadedBinary
       recovery = R.Recovery { R.recoveryISA = isa
@@ -813,19 +813,16 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
   let blocks = R.biBlocks blockInfo
   riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
   let cfgs = FR.recoverFunctions isa mem blockInfo
+      Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
+      env = RW.mkRewriteEnv cfgs concEntryPoint mem
   case cfg of
     -- This pattern match is only here to deal with the existential
     -- quantification inside of RenovateConfig.
-    RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } ->
-      let analysisResult = analysis isa loadedBinary blockInfo
-          Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
-      in
-      case RW.runRewriteM mem
-                          concEntryPoint
+    RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } -> do
+      let analysisResult = analysis env loadedBinary blockInfo
+      case RW.runRewriteM env
                           newGlobalBase
-                          cfgs
-                          (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult isa loadedBinary) mem strat layoutAddr blocks symmap)
-      of
+                          (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult isa loadedBinary) mem strat layoutAddr blocks symmap) of
         (rres, info) ->
           case RE.checkRedirection rres of
             Left exn2 -> do
@@ -860,9 +857,9 @@ analyzeTextSection :: forall w arch binFmt b
                    -> ElfRewriter arch (b arch)
 analyzeTextSection cfg loadedBinary symmap = do
   let mem = MBL.memoryImage loadedBinary
-  elfEntryPoints <- MBL.entryPoints loadedBinary
 --  traceM ("analyzeTextSection entry point: " ++ show entryPoint)
 --  riEntryPointAddress L..= (fromIntegral <$> MM.msegAddr entryPoint)
+  elfEntryPoints@(entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
   hdlAlloc <- IO.liftIO C.newHandleAllocator
   let isa      = rcISA cfg
       archInfo = rcArchInfo cfg loadedBinary
@@ -877,7 +874,10 @@ analyzeTextSection cfg loadedBinary symmap = do
   riBlockRecoveryDiagnostics L..= []
   let blocks = R.biBlocks blockInfo
   riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
-  return $! (rcAnalysis cfg) isa loadedBinary blockInfo
+  let cfgs = FR.recoverFunctions isa mem blockInfo
+      Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
+      env = RW.mkRewriteEnv cfgs concEntryPoint mem
+  return $! (rcAnalysis cfg) env loadedBinary blockInfo
 
 mkNewDataSection :: (MM.MemWidth (MM.ArchAddrWidth arch)) => RA.ConcreteAddress arch -> RW.RewriteInfo arch -> Maybe B.ByteString
 mkNewDataSection baseAddr info = do

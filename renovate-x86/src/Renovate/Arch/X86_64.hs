@@ -47,7 +47,7 @@ import           Renovate.Arch.X86_64.Internal ( Value, Instruction, TargetAddre
 --
 -- This configuration is actually specific to Linux due to the system
 -- call personality.
-config :: (R.ISA X86.X86_64 -> MBL.LoadedBinary X86.X86_64 binFmt -> R.BlockInfo X86.X86_64 -> a X86.X86_64)
+config :: (R.RewriteEnv X86.X86_64 -> MBL.LoadedBinary X86.X86_64 binFmt -> R.BlockInfo X86.X86_64 -> a X86.X86_64)
        -- ^ An analysis that produces a summary result to be passed into the rewriter
        -> (a X86.X86_64 -> R.ISA X86.X86_64 -> MBL.LoadedBinary X86.X86_64 binFmt -> R.SymbolicBlock X86.X86_64
              -> R.RewriteM X86.X86_64 (Maybe [R.TaggedInstruction X86.X86_64 TargetAddress]))

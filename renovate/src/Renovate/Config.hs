@@ -89,7 +89,7 @@ data RenovateConfig arch binFmt (b :: * -> *) =
                  -- recovery info (a summary of the information returned by
                  -- macaw).  The 'Int' is the number of iterations before
                  -- calling the function callback.
-                 , rcAnalysis      :: ISA.ISA arch -> MBL.LoadedBinary arch binFmt -> R.BlockInfo arch -> b arch
+                 , rcAnalysis      :: RW.RewriteEnv arch -> MBL.LoadedBinary arch binFmt -> R.BlockInfo arch -> b arch
                  -- ^ An analysis to run over the code discovered by macaw, generating a summary of type @b@
                  , rcRewriter      :: b arch -> ISA.ISA arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
                  -- ^ A rewriting pass to run over each basic block
