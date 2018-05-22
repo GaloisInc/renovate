@@ -4,10 +4,11 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Renovate.Rewrite (
   RewriteM,
+  RewriteEnv(..),
   RewriteInfo(..),
   RewriteSite(..),
   BlockCFGIndex,
-  mkBlockCFGIndex,
+  mkRewriteEnv,
   runRewriteM,
   lookupBlockCFG,
   lookupEntryAddress,
@@ -72,42 +73,46 @@ newtype RewriteM arch a = RewriteM { unRewriteM :: RWS.RWS (RewriteEnv arch) () 
             RWS.MonadState (RewriteInfo arch))
 
 -- | Make a mapping from block addresses to their CFGs.
---
--- Note: this was factored out of 'runRewriteM' when splitting SFE's
--- shadow-stack transform into separate analysis and application
--- phases, since the analysis phase needs access to the CFG. Another
--- option would be to also run analysis in 'RewriteM'.
 mkBlockCFGIndex :: [FR.FunctionCFG arch] -> BlockCFGIndex arch
 mkBlockCFGIndex cfgs = F.foldl' indexCFGBlocks M.empty cfgs
   where
     indexCFGBlocks m c = F.foldl' (indexCFGBlock c) m (FR.cfgBlocks c)
     indexCFGBlock c m b = M.insert (B.basicBlockAddress b) c m
 
+-- | Make a rewriter environment.
+--
+-- Used with 'runRewriteM', and also in analysis.
+mkRewriteEnv :: [FR.FunctionCFG arch]
+                -- ^ The control flow graphs discovered by previous analysis
+             -> A.ConcreteAddress arch
+                -- ^ The address of the entry point of the program
+             -> MM.Memory (MM.ArchAddrWidth arch)
+                -- ^ The program memory
+             -> RewriteEnv arch
+mkRewriteEnv cfgs entryAddr mem =
+  RewriteEnv { envCFGs = F.foldl' addCFG M.empty cfgs
+             , envBlockCFGIndex = mkBlockCFGIndex cfgs
+             , envEntryAddress = entryAddr
+             , envMemory = mem
+             }
+  where
+    addCFG m c = M.insert (FR.cfgEntry c) c m
+
 -- | Run rewriting computation and return its value, along with metadata about
 -- transformations applied.
-runRewriteM :: MM.Memory (MM.ArchAddrWidth arch)
-            -> A.ConcreteAddress arch
-            -- ^ The address of the entry point of the program
+runRewriteM :: RewriteEnv arch
             -> A.ConcreteAddress arch
             -- ^ The address to start allocating new global variables at
-            -> [FR.FunctionCFG arch]
-            -- ^ The control flow graphs discovered by previous analysis
             -> RewriteM arch a
             -- ^ The rewriting action to run
             -> (a, RewriteInfo arch)
-runRewriteM mem entryAddr newGlobalBase cfgs i = (res, st)
+runRewriteM env newGlobalBase i = (res, st)
   where
     (res, st, _) = RWS.runRWS (unRewriteM i) env emptyInfo
     emptyInfo = RewriteInfo { infoSites = []
                             , newGlobals = M.empty
                             , nextGlobalAddress = newGlobalBase
                             }
-    env = RewriteEnv { envCFGs = F.foldl' addCFG M.empty cfgs
-                     , envBlockCFGIndex = mkBlockCFGIndex cfgs
-                     , envEntryAddress = entryAddr
-                     , envMemory = mem
-                     }
-    addCFG m c = M.insert (FR.cfgEntry c) c m
 
 -- | A function for instrumentors to call when they add
 -- instrumentation to a binary.

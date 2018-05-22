@@ -88,7 +88,7 @@ data RenovateConfig arch (b :: * -> *) =
                  -- recovery info (a summary of the information returned by
                  -- macaw).  The 'Int' is the number of iterations before
                  -- calling the function callback.
-                 , rcAnalysis      :: ISA.ISA arch -> MM.Memory (MM.ArchAddrWidth arch) -> R.BlockInfo arch -> b arch
+                 , rcAnalysis      :: RW.RewriteEnv arch -> R.BlockInfo arch -> b arch
                  -- ^ An analysis to run over the code discovered by macaw, generating a summary of type @b@
                  , rcRewriter      :: b arch -> ISA.ISA arch -> MM.Memory (MM.ArchAddrWidth arch) -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
                  -- ^ A rewriting pass to run over each basic block
