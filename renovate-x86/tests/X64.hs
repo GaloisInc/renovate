@@ -87,17 +87,17 @@ mkTest fp = T.testCase fp $ withELF elfFilename testRewrite
 
     elfFilename = replaceExtension fp "exe"
 
-analysis :: ExpectedResult -> R.ISA R64.X86_64 -> MBL.LoadedBinary R64.X86_64 binFmt -> R.BlockInfo R64.X86_64 -> TestConfig R64.X86_64
-analysis expected isa _mem blocks =
-  foldr go (TestCfg True []) (R.biBlocks blocks)
+analysis :: ExpectedResult -> R.RewriteEnv R64.X86_64 -> MBL.LoadedBinary R64.X86_64 binFmt -> TestConfig R64.X86_64
+analysis expected env _mem =
+  foldr go (TestCfg True []) (R.biBlocks $ R.envBlockInfo env)
   where
     go :: R.ConcreteBlock R64.X86_64 -> TestConfig R64.X86_64 -> TestConfig R64.X86_64
     go b inp@(TestCfg _bacc sacc) =
       let actual = ExpectedBlock { addr = fromIntegral (R.absoluteAddress (R.basicBlockAddress b))
-                                 , byteCount = R.concreteBlockSize isa b
+                                 , byteCount = R.concreteBlockSize R64.isa b
                                  , insnCount = length (R.basicBlockInstructions b)
                                  }
-          blockStr = unlines (map (R.isaPrettyInstruction isa) (R.basicBlockInstructions b))
+          blockStr = unlines (map (R.isaPrettyInstruction R64.isa) (R.basicBlockInstructions b))
       in case M.lookup (addr actual) expectedMap of
         Nothing
           | S.member (addr actual) ignoreSet -> inp

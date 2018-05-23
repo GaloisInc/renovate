@@ -117,7 +117,7 @@ extra-deps:
 - tasty-0.11.3
 - tasty-ant-xml-1.1.1
 - tasty-expected-failure-0.11.0.4
-- tasty-hunit-0.9.2
+- tasty-hunit-0.10.0.1
 - tasty-quickcheck-0.9.1
 - temporary-1.2.1.1
 - text-1.2.2.2
