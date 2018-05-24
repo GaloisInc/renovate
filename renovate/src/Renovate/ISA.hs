@@ -123,7 +123,7 @@ data ISA arch =
         -- ^ Make the given number of bytes of padding instructions.
         -- The semantics of the instruction stream should either be
         -- no-ops or halts (i.e., not meant to be executed).
-      , isaMakeTrapIf :: Instruction arch (InstructionAnnotation arch) -> TrapPredicate -> [Instruction arch (InstructionAnnotation arch)]
+      , isaMakeTrapIf :: forall t. Instruction arch t -> TrapPredicate -> [Instruction arch (InstructionAnnotation arch)]
         -- ^ Create an instruction sequence that halts if the given
         -- instruction meets the given predicate.  For example, it
         -- could create a conditional halt if the instruction created

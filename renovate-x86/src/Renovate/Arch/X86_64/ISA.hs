@@ -196,7 +196,7 @@ x64MakePadding nBytes =
 --
 -- Currently uses 'int3' as the halt instruction.  Other choices could
 -- be reasonable.
-x64MakeTrapIf :: Instruction TargetAddress -> R.TrapPredicate -> [Instruction TargetAddress]
+x64MakeTrapIf :: Instruction t -> R.TrapPredicate -> [Instruction TargetAddress]
 x64MakeTrapIf _ii tp =
   case tp of
     R.SignedOverflow -> [ annotateInstr (makeInstr "jno" [jmpOff]) NoAddress
