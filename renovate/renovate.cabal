@@ -50,7 +50,7 @@ library
                        exceptions >= 0.7 && < 0.9,
                        vector >= 0.10 && < 0.13,
                        lens >= 4 && < 5,
-                       generic-lens >= 0.5 && < 0.6,
+                       generic-lens >= 0.5 && < 1.1,
                        located-base >= 0.1 && < 0.2,
                        prettyprinter,
                        parameterized-utils,
