@@ -64,13 +64,15 @@ import qualified Data.ByteString.Char8 as C8
 import qualified Data.Foldable as F
 import qualified Data.Functor.Identity as I
 import qualified Data.Generics.Product as GL
+import qualified Data.List as L
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
 import           Data.Maybe ( catMaybes, maybeToList, listToMaybe )
-import qualified Data.Vector as V
 import           Data.Monoid
+import qualified Data.Ord as O
 import qualified Data.Sequence as Seq
 import           Data.Typeable ( Typeable )
+import qualified Data.Vector as V
 import           Data.Word ( Word16, Word32, Word64 )
 import           Text.Printf ( printf )
 
@@ -95,6 +97,7 @@ import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as R
 import qualified Renovate.Redirect as RE
 import qualified Renovate.Redirect.Monad as RM
+import qualified Renovate.Redirect.Symbolize as RS
 import qualified Renovate.Rewrite as RW
 
 import           Debug.Trace
@@ -797,11 +800,12 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
   let blockInfo = RW.envBlockInfo env
   let blocks = R.biBlocks blockInfo
   let mem = RW.envMemory env
+  analyzeEnv <- mkAnalyzeEnv cfg env symmap newGlobalBase
   case cfg of
     -- This pattern match is only here to deal with the existential
     -- quantification inside of RenovateConfig.
     RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } -> do
-      let analysisResult = analysis env loadedBinary
+      let analysisResult = analysis analyzeEnv loadedBinary
       case RW.runRewriteM env
                           newGlobalBase
                           (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult isa loadedBinary) mem strat layoutAddr blocks symmap) of
@@ -825,6 +829,41 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
                   (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks
                   let newDataBytes = mkNewDataSection newGlobalBase info
                   return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
+
+-- | Initialize an 'AnalyzeEnv'.
+--
+-- This compute the symbolic blocks, which are recomputed in
+-- 'instrumentTextSection'. If this is too wasteful we could try
+-- caching and reusing.
+mkAnalyzeEnv :: B.InstructionConstraints arch
+             => RenovateConfig arch binFmt b
+             -> RW.RewriteEnv arch
+             -> RM.SymbolMap arch
+             -> RE.ConcreteAddress arch
+             -> ElfRewriter arch (AnalyzeEnv arch)
+mkAnalyzeEnv cfg env symmap newGlobalBase = do
+  let isa = rcISA cfg
+  let mem = RW.envMemory env
+  let blocks = R.biBlocks $ RW.envBlockInfo env
+  symbolicBlockMap <- do
+    let rres = RM.runRewriter isa mem symmap $
+          -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress) (F.toList blocks)))))
+          RS.symbolizeBasicBlocks (L.sortBy (O.comparing RE.basicBlockAddress) blocks)
+    case RE.checkRedirection rres of
+      Left exn -> do
+        -- This failure case is the only 'ElfRewriter' monad stuff in
+        -- 'mkAnalyzeEnv', otherwise it's pure.
+        riRedirectionDiagnostics L..= RE.rdDiagnostics rres
+        C.throwM (RewriterFailure exn (RE.rdDiagnostics rres))
+      Right redir -> do
+        let I.Identity baseSymBlocks = RM.rdBlocks redir
+        return $ Map.fromList [ (RE.basicBlockAddress cb, sb)
+                              | (cb, sb) <- baseSymBlocks ]
+  let analyzeEnv = AnalyzeEnv
+        { aeRewriteEnv = env
+        , aeSymbolicBlockMap = symbolicBlockMap
+        , aeRunRewriteM = RW.runRewriteM env newGlobalBase }
+  return analyzeEnv
 
 -- | The common code between 'analyzeTextSection' and
 -- 'instrumentTextSection' that sets up the 'RewriteEnv'.
@@ -879,7 +918,12 @@ analyzeTextSection :: forall w arch binFmt b
                    -> ElfRewriter arch (b arch)
 analyzeTextSection cfg loadedBinary symmap = do
   withRewriteEnv cfg loadedBinary symmap $ \env -> do
-  return $! (rcAnalysis cfg) env loadedBinary
+  -- See "FIXME" comment for 'dataAddr' in 'doRewrite': it says there
+  -- that this value is wrong, but I assume we should be wrong the
+  -- same way here.
+  let newGlobalBase = RA.concreteFromAbsolute (fromIntegral (rcDataLayoutBase cfg))
+  analyzeEnv <- mkAnalyzeEnv cfg env symmap newGlobalBase
+  return $! (rcAnalysis cfg) analyzeEnv loadedBinary
 
 mkNewDataSection :: (MM.MemWidth (MM.ArchAddrWidth arch)) => RA.ConcreteAddress arch -> RW.RewriteInfo arch -> Maybe B.ByteString
 mkNewDataSection baseAddr info = do

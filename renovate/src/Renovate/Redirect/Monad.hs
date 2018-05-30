@@ -167,7 +167,7 @@ checkRedirection r =
                         , rdIncompleteBlocks = rdIncompleteBlocks r
                         }
 
--- | A wrapper around 'runReaderT' with 'I.Identity' as the base 'Monad'
+-- | A wrapper around 'runRewriterT' with 'I.Identity' as the base 'Monad'
 runRewriter :: ISA arch
             -> MM.Memory (MM.ArchAddrWidth arch)
             -> SymbolMap arch

@@ -9,6 +9,7 @@
 {-# LANGUAGE RankNTypes #-}
 -- | Internal helpers for the ELF rewriting interface
 module Renovate.Config (
+  AnalyzeEnv(..),
   RenovateConfig(..),
   SomeConfig(..),
   TrivialConfigConstraint,
@@ -20,6 +21,7 @@ module Renovate.Config (
 import qualified Control.Monad.Catch as C
 import           Control.Monad.ST ( ST, RealWorld )
 import qualified Data.ByteString as B
+import           Data.Map.Strict ( Map )
 import           Data.Word ( Word64 )
 
 import qualified Data.Parameterized.NatRepr as NR
@@ -28,10 +30,11 @@ import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Architecture.Info as MM
 import qualified Data.Macaw.CFG as MM
 
+import qualified Renovate.Address as RA
 import qualified Renovate.BasicBlock as B
 import qualified Renovate.ISA as ISA
-import qualified Renovate.Rewrite as RW
 import qualified Renovate.Recovery as R
+import qualified Renovate.Rewrite as RW
 
 -- | A wrapper around a 'RenovateConfig' that hides parameters and
 -- allows us to have collections of configs while capturing the
@@ -89,7 +92,7 @@ data RenovateConfig arch binFmt (b :: * -> *) =
                  -- recovery info (a summary of the information returned by
                  -- macaw).  The 'Int' is the number of iterations before
                  -- calling the function callback.
-                 , rcAnalysis      :: RW.RewriteEnv arch -> MBL.LoadedBinary arch binFmt -> b arch
+                 , rcAnalysis      :: AnalyzeEnv arch -> MBL.LoadedBinary arch binFmt -> b arch
                  -- ^ An analysis to run over the code discovered by macaw, generating a summary of type @b@
                  , rcRewriter      :: b arch -> ISA.ISA arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
                  -- ^ A rewriting pass to run over each basic block
@@ -104,6 +107,17 @@ data RenovateConfig arch binFmt (b :: * -> *) =
                  -- do it there.  Long term, we want to figure out how to update
                  -- PowerPC safely.
                  }
+
+-- | Environment for 'rcAnalysis'.
+data AnalyzeEnv arch =
+  AnalyzeEnv { aeRewriteEnv :: RW.RewriteEnv arch
+             , aeSymbolicBlockMap :: Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
+               -- ^ Mapping from concrete addresses to corresponding
+               -- symbolic blocks.
+             , aeRunRewriteM :: forall a. RW.RewriteM arch a -> (a, RW.RewriteInfo arch)
+               -- ^ Runner for 'RW.RewriteM' computations, provided
+               -- for simulating transforms at analysis time.
+             }
 
 -- | Compose a list of instrumentation functions into a single
 -- function suitable for use as an argument to 'redirect'
