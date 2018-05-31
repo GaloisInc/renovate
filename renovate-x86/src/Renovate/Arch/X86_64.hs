@@ -29,7 +29,6 @@ module Renovate.Arch.X86_64 (
   DisassemblyFailure(..)
   ) where
 
-import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.X86 as X86
 import qualified Data.Macaw.X86.Symbolic as SX86
 
@@ -47,10 +46,9 @@ import           Renovate.Arch.X86_64.Internal ( Value, Instruction, TargetAddre
 --
 -- This configuration is actually specific to Linux due to the system
 -- call personality.
-config :: (R.RewriteEnv X86.X86_64 -> MBL.LoadedBinary X86.X86_64 binFmt -> a X86.X86_64)
+config :: R.Analyze X86.X86_64 binFmt a
        -- ^ An analysis that produces a summary result to be passed into the rewriter
-       -> (a X86.X86_64 -> R.ISA X86.X86_64 -> MBL.LoadedBinary X86.X86_64 binFmt -> R.SymbolicBlock X86.X86_64
-             -> R.RewriteM X86.X86_64 (Maybe [R.TaggedInstruction X86.X86_64 TargetAddress]))
+       -> R.Rewrite X86.X86_64 binFmt a
        -- ^ A rewriting action
        -> R.RenovateConfig X86.X86_64 binFmt a
 config analysis rewriter =

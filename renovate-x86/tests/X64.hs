@@ -87,10 +87,11 @@ mkTest fp = T.testCase fp $ withELF elfFilename testRewrite
 
     elfFilename = replaceExtension fp "exe"
 
-analysis :: ExpectedResult -> R.RewriteEnv R64.X86_64 -> MBL.LoadedBinary R64.X86_64 binFmt -> TestConfig R64.X86_64
-analysis expected env _mem =
+analysis :: ExpectedResult -> R.AnalyzeEnv R64.X86_64 -> MBL.LoadedBinary R64.X86_64 binFmt -> TestConfig R64.X86_64
+analysis expected analyzeEnv _mem =
   foldr go (TestCfg True []) (R.biBlocks $ R.envBlockInfo env)
   where
+    env = R.aeRewriteEnv analyzeEnv
     go :: R.ConcreteBlock R64.X86_64 -> TestConfig R64.X86_64 -> TestConfig R64.X86_64
     go b inp@(TestCfg _bacc sacc) =
       let actual = ExpectedBlock { addr = fromIntegral (R.absoluteAddress (R.basicBlockAddress b))
