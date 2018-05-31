@@ -114,7 +114,6 @@ data RenovateConfig arch binFmt (b :: * -> *) =
 type Analyze arch binFmt b = AnalyzeEnv arch -> MBL.LoadedBinary arch binFmt -> b arch
 -- | The type of 'rcRewriter'.
 type Rewrite arch binFmt b = b arch
-                          -> ISA.ISA arch
                           -> MBL.LoadedBinary arch binFmt
                           -> B.SymbolicBlock arch
                           -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
@@ -150,10 +149,10 @@ compose funcs = go funcs
 
 -- | An identity rewriter (i.e., a rewriter that makes no changes, but forces
 -- everything to be redirected).
-identity :: (Monad m) => b -> ISA.ISA arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> m (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
-identity _ _ _ sb = return $! Just (B.basicBlockInstructions sb)
+identity :: Rewrite arch binFmt b
+identity _ _ sb = return $! Just (B.basicBlockInstructions sb)
 
 -- | A basic block rewriter that leaves a block untouched, preventing the
 -- rewriter from trying to relocate it.
-nop :: Monad m => b -> ISA.ISA arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> m (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
-nop _ _ _ _ = return Nothing
+nop :: Rewrite arch binFmt b
+nop _ _ _ = return Nothing

@@ -23,9 +23,6 @@ module Renovate
   LB.LayoutStrategy(..),
   LB.CompactOrdering(..),
   C.RenovateConfig(..),
-  C.Analyze,
-  C.AnalyzeEnv(..),
-  C.Rewrite,
   Recovery.ArchInfo(..),
   Recovery.ArchVals(..),
   -- * ELF entry point
@@ -62,11 +59,14 @@ module Renovate
   A.addressAddOffset,
   A.addressDiff,
   -- * Analysis
+  C.Analyze,
+  C.AnalyzeEnv(..),
   -- ** Function Recovery
   FR.recoverFunctions,
   FR.Completion(..),
   FR.FunctionCFG(..),
   -- * Rewriting API
+  C.Rewrite,
   RW.RewriteM,
   RW.RewriteEnv(..),
   RW.BlockCFGIndex,

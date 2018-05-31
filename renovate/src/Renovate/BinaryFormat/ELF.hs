@@ -808,7 +808,7 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
       let analysisResult = analysis analyzeEnv loadedBinary
       case RW.runRewriteM env
                           newGlobalBase
-                          (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult isa loadedBinary) mem strat layoutAddr blocks symmap) of
+                          (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult loadedBinary) mem strat layoutAddr blocks symmap) of
         (rres, info) ->
           case RE.checkRedirection rres of
             Left exn2 -> do
@@ -899,10 +899,10 @@ withRewriteEnv cfg loadedBinary symmap k = do
   blockInfo <- IO.liftIO (R.recoverBlocks recovery mem symmap elfEntryPoints)
   riBlockRecoveryDiagnostics L..= []
   let blocks = R.biBlocks blockInfo
-  riRecoveredBlocks L..= Just (SomeBlocks (rcISA cfg) blocks)
+  riRecoveredBlocks L..= Just (SomeBlocks isa blocks)
   let cfgs = FR.recoverFunctions isa mem blockInfo
       Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
-      env = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo
+      env = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo isa
   k env
 
 analyzeTextSection :: forall w arch binFmt b

@@ -14,6 +14,7 @@ module Renovate.Rewrite (
   lookupEntryAddress,
   newGlobalVar,
   lookupGlobalVar,
+  getISA,
   recordRewrite
   ) where
 
@@ -27,8 +28,9 @@ import           Data.Word ( Word32 )
 import qualified Data.Macaw.CFG as MM
 
 import qualified Renovate.Address as A
-import qualified Renovate.BasicBlock as B
 import qualified Renovate.Analysis.FunctionRecovery as FR
+import qualified Renovate.BasicBlock as B
+import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as RR
 
 data RewriteSite arch =
@@ -65,6 +67,8 @@ data RewriteEnv arch =
              -- ^ The program memory
              , envBlockInfo :: RR.BlockInfo arch
              -- ^ Information on recovered basic blocks
+             , envISA :: ISA.ISA arch
+             -- ^ ISA for arch
              }
 -- | A map of block addresses to the CFG that contains them (if any).
 type BlockCFGIndex arch = M.Map (A.ConcreteAddress arch) (FR.FunctionCFG arch)
@@ -92,13 +96,15 @@ mkRewriteEnv :: [FR.FunctionCFG arch]
              -> A.ConcreteAddress arch
              -> MM.Memory (MM.ArchAddrWidth arch)
              -> RR.BlockInfo arch
+             -> ISA.ISA arch
              -> RewriteEnv arch
-mkRewriteEnv cfgs entryAddr mem blockInfo =
+mkRewriteEnv cfgs entryAddr mem blockInfo isa =
   RewriteEnv { envCFGs = F.foldl' addCFG M.empty cfgs
              , envBlockCFGIndex = mkBlockCFGIndex cfgs
              , envEntryAddress = entryAddr
              , envMemory = mem
              , envBlockInfo = blockInfo
+             , envISA = isa
              }
   where
     addCFG m c = M.insert (FR.cfgEntry c) c m
@@ -128,6 +134,10 @@ recordRewrite ty baddr off =
     site = RewriteSite { siteDescriptor = (baddr, off)
                        , siteType = ty
                        }
+
+-- | Get the ISA from environment.
+getISA :: RewriteM arch (ISA.ISA arch)
+getISA = RWS.asks envISA
 
 -- | Look up the CFG for the function containing the given 'SymbolicBlock', if any.
 --
