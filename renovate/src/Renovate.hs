@@ -23,6 +23,9 @@ module Renovate
   LB.LayoutStrategy(..),
   LB.CompactOrdering(..),
   C.RenovateConfig(..),
+  C.Analyze,
+  C.AnalyzeEnv(..),
+  C.Rewrite,
   Recovery.ArchInfo(..),
   Recovery.ArchVals(..),
   -- * ELF entry point

@@ -9,6 +9,8 @@
 {-# LANGUAGE RankNTypes #-}
 -- | Internal helpers for the ELF rewriting interface
 module Renovate.Config (
+  Analyze,
+  Rewrite,
   AnalyzeEnv(..),
   RenovateConfig(..),
   SomeConfig(..),
@@ -92,9 +94,9 @@ data RenovateConfig arch binFmt (b :: * -> *) =
                  -- recovery info (a summary of the information returned by
                  -- macaw).  The 'Int' is the number of iterations before
                  -- calling the function callback.
-                 , rcAnalysis      :: AnalyzeEnv arch -> MBL.LoadedBinary arch binFmt -> b arch
+                 , rcAnalysis      :: Analyze arch binFmt b
                  -- ^ An analysis to run over the code discovered by macaw, generating a summary of type @b@
-                 , rcRewriter      :: b arch -> ISA.ISA arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+                 , rcRewriter      :: Rewrite arch binFmt b
                  -- ^ A rewriting pass to run over each basic block
                  , rcCodeLayoutBase :: Word64
                  -- ^ The base address to start laying out new code
@@ -107,6 +109,15 @@ data RenovateConfig arch binFmt (b :: * -> *) =
                  -- do it there.  Long term, we want to figure out how to update
                  -- PowerPC safely.
                  }
+
+-- | The type of 'rcAnalysis'.
+type Analyze arch binFmt b = AnalyzeEnv arch -> MBL.LoadedBinary arch binFmt -> b arch
+-- | The type of 'rcRewriter'.
+type Rewrite arch binFmt b = b arch
+                          -> ISA.ISA arch
+                          -> MBL.LoadedBinary arch binFmt
+                          -> B.SymbolicBlock arch
+                          -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
 
 -- | Environment for 'rcAnalysis'.
 data AnalyzeEnv arch =
