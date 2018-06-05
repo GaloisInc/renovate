@@ -824,7 +824,7 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
               riRedirectionDiagnostics L..= RE.rdDiagnostics rres
               C.throwM (RewriterFailure exn2 (RE.rdDiagnostics rres))
             Right redir -> do
-              let I.Identity (analysisResult, (overwrittenBlocks, instrumentationBlocks)) = RE.rdBlocks redir
+              let I.Identity (analysisResult, (overwrittenBlocks, instrumentationBlocks)) = RE.rdResult redir
               let newSyms = RE.rdNewSymbols redir
               riRedirectionDiagnostics L..= RE.rdDiagnostics rres
               riInstrumentationSites L..= RW.infoSites info
@@ -865,7 +865,7 @@ mkAnalyzeEnv cfg env symmap newGlobalBase = do
         riRedirectionDiagnostics L..= RE.rdDiagnostics rres
         C.throwM (RewriterFailure exn (RE.rdDiagnostics rres))
       Right redir -> do
-        let I.Identity baseSymBlocks = RM.rdBlocks redir
+        let I.Identity baseSymBlocks = RM.rdResult redir
         return $ Map.fromList [ (RE.basicBlockAddress cb, sb)
                               | (cb, sb) <- baseSymBlocks ]
   let analyzeEnv = AnalyzeEnv

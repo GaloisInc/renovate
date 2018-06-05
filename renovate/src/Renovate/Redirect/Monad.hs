@@ -137,7 +137,7 @@ initialState =  RewriterState
 -- | A type wrapping up the results of the 'Rewriter' Monad (runnable by
 -- 'runRewriter' and 'runRewriterT').
 data Redirection f arch a =
-  Redirection { rdBlocks :: f a
+  Redirection { rdResult :: f a
               , rdNewSymbols :: NewSymbolsMap arch
               , rdBlockMapping :: [(ConcreteAddress arch, ConcreteAddress arch)]
               , rdDiagnostics :: [Diagnostic]
@@ -154,10 +154,10 @@ data Redirection f arch a =
 checkRedirection :: Redirection (Either E.SomeException) arch a
                  -> Either E.SomeException (Redirection I.Identity arch a)
 checkRedirection r =
-  case rdBlocks r of
+  case rdResult r of
     Left exn -> Left exn
     Right a ->
-      Right Redirection { rdBlocks = I.Identity a
+      Right Redirection { rdResult = I.Identity a
                         , rdNewSymbols = rdNewSymbols r
                         , rdDiagnostics = rdDiagnostics r
                         , rdUnrelocatableTerm = rdUnrelocatableTerm r
@@ -187,7 +187,7 @@ runRewriterT :: (Monad m)
              -> m (Redirection (Either E.SomeException) arch a)
 runRewriterT isa mem symmap a = do
   (a', s, w) <- RWS.runRWST (ET.runExceptT (unRewriterT a)) (RewriterEnv isa mem symmap) initialState
-  return Redirection { rdBlocks = a'
+  return Redirection { rdResult = a'
                      , rdNewSymbols = rwsNewSymbolsMap s
                      , rdDiagnostics = F.toList (diagnosticMessages w)
                      , rdUnrelocatableTerm = rwsUnrelocatableTerm s
