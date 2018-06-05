@@ -38,7 +38,6 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , ConcretePair(..)
                                                       , SymbolicPair(..)
                                                       , LayoutPair(..) )
-import           Renovate.Redirect.Symbolize
 import           Renovate.Redirect.Internal
 import           Renovate.Redirect.Monad
 
@@ -71,13 +70,10 @@ redirect :: (Monad m, InstructionConstraints arch)
          -> LayoutStrategy
          -> ConcreteAddress arch
          -- ^ The start address for the copied blocks
-         -> [ConcreteBlock arch]
-         -- ^ The original basic blocks
-         -> SymbolMap arch
-         -> m (Redirection (Either E.SomeException) arch ([ConcreteBlock arch], [ConcreteBlock arch]))
-redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr blocks symmap = runRewriterT isa mem symmap $ do
-  -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress) (F.toList blocks)))))
-  baseSymBlocks <- symbolizeBasicBlocks (L.sortBy (comparing basicBlockAddress) blocks)
+         -> [(ConcreteBlock arch, SymbolicBlock arch)]
+         -- ^ Symbolized basic blocks
+         -> RewriterT arch m ([ConcreteBlock arch], [ConcreteBlock arch])
+redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr baseSymBlocks = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
     -- We only want to instrument blocks that live in the .text

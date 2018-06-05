@@ -800,22 +800,31 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
   let blockInfo = RW.envBlockInfo env
   let blocks = R.biBlocks blockInfo
   let mem = RW.envMemory env
-  analyzeEnv <- mkAnalyzeEnv cfg env symmap newGlobalBase
   case cfg of
     -- This pattern match is only here to deal with the existential
     -- quantification inside of RenovateConfig.
     RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } -> do
-      let analysisResult = analysis analyzeEnv loadedBinary
-      case RW.runRewriteM env
-                          newGlobalBase
-                          (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult loadedBinary) mem strat layoutAddr blocks symmap) of
+      let redirection = RW.runRewriteM
+            env newGlobalBase $
+            RM.runRewriterT isa mem symmap $ do
+            baseSymBlocks <- RS.symbolizeBasicBlocks (L.sortBy (O.comparing RE.basicBlockAddress) blocks)
+            let symbolicBlockMap = Map.fromList [ (RE.basicBlockAddress cb, sb)
+                                                | (cb, sb) <- baseSymBlocks ]
+            let analyzeEnv = AnalyzeEnv
+                  { aeRewriteEnv = env
+                  , aeSymbolicBlockMap = symbolicBlockMap
+                  , aeRunRewriteM = RW.runRewriteM env newGlobalBase }
+            let analysisResult = analysis analyzeEnv loadedBinary
+            redirectionResult <- (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult loadedBinary) mem strat layoutAddr baseSymBlocks)
+            return (analysisResult, redirectionResult)
+      case redirection of
         (rres, info) ->
           case RE.checkRedirection rres of
             Left exn2 -> do
               riRedirectionDiagnostics L..= RE.rdDiagnostics rres
               C.throwM (RewriterFailure exn2 (RE.rdDiagnostics rres))
             Right redir -> do
-              let I.Identity (overwrittenBlocks, instrumentationBlocks) = RE.rdBlocks redir
+              let I.Identity (analysisResult, (overwrittenBlocks, instrumentationBlocks)) = RE.rdBlocks redir
               let newSyms = RE.rdNewSymbols redir
               riRedirectionDiagnostics L..= RE.rdDiagnostics rres
               riInstrumentationSites L..= RW.infoSites info
