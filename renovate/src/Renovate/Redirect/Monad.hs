@@ -19,9 +19,13 @@ module Renovate.Redirect.Monad (
   SymbolMap,
   NewSymbolsMap,
   Redirection(..),
+  RewriterState,
+  Diagnostics,
+  mkRedirection,
   checkRedirection,
   runRewriter,
   runRewriterT,
+  resumeRewriterT,
   throwError,
   logDiagnostic,
   nextSymbolicAddress,
@@ -172,7 +176,7 @@ runRewriter :: ISA arch
             -> MM.Memory (MM.ArchAddrWidth arch)
             -> SymbolMap arch
             -> Rewriter arch a
-            -> Redirection (Either E.SomeException ) arch a
+            -> (Either E.SomeException a, RewriterState arch, Diagnostics)
 runRewriter isa mem symmap a = I.runIdentity (runRewriterT isa mem symmap a)
 
 -- | Run a 'RewriterT' computation.
@@ -184,10 +188,30 @@ runRewriterT :: (Monad m)
              -> MM.Memory (MM.ArchAddrWidth arch)
              -> SymbolMap arch
              -> RewriterT arch m a
-             -> m (Redirection (Either E.SomeException) arch a)
+             -> m (Either E.SomeException a, RewriterState arch, Diagnostics)
 runRewriterT isa mem symmap a = do
-  (a', s, w) <- RWS.runRWST (ET.runExceptT (unRewriterT a)) (RewriterEnv isa mem symmap) initialState
-  return Redirection { rdResult = a'
+  RWS.runRWST (ET.runExceptT (unRewriterT a)) (RewriterEnv isa mem symmap) initialState
+
+-- | Continue a 'RewriteT' computation using existing state and writer data.
+resumeRewriterT  :: (Monad m)
+                 => ISA arch
+                 -> MM.Memory (MM.ArchAddrWidth arch)
+                 -> SymbolMap arch
+                 -> RewriterState arch
+                 -> Diagnostics
+                 -> RewriterT arch m a
+                 -> m (Either E.SomeException a, RewriterState arch, Diagnostics)
+resumeRewriterT isa mem symmap s0 w0 a = do
+  (a', s1, w1) <- RWS.runRWST (ET.runExceptT (unRewriterT a)) (RewriterEnv isa mem symmap) s0
+  return (a', s1, w0 <> w1)
+
+-- | Turn the result of 'runRewriter' into a 'Redirection'.
+--
+-- We don't compute this is 'runRewriter' because making it separate
+-- allows us to resume 'Rewriter' computations.
+mkRedirection :: f a -> RewriterState arch -> Diagnostics -> Redirection f arch a
+mkRedirection a' s w =
+         Redirection { rdResult = a' -- XXX: remove this and treat it separately; much simpler than having f
                      , rdNewSymbols = rwsNewSymbolsMap s
                      , rdDiagnostics = F.toList (diagnosticMessages w)
                      , rdUnrelocatableTerm = rwsUnrelocatableTerm s

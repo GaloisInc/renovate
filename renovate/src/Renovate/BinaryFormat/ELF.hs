@@ -804,27 +804,29 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
     -- This pattern match is only here to deal with the existential
     -- quantification inside of RenovateConfig.
     RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } -> do
-      let redirection = RW.runRewriteM
-            env newGlobalBase $
-            RM.runRewriterT isa mem symmap $ do
-            baseSymBlocks <- RS.symbolizeBasicBlocks (L.sortBy (O.comparing RE.basicBlockAddress) blocks)
-            let symbolicBlockMap = Map.fromList [ (RE.basicBlockAddress cb, sb)
-                                                | (cb, sb) <- baseSymBlocks ]
-            let analyzeEnv = AnalyzeEnv
-                  { aeRewriteEnv = env
-                  , aeSymbolicBlockMap = symbolicBlockMap
-                  , aeRunRewriteM = RW.runRewriteM env newGlobalBase }
-            let analysisResult = analysis analyzeEnv loadedBinary
-            redirectionResult <- (RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult loadedBinary) mem strat layoutAddr baseSymBlocks)
-            return (analysisResult, redirectionResult)
-      case redirection of
-        (rres, info) ->
-          case RE.checkRedirection rres of
+      let (eBaseSymBlocks, s0, w0) = RM.runRewriter isa mem symmap $ do
+            RS.symbolizeBasicBlocks (L.sortBy (O.comparing RE.basicBlockAddress) blocks)
+      baseSymBlocks <- case eBaseSymBlocks of
+        Left exn -> do
+          let rres = RM.mkRedirection eBaseSymBlocks s0 w0
+          C.throwM (RewriterFailure exn (RE.rdDiagnostics rres)) -- XXX
+        Right baseSymBlocks -> return baseSymBlocks
+      let symbolicBlockMap = Map.fromList [ (RE.basicBlockAddress cb, sb)
+                                          | (cb, sb) <- baseSymBlocks ]
+      let analyzeEnv = AnalyzeEnv
+            { aeRewriteEnv = env
+            , aeSymbolicBlockMap = symbolicBlockMap
+            , aeRunRewriteM = RW.runRewriteM env newGlobalBase }
+      let analysisResult = analysis analyzeEnv loadedBinary
+      let ((redirection, s1, w1), info) = RW.runRewriteM env newGlobalBase . RM.resumeRewriterT isa mem symmap s0 w0 $ do
+            RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult loadedBinary) mem strat layoutAddr baseSymBlocks
+      let rres = RM.mkRedirection redirection s1 w1
+      case RE.checkRedirection rres of
             Left exn2 -> do
               riRedirectionDiagnostics L..= RE.rdDiagnostics rres
               C.throwM (RewriterFailure exn2 (RE.rdDiagnostics rres))
             Right redir -> do
-              let I.Identity (analysisResult, (overwrittenBlocks, instrumentationBlocks)) = RE.rdResult redir
+              let I.Identity (overwrittenBlocks, instrumentationBlocks) = RE.rdResult redir
               let newSyms = RE.rdNewSymbols redir
               riRedirectionDiagnostics L..= RE.rdDiagnostics rres
               riInstrumentationSites L..= RW.infoSites info
@@ -855,9 +857,10 @@ mkAnalyzeEnv cfg env symmap newGlobalBase = do
   let mem = RW.envMemory env
   let blocks = R.biBlocks $ RW.envBlockInfo env
   symbolicBlockMap <- do
-    let rres = RM.runRewriter isa mem symmap $
+    let (eBaseSymBlocks, s, w) = RM.runRewriter isa mem symmap $
           -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress) (F.toList blocks)))))
           RS.symbolizeBasicBlocks (L.sortBy (O.comparing RE.basicBlockAddress) blocks)
+    let rres = RM.mkRedirection eBaseSymBlocks s w
     case RE.checkRedirection rres of
       Left exn -> do
         -- This failure case is the only 'ElfRewriter' monad stuff in
