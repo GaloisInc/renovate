@@ -62,7 +62,6 @@ import           Data.Bits ( Bits, (.|.) )
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C8
 import qualified Data.Foldable as F
-import qualified Data.Functor.Identity as I
 import qualified Data.Generics.Product as GL
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NEL
@@ -808,8 +807,8 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
             RS.symbolizeBasicBlocks (L.sortBy (O.comparing RE.basicBlockAddress) blocks)
       baseSymBlocks <- case eBaseSymBlocks of
         Left exn -> do
-          let rres = RM.mkRedirection eBaseSymBlocks s0 w0
-          C.throwM (RewriterFailure exn (RE.rdDiagnostics rres)) -- XXX
+          let rres = RM.mkRedirection s0 w0
+          C.throwM (RewriterFailure exn (RE.rdDiagnostics rres))
         Right baseSymBlocks -> return baseSymBlocks
       let symbolicBlockMap = Map.fromList [ (RE.basicBlockAddress cb, sb)
                                           | (cb, sb) <- baseSymBlocks ]
@@ -818,17 +817,16 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
             , aeSymbolicBlockMap = symbolicBlockMap
             , aeRunRewriteM = RW.runRewriteM env newGlobalBase }
       let analysisResult = analysis analyzeEnv loadedBinary
-      let ((redirection, s1, w1), info) = RW.runRewriteM env newGlobalBase . RM.resumeRewriterT isa mem symmap s0 w0 $ do
+      let ((eBlocks, s1, w1), info) = RW.runRewriteM env newGlobalBase . RM.resumeRewriterT isa mem symmap s0 w0 $ do
             RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult loadedBinary) mem strat layoutAddr baseSymBlocks
-      let rres = RM.mkRedirection redirection s1 w1
-      case RE.checkRedirection rres of
+      let redir = RM.mkRedirection s1 w1
+      case eBlocks of
             Left exn2 -> do
-              riRedirectionDiagnostics L..= RE.rdDiagnostics rres
-              C.throwM (RewriterFailure exn2 (RE.rdDiagnostics rres))
-            Right redir -> do
-              let I.Identity (overwrittenBlocks, instrumentationBlocks) = RE.rdResult redir
+              riRedirectionDiagnostics L..= RE.rdDiagnostics redir
+              C.throwM (RewriterFailure exn2 (RE.rdDiagnostics redir))
+            Right (overwrittenBlocks, instrumentationBlocks) -> do
               let newSyms = RE.rdNewSymbols redir
-              riRedirectionDiagnostics L..= RE.rdDiagnostics rres
+              riRedirectionDiagnostics L..= RE.rdDiagnostics redir
               riInstrumentationSites L..= RW.infoSites info
               riReusedByteCount L..= RE.rdReusedBytes redir
               riSmallBlockCount L..= RE.rdSmallBlock redir
@@ -856,19 +854,18 @@ mkAnalyzeEnv cfg env symmap newGlobalBase = do
   let isa = rcISA cfg
   let mem = RW.envMemory env
   let blocks = R.biBlocks $ RW.envBlockInfo env
-  symbolicBlockMap <- do
-    let (eBaseSymBlocks, s, w) = RM.runRewriter isa mem symmap $
-          -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress) (F.toList blocks)))))
-          RS.symbolizeBasicBlocks (L.sortBy (O.comparing RE.basicBlockAddress) blocks)
-    let rres = RM.mkRedirection eBaseSymBlocks s w
-    case RE.checkRedirection rres of
+
+  let (eBaseSymBlocks, s, w) = RM.runRewriter isa mem symmap $
+        -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress) (F.toList blocks)))))
+        RS.symbolizeBasicBlocks (L.sortBy (O.comparing RE.basicBlockAddress) blocks)
+  let rres = RM.mkRedirection s w
+  symbolicBlockMap <- case eBaseSymBlocks of
       Left exn -> do
         -- This failure case is the only 'ElfRewriter' monad stuff in
         -- 'mkAnalyzeEnv', otherwise it's pure.
         riRedirectionDiagnostics L..= RE.rdDiagnostics rres
         C.throwM (RewriterFailure exn (RE.rdDiagnostics rres))
-      Right redir -> do
-        let I.Identity baseSymBlocks = RM.rdResult redir
+      Right baseSymBlocks -> do
         return $ Map.fromList [ (RE.basicBlockAddress cb, sb)
                               | (cb, sb) <- baseSymBlocks ]
   let analyzeEnv = AnalyzeEnv

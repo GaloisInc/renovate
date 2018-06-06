@@ -3,7 +3,6 @@
 module Renovate.Redirect (
   redirect,
   Redirection(..),
-  checkRedirection,
   LayoutStrategy(..),
   Diagnostic(..),
   ConcreteBlock,
