@@ -95,7 +95,6 @@ import qualified Renovate.Diagnostic as RD
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as R
 import qualified Renovate.Redirect as RE
-import qualified Renovate.Redirect.Monad as RM
 import qualified Renovate.Redirect.Symbolize as RS
 import qualified Renovate.Rewrite as RW
 
@@ -803,9 +802,9 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
     -- This pattern match is only here to deal with the existential
     -- quantification inside of RenovateConfig.
     RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } -> do
-      let (eBaseSymBlocks, s0, w0) = RM.runRewriter isa mem symmap $ do
+      let (eBaseSymBlocks, r0) = RE.runRewriter isa mem symmap $ do
             RS.symbolizeBasicBlocks (L.sortBy (O.comparing RE.basicBlockAddress) blocks)
-      (baseSymBlocks, _) <- extractOrThrowRewriterResult eBaseSymBlocks s0 w0
+      baseSymBlocks <- extractOrThrowRewriterResult eBaseSymBlocks r0
       let symbolicBlockMap = Map.fromList [ (RE.basicBlockAddress cb, sb)
                                           | (cb, sb) <- baseSymBlocks ]
       let analyzeEnv = AnalyzeEnv
@@ -813,16 +812,18 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
             , aeSymbolicBlockMap = symbolicBlockMap
             , aeRunRewriteM = RW.runRewriteM env newGlobalBase }
       let analysisResult = analysis analyzeEnv loadedBinary
-      let ((eBlocks, s1, w1), info) = RW.runRewriteM env newGlobalBase . RM.resumeRewriterT isa mem symmap s0 w0 $ do
+      let ((eBlocks, r1), info) = RW.runRewriteM env newGlobalBase . RE.resumeRewriterT isa mem symmap r0 $ do
             RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult loadedBinary) mem strat layoutAddr baseSymBlocks
-      ((overwrittenBlocks, instrumentationBlocks), redir) <- extractOrThrowRewriterResult eBlocks s1 w1
-      let newSyms = RE.rdNewSymbols redir
-      riRedirectionDiagnostics L..= RE.rdDiagnostics redir
+      (overwrittenBlocks, instrumentationBlocks) <- extractOrThrowRewriterResult eBlocks r1
+
+      let s1 = RE.rrState r1
+      let newSyms = RE.rwsNewSymbolsMap s1
+      riRedirectionDiagnostics L..= F.toList (RD.diagnosticMessages $ RE.rrDiagnostics r1)
       riInstrumentationSites L..= RW.infoSites info
-      riReusedByteCount L..= RE.rdReusedBytes redir
-      riSmallBlockCount L..= RE.rdSmallBlock redir
-      riUnrelocatableTerm L..= RE.rdUnrelocatableTerm redir
-      riBlockMapping L..= RE.rdBlockMapping redir
+      riReusedByteCount L..= RE.rwsReusedByteCount s1
+      riSmallBlockCount L..= RE.rwsSmallBlockCount s1
+      riUnrelocatableTerm L..= RE.rwsUnrelocatableTerm s1
+      riBlockMapping L..= RE.rwsBlockMapping s1
       let allBlocks = overwrittenBlocks ++ instrumentationBlocks
       case cfg of
         RenovateConfig { rcAssembler = asm } -> do
@@ -832,17 +833,15 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
 
 -- | Helper for handling the error case of `RewriterT`.
 extractOrThrowRewriterResult :: Either P.SomeException a
-                             -> RM.RewriterState arch
-                             -> RM.Diagnostics
-                             -> ElfRewriter arch (a, RM.Redirection arch)
-extractOrThrowRewriterResult e s w = do
+                             -> RE.RewriterResult arch
+                             -> ElfRewriter arch a
+extractOrThrowRewriterResult e r = do
   case e of
     Left exn -> do
-      riRedirectionDiagnostics L..= RE.rdDiagnostics redir
-      C.throwM (RewriterFailure exn (RE.rdDiagnostics redir))
-    Right x -> return (x, redir)
-  where
-    redir = RM.mkRedirection s w
+      let diagnostics = F.toList (RD.diagnosticMessages $ RE.rrDiagnostics r)
+      riRedirectionDiagnostics L..= diagnostics
+      C.throwM (RewriterFailure exn diagnostics)
+    Right x -> return x
 
 -- | Initialize an 'AnalyzeEnv'.
 --
@@ -860,10 +859,10 @@ mkAnalyzeEnv cfg env symmap newGlobalBase = do
   let mem = RW.envMemory env
   let blocks = R.biBlocks $ RW.envBlockInfo env
 
-  let (eBaseSymBlocks, s, w) = RM.runRewriter isa mem symmap $
+  let (eBaseSymBlocks, r) = RE.runRewriter isa mem symmap $
         -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress) (F.toList blocks)))))
         RS.symbolizeBasicBlocks (L.sortBy (O.comparing RE.basicBlockAddress) blocks)
-  (baseSymBlocks, _) <- extractOrThrowRewriterResult eBaseSymBlocks s w
+  baseSymBlocks <- extractOrThrowRewriterResult eBaseSymBlocks r
   let symbolicBlockMap = Map.fromList [ (RE.basicBlockAddress cb, sb)
                                       | (cb, sb) <- baseSymBlocks ]
   let analyzeEnv = AnalyzeEnv
