@@ -247,7 +247,7 @@ analyzeElf :: (B.InstructionConstraints arch,
            -> MBL.LoadedBinary arch binFmt
            -- ^ A representation of the contents of memory of the ELF file
            -- (including statically-allocated data)
-           -> IO (b arch, [RM.Diagnostic])
+           -> IO (b arch, [RE.Diagnostic])
 analyzeElf cfg e loadedBinary = do
     (b, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
     return (b, _riBlockRecoveryDiagnostics ri)
@@ -314,7 +314,7 @@ doRewrite :: (B.InstructionConstraints arch,
               R.ArchBits arch)
           => RenovateConfig arch binFmt b
           -> MBL.LoadedBinary arch binFmt
-          -> RM.SymbolMap arch
+          -> RE.SymbolMap arch
           -> RE.LayoutStrategy
           -> ElfRewriter arch (b arch)
 doRewrite cfg loadedBinary symmap strat = do
@@ -401,7 +401,7 @@ doAnalysis :: (B.InstructionConstraints arch,
                R.ArchBits arch)
            => RenovateConfig arch binFmt b
            -> MBL.LoadedBinary arch binFmt
-           -> RM.SymbolMap arch
+           -> RE.SymbolMap arch
            -> ElfRewriter arch (b arch)
 doAnalysis cfg loadedBinary symmap = do
   -- We need to compute our instrumentation address *after* we have
@@ -417,7 +417,7 @@ doAnalysis cfg loadedBinary symmap = do
 buildSymbolMap :: (w ~ MM.ArchAddrWidth arch, Integral (E.ElfWordType w), MM.MemWidth w)
                => MM.Memory w
                -> E.Elf w
-               -> ElfRewriter arch (RM.SymbolMap arch)
+               -> ElfRewriter arch (RE.SymbolMap arch)
 buildSymbolMap _mem elf = do
   case filter isSymbolTable (F.toList (E._elfFileData elf)) of
     [E.ElfDataSymtab table] -> do
@@ -439,7 +439,7 @@ buildNewSymbolTable :: (w ~ MM.ArchAddrWidth arch, E.ElfWidthConstraints w, MM.M
                     => Word16
                     -> E.ElfSectionIndex
                     -> RA.ConcreteAddress arch
-                    -> RM.NewSymbolsMap arch
+                    -> RE.NewSymbolsMap arch
                     -> E.ElfSymbolTable (E.ElfWordType w)
                     -- ^ The original symbol table
                     -> E.Elf w
@@ -790,9 +790,9 @@ instrumentTextSection :: forall w arch binFmt b
                       -- ^ The address to lay out the instrumented blocks
                       -> RA.ConcreteAddress arch
                       -- ^ The address to lay out the new data section
-                      -> RM.SymbolMap arch
+                      -> RE.SymbolMap arch
                       -- ^ meta data?
-                      -> ElfRewriter arch (b arch, B.ByteString, B.ByteString, Maybe B.ByteString, RM.NewSymbolsMap arch)
+                      -> ElfRewriter arch (b arch, B.ByteString, B.ByteString, Maybe B.ByteString, RE.NewSymbolsMap arch)
 instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr textBytes strat layoutAddr newGlobalBase symmap = do
   withRewriteEnv cfg loadedBinary symmap $ \env -> do
   let isa = rcISA cfg
@@ -852,7 +852,7 @@ extractOrThrowRewriterResult e s w = do
 mkAnalyzeEnv :: B.InstructionConstraints arch
              => RenovateConfig arch binFmt b
              -> RW.RewriteEnv arch
-             -> RM.SymbolMap arch
+             -> RE.SymbolMap arch
              -> RE.ConcreteAddress arch
              -> ElfRewriter arch (AnalyzeEnv arch)
 mkAnalyzeEnv cfg env symmap newGlobalBase = do
@@ -883,7 +883,7 @@ withRewriteEnv :: forall w arch binFmt b a
                    => RenovateConfig arch binFmt b
                    -> MBL.LoadedBinary arch binFmt
                    -- ^ The memory space
-                   -> RM.SymbolMap arch
+                   -> RE.SymbolMap arch
                    -> (RW.RewriteEnv arch -> ElfRewriter arch a)
                    -> ElfRewriter arch a
 withRewriteEnv cfg loadedBinary symmap k = do
@@ -921,7 +921,7 @@ analyzeTextSection :: forall w arch binFmt b
                    => RenovateConfig arch binFmt b
                    -> MBL.LoadedBinary arch binFmt
                    -- ^ The memory space
-                   -> RM.SymbolMap arch
+                   -> RE.SymbolMap arch
                    -> ElfRewriter arch (b arch)
 analyzeTextSection cfg loadedBinary symmap = do
   withRewriteEnv cfg loadedBinary symmap $ \env -> do
