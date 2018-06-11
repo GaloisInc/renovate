@@ -2,20 +2,26 @@
 -- | This module is the entry point for binary code redirection
 module Renovate.Redirect (
   redirect,
-  Redirection(..),
   LayoutStrategy(..),
-  Diagnostic(..),
   ConcreteBlock,
   SymbolicBlock,
   BasicBlock(..),
   ConcreteAddress,
   SymbolicAddress,
-  TaggedInstruction
+  TaggedInstruction,
+  -- * Rewriter Monad
+  RM.runRewriter,
+  RM.runRewriterT,
+  RM.resumeRewriterT,
+  RM.Diagnostic(..),
+  RM.RewriterResult(..),
+  RM.RewriterState(..),
+  RM.SymbolMap,
+  RM.NewSymbolsMap
   ) where
 
 import           Control.Arrow ( (***) )
 import           Control.Monad ( when )
-import qualified Control.Monad.Catch as E
 import           Control.Monad.Trans ( lift )
 import           Data.Maybe ( catMaybes )
 import qualified Data.Foldable as F
@@ -38,7 +44,7 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , SymbolicPair(..)
                                                       , LayoutPair(..) )
 import           Renovate.Redirect.Internal
-import           Renovate.Redirect.Monad
+import qualified Renovate.Redirect.Monad as RM
 
 -- | Given a list of basic blocks with instructions of type @i@ with
 -- annotation @a@ (which is fixed by the 'ISA' choice), rewrite the
@@ -71,7 +77,7 @@ redirect :: (Monad m, InstructionConstraints arch)
          -- ^ The start address for the copied blocks
          -> [(ConcreteBlock arch, SymbolicBlock arch)]
          -- ^ Symbolized basic blocks
-         -> RewriterT arch m ([ConcreteBlock arch], [ConcreteBlock arch])
+         -> RM.RewriterT arch m ([ConcreteBlock arch], [ConcreteBlock arch])
 redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr baseSymBlocks = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
@@ -90,12 +96,12 @@ redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr baseS
          Just insns'' -> return (SymbolicPair (LayoutPair cb sb { basicBlockInstructions = insns'' } Modified))
      False -> do
        when (not (isRelocatableTerminatorType (terminatorType isa mem cb))) $ do
-         recordUnrelocatableTermBlock
+         RM.recordUnrelocatableTermBlock
        when (isIncompleteBlockAddress blockInfo (basicBlockAddress cb)) $ do
-         recordIncompleteBlock
+         RM.recordIncompleteBlock
        return (SymbolicPair (LayoutPair cb sb Unmodified))
   concretizedBlocks <- concretize strat layoutAddr transformedBlocks
-  recordBlockMap (toBlockMapping concretizedBlocks)
+  RM.recordBlockMap (toBlockMapping concretizedBlocks)
   redirectedBlocks <- redirectOriginalBlocks concretizedBlocks
   let sorter = L.sortBy (comparing basicBlockAddress)
   return $ (sorter *** sorter . catMaybes) (unzip (map toPair (F.toList redirectedBlocks)))
