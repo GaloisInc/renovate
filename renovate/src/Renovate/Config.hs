@@ -111,7 +111,10 @@ data RenovateConfig arch binFmt (b :: * -> *) =
                  }
 
 -- | The type of 'rcAnalysis'.
-type Analyze arch binFmt b = AnalyzeEnv arch -> MBL.LoadedBinary arch binFmt -> b arch
+--
+-- The motivation for analysis being in IO is to allow SFE to call out
+-- to external tools, such as ILP solvers.
+type Analyze arch binFmt b = AnalyzeEnv arch -> MBL.LoadedBinary arch binFmt -> IO (b arch)
 -- | The type of 'rcRewriter'.
 type Rewrite arch binFmt b = b arch
                           -> MBL.LoadedBinary arch binFmt

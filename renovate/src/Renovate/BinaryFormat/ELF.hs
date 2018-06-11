@@ -811,7 +811,7 @@ instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr t
             { aeRewriteEnv = env
             , aeSymbolicBlockMap = symbolicBlockMap
             , aeRunRewriteM = RW.runRewriteM env newGlobalBase }
-      let analysisResult = analysis analyzeEnv loadedBinary
+      analysisResult <- IO.liftIO $ analysis analyzeEnv loadedBinary
       let ((eBlocks, r1), info) = RW.runRewriteM env newGlobalBase . RE.resumeRewriterT isa mem symmap r0 $ do
             RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult loadedBinary) mem strat layoutAddr baseSymBlocks
       (overwrittenBlocks, instrumentationBlocks) <- extractOrThrowRewriterResult eBlocks r1
@@ -929,7 +929,7 @@ analyzeTextSection cfg loadedBinary symmap = do
   -- same way here.
   let newGlobalBase = RA.concreteFromAbsolute (fromIntegral (rcDataLayoutBase cfg))
   analyzeEnv <- mkAnalyzeEnv cfg env symmap newGlobalBase
-  return $! (rcAnalysis cfg) analyzeEnv loadedBinary
+  IO.liftIO $ rcAnalysis cfg analyzeEnv loadedBinary
 
 mkNewDataSection :: (MM.MemWidth (MM.ArchAddrWidth arch)) => RA.ConcreteAddress arch -> RW.RewriteInfo arch -> Maybe B.ByteString
 mkNewDataSection baseAddr info = do
