@@ -50,7 +50,6 @@ import qualified Lang.Crucible.CFG.Extension as C
 import qualified Lang.Crucible.FunctionHandle as C
 import qualified What4.FunctionName as C
 import qualified What4.ProgramLoc as C
-import qualified Lang.Crucible.Backend.Simple as C
 
 import           Renovate.Address
 import           Renovate.BasicBlock
@@ -122,7 +121,7 @@ analyzeDiscoveredFunctions recovery mem info !iterations =
 
 data ArchVals arch =
   ArchVals { archFunctions :: MS.MacawSymbolicArchFunctions arch
-           , withArchEval :: forall a t . C.SimpleBackend t -> (MS.MacawArchEvalFn (C.SimpleBackend t) arch -> IO a) -> IO a
+           , withArchEval :: forall a sym . sym  -> (MS.MacawArchEvalFn sym arch -> IO a) -> IO a
            , withArchConstraints :: forall a . ((C.IsSyntaxExtension (MS.MacawExt arch), MC.MemWidth (MC.ArchAddrWidth arch)) => a) -> a
            }
 
