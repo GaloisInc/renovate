@@ -276,7 +276,7 @@ buildBlock isa dis1 mem absStarts segAddr
           -- We have parsed an instruction that crosses a block boundary. We
           -- should probably give up -- this executable is too wonky.
           | isJustAnd (nextAddr>) stopAddr -> do
-            C.throwM OverlappingBlocks
+            C.throwM (OverlappingBlocks insnAddr)
 
           -- The next instruction we would decode starts another
           -- block, OR the instruction we just decoded is a

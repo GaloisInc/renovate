@@ -33,7 +33,7 @@ data Diagnostic = forall arch. (MC.MemWidth (MC.ArchAddrWidth arch)) => NoSymbol
                   -- ^ The 'BasicBlock' at 'Address' is too small to
                   -- be redirected, because its size is larger than
                   -- the size of a jump instruction.
-                | OverlappingBlocks
+                | forall arch . (MC.MemWidth (MC.ArchAddrWidth arch)) => OverlappingBlocks (ConcreteAddress arch)
                 -- ^ Found two basic blocks that overlap.  This
                 -- actually doesn't need to be an error, but it is for
                 -- now...
