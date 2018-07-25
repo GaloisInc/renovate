@@ -239,7 +239,8 @@ absoluteDisplacement _mem endAddr disp =
   case disp of
     D.NoDisplacement -> L.error "Unexpected NoDisplacement"
     D.Disp8  d       -> AbsoluteAddress (endAddr `R.addressAddOffset` fromIntegral d)
-    D.Disp32 d       -> AbsoluteAddress (endAddr `R.addressAddOffset` fromIntegral d)
+    D.Disp32 (D.Imm32Concrete d)       -> AbsoluteAddress (endAddr `R.addressAddOffset` fromIntegral d)
+    D.Disp32 (D.Imm32SymbolOffset {}) -> L.error "Symbolic references are not supported"
 
 -- | Needs to convert all Disp8 IP relative references to Disp32
 --
@@ -272,8 +273,8 @@ saveAbsoluteRipAddresses mem insnAddr i AnnotatedOperand { aoOperand = (v, ty) }
 promoteRipDisp8 :: D.AddrRef -> I.Identity D.AddrRef
 promoteRipDisp8 ref =
   case ref of
-    D.IP_Offset_32 seg (D.Disp8 d) -> I.Identity $ D.IP_Offset_32 seg (D.Disp32 (fromIntegral d))
-    D.IP_Offset_64 seg (D.Disp8 d) -> I.Identity $ D.IP_Offset_64 seg (D.Disp32 (fromIntegral d))
+    D.IP_Offset_32 seg (D.Disp8 d) -> I.Identity $ D.IP_Offset_32 seg (D.Disp32 (D.Imm32Concrete (fromIntegral d)))
+    D.IP_Offset_64 seg (D.Disp8 d) -> I.Identity $ D.IP_Offset_64 seg (D.Disp32 (D.Imm32Concrete (fromIntegral d)))
     _ -> I.Identity ref
 
 x64ConcretizeAddresses :: (L.HasCallStack) => MM.Memory 64 -> R.ConcreteAddress X86.X86_64 -> Instruction TargetAddress -> Instruction ()
@@ -320,9 +321,9 @@ absToRip :: MM.Memory 64
 absToRip _mem iStartAddr i a ref =
   case ref of
     D.IP_Offset_32 seg (D.Disp32 _) ->
-      Just $ D.IP_Offset_32 seg (D.Disp32 (fromIntegral (a `R.addressDiff` iEndAddr)))
+      Just $ D.IP_Offset_32 seg (D.Disp32 (D.Imm32Concrete (fromIntegral (a `R.addressDiff` iEndAddr))))
     D.IP_Offset_64 seg (D.Disp32 _) ->
-      Just $ D.IP_Offset_64 seg (D.Disp32 (fromIntegral (a `R.addressDiff` iEndAddr)))
+      Just $ D.IP_Offset_64 seg (D.Disp32 (D.Imm32Concrete (fromIntegral (a `R.addressDiff` iEndAddr))))
     _ -> Nothing
   where
     iEndAddr = iStartAddr `R.addressAddOffset` fromIntegral (x64Size i)

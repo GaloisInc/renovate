@@ -31,7 +31,6 @@ import           Text.Printf ( printf )
 
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.PPC as MP
-import           Data.Parameterized.Classes ( showF )
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Parameterized.TraversableFC as FC
 import qualified Dismantle.PPC as D
@@ -233,12 +232,12 @@ ppcJumpType i _mem insnAddr =
               R.RelativeJump R.Unconditional insnAddr (fromIntegral (offset `shiftL` 2))
             _ ->
               R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2))
-        D.Absdirectbrtarget _ D.:< D.Nil ->
-          error ("Absolute jumps are not supported: " ++ showF opc)
-        D.Abscondbrtarget _ D.:< D.Nil ->
-          error ("Absolute jumps are not supported: " ++ showF opc)
-        D.Abscondbrtarget _ D.:< _ D.:< _ D.:< D.Nil ->
-          error ("Absolute jumps are not supported: " ++ showF opc)
+        D.Absdirectbrtarget (D.ABT addr) D.:< D.Nil ->
+          R.AbsoluteJump R.Unconditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2)))
+        D.Abscondbrtarget (D.ACBT addr) D.:< D.Nil ->
+          R.AbsoluteJump R.Conditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2)))
+        D.Abscondbrtarget (D.ACBT addr) D.:< _ D.:< _ D.:< D.Nil ->
+          R.AbsoluteJump R.Conditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2)))
         D.Nil ->
           case opc of
             D.BCTR -> R.IndirectJump R.Unconditional
