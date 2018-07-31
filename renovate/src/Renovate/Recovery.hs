@@ -45,12 +45,13 @@ import qualified Data.Macaw.Types as MC
 import qualified Data.Macaw.Symbolic as MS
 import qualified Data.Parameterized.Context as Ctx
 import qualified Data.Parameterized.Some as PU
+import qualified Lang.Crucible.Backend as C
 import qualified Lang.Crucible.CFG.Core as C
 import qualified Lang.Crucible.CFG.Extension as C
 import qualified Lang.Crucible.FunctionHandle as C
 import qualified What4.FunctionName as C
 import qualified What4.ProgramLoc as C
-import qualified Lang.Crucible.Backend.Simple as C
+import qualified What4.Interface as WI
 
 import           Renovate.Address
 import           Renovate.BasicBlock
@@ -122,8 +123,8 @@ analyzeDiscoveredFunctions recovery mem info !iterations =
 
 data ArchVals arch =
   ArchVals { archFunctions :: MS.MacawSymbolicArchFunctions arch
-           , withArchEval :: forall a t . C.SimpleBackend t -> (MS.MacawArchEvalFn (C.SimpleBackend t) arch -> IO a) -> IO a
-           , withArchConstraints :: forall a . ((C.IsSyntaxExtension (MS.MacawExt arch), MC.MemWidth (MC.ArchAddrWidth arch)) => a) -> a
+           , withArchEval :: forall a sym . (C.IsBoolSolver sym, WI.IsSymExprBuilder sym) =>  sym  -> (MS.MacawArchEvalFn sym arch -> IO a) -> IO a
+           , withArchConstraints :: forall a . ((C.IsSyntaxExtension (MS.MacawExt arch), MC.MemWidth (MC.ArchAddrWidth arch), MC.PrettyF (MC.ArchReg arch)) => a) -> a
            }
 
 -- | A class to capture the architecture-specific information required to
@@ -276,7 +277,7 @@ buildBlock isa dis1 mem absStarts segAddr
           -- We have parsed an instruction that crosses a block boundary. We
           -- should probably give up -- this executable is too wonky.
           | isJustAnd (nextAddr>) stopAddr -> do
-            C.throwM OverlappingBlocks
+            C.throwM (OverlappingBlocks insnAddr)
 
           -- The next instruction we would decode starts another
           -- block, OR the instruction we just decoded is a
