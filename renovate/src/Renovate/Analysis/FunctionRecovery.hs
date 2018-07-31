@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -56,6 +58,9 @@ data FunctionCFG arch = FunctionCFG { cfgEntry :: ConcreteAddress arch
                                    , cfgCompletion :: Completion
                                    -- ^ Whether or not the CFG is complete
                                    }
+deriving instance ( Show (Instruction arch ())
+                  , MM.MemWidth (MM.RegAddrWidth (MM.ArchReg arch)) )
+  => Show (FunctionCFG arch)
 
 -- | Starting from a basic set of recovered block information from
 -- macaw, assign basic blocks to functions and construct CFGs.
