@@ -53,7 +53,7 @@ data FunctionCFG arch = FunctionCFG { cfgEntry :: ConcreteAddress arch
                                    -- ^ The successors of each block
                                    , cfgExitBlocks :: [ConcreteAddress arch]
                                    -- ^ Exit blocks of the function
-                                   , cfgBlocks :: M.Map (ConcreteAddress arch) (ConcreteBlock arch)
+                                   , cfgBlocks :: [ConcreteAddress arch] -- M.Map (ConcreteAddress arch) (ConcreteBlock arch)
                                    -- ^ All of the blocks in the CFG
                                    , cfgCompletion :: Completion
                                    -- ^ Whether or not the CFG is complete
@@ -115,7 +115,7 @@ makeCFGForEntry entryAddr = do
   return $ Just $ FunctionCFG { cfgEntry = entryAddr
                               , cfgSuccessors = fmap F.toList (fsSuccessors st)
                               , cfgExitBlocks = F.toList (fsExitBlocks st)
-                              , cfgBlocks = fsBlocks st
+                              , cfgBlocks = F.toList (fsVisited st)
                               , cfgCompletion = if fsHasIndirectJump st then Incomplete else Complete
                               }
 
@@ -212,7 +212,6 @@ data CFGEnv arch = CFGEnv { envBlocks :: M.Map (ConcreteAddress arch) (ConcreteB
 data FunctionState arch =
   FunctionState { fsSuccessors :: M.Map (ConcreteAddress arch) (S.Set (ConcreteAddress arch))
                 , fsExitBlocks :: S.Set (ConcreteAddress arch)
-                , fsBlocks :: M.Map (ConcreteAddress arch) (ConcreteBlock arch)
                 , fsHasIndirectJump :: Bool
                 , fsVisited :: S.Set (ConcreteAddress arch)
                 , fsWorklist :: S.Set (ConcreteAddress arch)
@@ -221,7 +220,6 @@ data FunctionState arch =
 emptyFunctionState :: FunctionState arch
 emptyFunctionState = FunctionState { fsSuccessors = M.empty
                                    , fsExitBlocks = S.empty
-                                   , fsBlocks = M.empty
                                    , fsHasIndirectJump = False
                                    , fsVisited = S.empty
                                    , fsWorklist = S.empty

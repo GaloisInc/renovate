@@ -59,8 +59,9 @@ data RewriteEnv arch =
   RewriteEnv { envCFGs :: M.Map (A.ConcreteAddress arch) (FR.FunctionCFG arch)
              -- ^ A map of function entry point addresses to CFGs
              , envBlockCFGIndex :: BlockCFGIndex arch
-             -- ^ A map of block addresses to the CFG that contains them (if
-             -- any)
+             -- ^ A map of block addresses to the CFG that contains
+             -- them (if any): WARNING: multiple CFGs can contain the
+             -- same block, so this is not well defined!!!
              , envEntryAddress :: A.ConcreteAddress arch
              -- ^ The address of the entry point of the program
              , envMemory :: MM.Memory (MM.ArchAddrWidth arch)
@@ -86,7 +87,7 @@ mkBlockCFGIndex :: [FR.FunctionCFG arch] -> BlockCFGIndex arch
 mkBlockCFGIndex cfgs = F.foldl' indexCFGBlocks M.empty cfgs
   where
     indexCFGBlocks m c = F.foldl' (indexCFGBlock c) m (FR.cfgBlocks c)
-    indexCFGBlock c m b = M.insert (B.basicBlockAddress b) c m
+    indexCFGBlock c m b = M.insert b c m
 
 -- | Make a rewriter environment.
 --
