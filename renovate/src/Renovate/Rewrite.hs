@@ -57,9 +57,7 @@ data RewriteInfo arch =
               }
 
 data RewriteEnv arch =
-  RewriteEnv { envCFGs :: M.Map (A.ConcreteAddress arch) (FR.FunctionCFG arch)
-             -- ^ A map of function entry point addresses to CFGs
-             , envBlockCFGIndex :: BlockCFGIndex arch
+  RewriteEnv { envBlockCFGIndex :: BlockCFGIndex arch
              -- ^ A map of block addresses to the set of CFGs that
              -- contains them (if any). Note that a single block may
              -- be contained in multiple CFGs. Indeed, the
@@ -103,15 +101,12 @@ mkRewriteEnv :: [FR.FunctionCFG arch]
              -> ISA.ISA arch
              -> RewriteEnv arch
 mkRewriteEnv cfgs entryAddr mem blockInfo isa =
-  RewriteEnv { envCFGs = F.foldl' addCFG M.empty cfgs
-             , envBlockCFGIndex = mkBlockCFGIndex cfgs
+  RewriteEnv { envBlockCFGIndex = mkBlockCFGIndex cfgs
              , envEntryAddress = entryAddr
              , envMemory = mem
              , envBlockInfo = blockInfo
              , envISA = isa
              }
-  where
-    addCFG m c = M.insert (FR.cfgEntry c) c m
 
 -- | Run rewriting computation and return its value, along with metadata about
 -- transformations applied.
