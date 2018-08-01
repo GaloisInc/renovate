@@ -23,6 +23,7 @@ import qualified GHC.Err.Located as L
 import qualified Control.Monad.RWS.Strict as RWS
 import qualified Data.Foldable as F
 import qualified Data.Map.Strict as M
+import qualified Data.Set as S
 import           Data.Word ( Word32 )
 
 import qualified Data.Macaw.CFG as MM
@@ -59,9 +60,10 @@ data RewriteEnv arch =
   RewriteEnv { envCFGs :: M.Map (A.ConcreteAddress arch) (FR.FunctionCFG arch)
              -- ^ A map of function entry point addresses to CFGs
              , envBlockCFGIndex :: BlockCFGIndex arch
-             -- ^ A map of block addresses to the CFG that contains
-             -- them (if any): WARNING: multiple CFGs can contain the
-             -- same block, so this is not well defined!!!
+             -- ^ A map of block addresses to the set of CFGs that
+             -- contains them (if any). Note that a single block may
+             -- be contained in multiple CFGs. Indeed, the
+             -- @embrittle-examples.sh@ in @sfe@ include such CFGs.
              , envEntryAddress :: A.ConcreteAddress arch
              -- ^ The address of the entry point of the program
              , envMemory :: MM.Memory (MM.ArchAddrWidth arch)
@@ -71,8 +73,9 @@ data RewriteEnv arch =
              , envISA :: ISA.ISA arch
              -- ^ ISA for arch
              }
--- | A map of block addresses to the CFG that contains them (if any).
-type BlockCFGIndex arch = M.Map (A.ConcreteAddress arch) (FR.FunctionCFG arch)
+-- | A map of block addresses to the set of CFGs that contains them
+-- (if any).
+type BlockCFGIndex arch = M.Map (A.ConcreteAddress arch) (S.Set (FR.FunctionCFG arch))
 
 -- | A monadic environment for binary rewriting
 newtype RewriteM arch a = RewriteM { unRewriteM :: RWS.RWS (RewriteEnv arch) () (RewriteInfo arch) a }
@@ -87,7 +90,7 @@ mkBlockCFGIndex :: [FR.FunctionCFG arch] -> BlockCFGIndex arch
 mkBlockCFGIndex cfgs = F.foldl' indexCFGBlocks M.empty cfgs
   where
     indexCFGBlocks m c = F.foldl' (indexCFGBlock c) m (FR.cfgBlocks c)
-    indexCFGBlock c m b = M.insert b c m
+    indexCFGBlock c m b = M.insertWith S.union b (S.singleton c) m
 
 -- | Make a rewriter environment.
 --
@@ -140,14 +143,17 @@ recordRewrite ty baddr off =
 getISA :: RewriteM arch (ISA.ISA arch)
 getISA = RWS.asks envISA
 
--- | Look up the CFG for the function containing the given 'SymbolicBlock', if any.
+-- | Look up the unique CFG for the function containing the given 'SymbolicBlock', if any.
 --
--- The block might not be assigned to a CFG, in which case the
--- function returns 'Nothing'
+-- The block might not be assigned to a CFG, or assigned to multiple
+-- CFGs, in which cases the function returns 'Nothing'.
 lookupBlockCFG :: B.SymbolicBlock arch -> RewriteM arch (Maybe (FR.FunctionCFG arch))
 lookupBlockCFG sb = do
   idx <- RWS.asks envBlockCFGIndex
-  return (M.lookup (B.concreteAddress (B.basicBlockAddress sb)) idx)
+  let mcfgs = M.lookup (B.concreteAddress (B.basicBlockAddress sb)) idx
+  return $ do -- 'Maybe' monad
+    [cfg] <- S.elems <$> mcfgs
+    Just cfg
 
 -- | Get the address of the entry point of the program
 lookupEntryAddress :: RewriteM arch (A.ConcreteAddress arch)
