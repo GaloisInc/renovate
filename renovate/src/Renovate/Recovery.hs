@@ -13,7 +13,9 @@ module Renovate.Recovery (
   recoverBlocks,
   BlockInfo(..),
   SymbolicCFG,
+  SymbolicRegCFG,
   getSymbolicCFG,
+  getSymbolicRegCFG,
   isIncompleteBlockAddress,
   ArchBits,
   ArchInfo(..),
@@ -48,6 +50,7 @@ import qualified Data.Parameterized.Some as PU
 import qualified Lang.Crucible.Backend as C
 import qualified Lang.Crucible.CFG.Core as C
 import qualified Lang.Crucible.CFG.Extension as C
+import qualified Lang.Crucible.CFG.Reg as CR
 import qualified Lang.Crucible.FunctionHandle as C
 import qualified What4.FunctionName as C
 import qualified What4.ProgramLoc as C
@@ -64,17 +67,27 @@ type ArchBits arch = (  MC.ArchConstraints arch,
                         MC.HasRepr (MC.ArchReg arch) MC.TypeRepr,
                         MC.MemWidth (MC.ArchAddrWidth arch),
                         ArchInfo arch,
-                        Show (MC.ArchReg arch (MC.BVType (MC.ArchAddrWidth arch))))
+                        Show (MC.ArchReg arch (MC.BVType (MC.ArchAddrWidth arch))),
+                        C.IsSyntaxExtension (MS.MacawExt arch))
 
-type SCFG arch = C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch)
-data SymbolicCFG arch = SymbolicCFG (IO.IORef (Maybe (SCFG arch))) (IO (SCFG arch))
+data Cached a = Cached (IO.IORef (Maybe a)) (IO a)
+type SCFG f arch = f (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch)
+newtype SymbolicCFG arch = SymbolicCFG (Cached (SCFG C.SomeCFG arch))
+newtype SymbolicRegCFG arch = SymbolicRegCFG (Cached (SCFG CR.SomeCFG arch))
 
 -- | Construct or return the cached symbolic CFG
 --
 -- We have this representation to let us lazily construct CFGs, as we won't
 -- usually need all of them
 getSymbolicCFG :: SymbolicCFG arch -> IO (C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch))
-getSymbolicCFG (SymbolicCFG r gen) = do
+getSymbolicCFG (SymbolicCFG cached) = getCached cached
+
+-- | Construct or return the cached symbolic registerized CFG
+getSymbolicRegCFG :: SymbolicRegCFG arch -> IO (CR.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch))
+getSymbolicRegCFG (SymbolicRegCFG cached) = getCached cached
+
+getCached :: Cached a -> IO a
+getCached (Cached r gen) = do
   v0 <- IO.readIORef r
   case v0 of
     Just c -> return c
@@ -95,6 +108,7 @@ data BlockInfo arch = BlockInfo
   , biCFG              :: M.Map (ConcreteAddress arch) (SymbolicCFG arch)
   -- ^ The Crucible CFG for each function (if possible to construct), see
   -- Note [CrucibleCFG]
+  , biRegCFG           :: M.Map (ConcreteAddress arch) (SymbolicRegCFG arch)
   }
 
 isIncompleteBlockAddress :: BlockInfo arch -> ConcreteAddress arch -> Bool
@@ -135,12 +149,12 @@ data ArchVals arch =
 class ArchInfo arch where
   archVals :: proxy arch -> Maybe (ArchVals arch)
 
-toCFG :: forall arch ids s
-       . (ArchBits arch)
-      => C.HandleAllocator s
-      -> MC.DiscoveryFunInfo arch ids
-      -> Maybe (ST s (C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch)))
-toCFG halloc dfi = do
+toRegCFG :: forall arch ids s
+          . (ArchBits arch)
+         => C.HandleAllocator s
+         -> MC.DiscoveryFunInfo arch ids
+         -> Maybe (ST s (SCFG CR.SomeCFG arch))
+toRegCFG halloc dfi = do
   archFns <- archFunctions <$> archVals (Proxy @arch)
   -- We only support statically linked binaries right now, so we don't have
   -- to deal with segments
@@ -148,7 +162,17 @@ toCFG halloc dfi = do
   let nmTxt = T.decodeUtf8With T.lenientDecode (MC.discoveredFunName dfi)
   let nm = C.functionNameFromText nmTxt
   let posFn addr = C.BinaryPos nmTxt (maybe 0 fromIntegral (MC.msegAddr addr))
-  return (MS.mkFunCFG archFns halloc memBaseVarMap nm posFn dfi)
+  return (MS.mkFunRegCFG archFns halloc memBaseVarMap nm posFn dfi)
+
+toCFG :: forall arch
+       . (ArchBits arch)
+      => SymbolicRegCFG arch
+      -> Maybe (IO (SCFG C.SomeCFG arch))
+toCFG symRegCFG = do
+  archFns <- archFunctions <$> archVals (Proxy @arch)
+  return $ do
+    regCFG <- getSymbolicRegCFG symRegCFG -- this is why we're in IO, not ST
+    return $ MS.crucGenArchConstraints archFns $ MS.toCoreCFG archFns regCFG
 
 cfgFromAddrsWith :: (ArchBits arch)
                  => Recovery arch
@@ -181,19 +205,26 @@ blockInfo recovery mem di = do
                               , let blockAddrs = mapMaybe (concreteFromSegmentOff mem) (M.keys (dfi L.^. MC.parsedBlocks))
                               ]
   mcfgs <- T.forM (M.elems (di L.^. MC.funInfo)) $ \(PU.Some dfi) -> do
-    ior <- IO.newIORef Nothing
+    regIor <- IO.newIORef Nothing
+    cfgIor <- IO.newIORef Nothing
     fromMaybe (return Nothing) $ do
       guard (not (isIncompleteFunction dfi))
       funcAddr <- concreteFromSegmentOff mem (MC.discoveredFunAddr dfi)
-      cfgGen <- toCFG (recoveryHandleAllocator recovery) dfi
-      return (return (Just (funcAddr, SymbolicCFG ior (stToIO cfgGen))))
+      regCFGGen <- toRegCFG (recoveryHandleAllocator recovery) dfi
+      let regCFG = SymbolicRegCFG (Cached regIor (stToIO regCFGGen))
+      cfgGen <- toCFG regCFG
+      let cfg = SymbolicCFG (Cached cfgIor cfgGen)
+      return (return (Just (funcAddr, (cfg, regCFG))))
+
+  let cfgPairs = M.fromList (catMaybes mcfgs)
 
   return BlockInfo { biBlocks = blocks
                    , biFunctionEntries = mapMaybe (concreteFromSegmentOff mem) funcEntries
                    , biFunctionBlocks = funcBlocks
                    , biDiscoveryFunInfo = infos
                    , biIncomplete = indexIncompleteBlocks mem infos
-                   , biCFG = M.fromList (catMaybes mcfgs)
+                   , biCFG = M.map fst cfgPairs
+                   , biRegCFG = M.map snd cfgPairs
                    }
   where
     absoluteBlockStarts = S.fromList [ entry
