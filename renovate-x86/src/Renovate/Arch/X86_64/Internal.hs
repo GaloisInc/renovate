@@ -67,7 +67,7 @@ instance PD.Pretty (Instruction a) where
 -- We can't really get the address here, so we'll have to come up with
 -- something else longer term.
 prettyPrint :: Instruction a -> String
-prettyPrint i = PP.displayS (PP.renderCompact (D.ppInstruction 0 (toFlexInst i))) ""
+prettyPrint i = PP.displayS (PP.renderCompact (D.ppInstruction (toFlexInst i))) ""
 
 -- | The types of failures that can occur during disassembly of x86_64
 -- instructions.
