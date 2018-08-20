@@ -123,7 +123,7 @@ analyzeDiscoveredFunctions recovery mem info !iterations =
 
 data ArchVals arch =
   ArchVals { archFunctions :: MS.MacawSymbolicArchFunctions arch
-           , withArchEval :: forall a sym . (C.IsBoolSolver sym, WI.IsSymExprBuilder sym) =>  sym  -> (MS.MacawArchEvalFn sym arch -> IO a) -> IO a
+           , withArchEval :: forall a sym . (C.IsSymInterface sym) =>  sym  -> (MS.MacawArchEvalFn sym arch -> IO a) -> IO a
            , withArchConstraints :: forall a . ((C.IsSyntaxExtension (MS.MacawExt arch), MC.MemWidth (MC.ArchAddrWidth arch), MC.PrettyF (MC.ArchReg arch)) => a) -> a
            }
 
