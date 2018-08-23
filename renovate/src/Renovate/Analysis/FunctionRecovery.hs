@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -45,17 +47,29 @@ data Completion = Complete
                 | Incomplete
                 deriving (Eq, Ord, Show)
 
+-- | We assume a function is identified by its entry point, so that
+-- e.g. 'Ord' and 'Eq' for 'FunctionCFG' are defined in terms of the
+-- entry point.
 data FunctionCFG arch = FunctionCFG { cfgEntry :: ConcreteAddress arch
                                    -- ^ The entry point of the function
                                    , cfgSuccessors :: M.Map (ConcreteAddress arch) [ConcreteAddress arch]
                                    -- ^ The successors of each block
                                    , cfgExitBlocks :: [ConcreteAddress arch]
                                    -- ^ Exit blocks of the function
-                                   , cfgBlocks :: M.Map (ConcreteAddress arch) (ConcreteBlock arch)
+                                   , cfgBlocks :: [ConcreteAddress arch] -- M.Map (ConcreteAddress arch) (ConcreteBlock arch)
                                    -- ^ All of the blocks in the CFG
                                    , cfgCompletion :: Completion
                                    -- ^ Whether or not the CFG is complete
                                    }
+deriving instance ( Show (Instruction arch ())
+                  , MM.MemWidth (MM.RegAddrWidth (MM.ArchReg arch)) )
+  => Show (FunctionCFG arch)
+
+instance Eq (FunctionCFG arch) where
+  c1 == c2 = cfgEntry c1 == cfgEntry c2
+
+instance Ord (FunctionCFG arch) where
+  c1 `compare` c2 = cfgEntry c1 `compare` cfgEntry c2
 
 -- | Starting from a basic set of recovered block information from
 -- macaw, assign basic blocks to functions and construct CFGs.
@@ -110,7 +124,7 @@ makeCFGForEntry entryAddr = do
   return $ Just $ FunctionCFG { cfgEntry = entryAddr
                               , cfgSuccessors = fmap F.toList (fsSuccessors st)
                               , cfgExitBlocks = F.toList (fsExitBlocks st)
-                              , cfgBlocks = fsBlocks st
+                              , cfgBlocks = F.toList (fsVisited st)
                               , cfgCompletion = if fsHasIndirectJump st then Incomplete else Complete
                               }
 
@@ -207,7 +221,6 @@ data CFGEnv arch = CFGEnv { envBlocks :: M.Map (ConcreteAddress arch) (ConcreteB
 data FunctionState arch =
   FunctionState { fsSuccessors :: M.Map (ConcreteAddress arch) (S.Set (ConcreteAddress arch))
                 , fsExitBlocks :: S.Set (ConcreteAddress arch)
-                , fsBlocks :: M.Map (ConcreteAddress arch) (ConcreteBlock arch)
                 , fsHasIndirectJump :: Bool
                 , fsVisited :: S.Set (ConcreteAddress arch)
                 , fsWorklist :: S.Set (ConcreteAddress arch)
@@ -216,7 +229,6 @@ data FunctionState arch =
 emptyFunctionState :: FunctionState arch
 emptyFunctionState = FunctionState { fsSuccessors = M.empty
                                    , fsExitBlocks = S.empty
-                                   , fsBlocks = M.empty
                                    , fsHasIndirectJump = False
                                    , fsVisited = S.empty
                                    , fsWorklist = S.empty
