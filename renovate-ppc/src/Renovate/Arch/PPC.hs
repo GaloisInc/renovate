@@ -23,9 +23,6 @@ module Renovate.Arch.PPC (
   MP.parseTOC,
   MP.lookupTOC,
   MP.entryPoints,
-  -- * Instruction Helpers
-  toInst,
-  fromInst,
   -- * Exceptions
   InstructionDisassemblyFailure(..)
   ) where
@@ -106,6 +103,7 @@ instance R.ArchInfo MP.PPC32 where
                                     k (MPS.ppc32MacawEvalFn sfns)
                                 , R.withArchConstraints = \x -> x
                                 })
+
 
 {- Note [Layout Addresses]
 

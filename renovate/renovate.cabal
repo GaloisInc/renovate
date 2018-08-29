@@ -60,6 +60,7 @@ library
                        macaw-symbolic,
                        crucible,
                        elf-edit >= 0.28,
+                       semmc,
                        what4
 
   hs-source-dirs:      src

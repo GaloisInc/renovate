@@ -10,6 +10,7 @@ module Renovate.BasicBlock (
   SymbolicBlock,
   Instruction,
   InstructionAnnotation,
+  ToGenericInstruction(..),
   RegisterType,
   AddressAssignedBlock(..),
   SymbolicInfo(..),
