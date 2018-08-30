@@ -69,7 +69,7 @@ type family RegisterType arch :: *
 -- instructions, but is true for PowerPC.
 class ToGenericInstruction arch 
   where
-    toGenericInstruction   :: Instruction arch () -> SA.Instruction arch
+    toGenericInstruction   :: Instruction arch a  -> SA.Instruction arch
     fromGenericInstruction :: SA.Instruction arch -> Instruction arch  ()
 
 -- | Constraints common to all instructions.
