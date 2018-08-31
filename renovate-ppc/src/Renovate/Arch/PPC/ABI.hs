@@ -26,7 +26,7 @@ abi64 = R.ABI { R.isReturn            = ppcIsReturn . R.toGenericInstruction @PP
                                     . R.fromGenericInstruction @PPC.PPC64 
                                     . ppcClearRegister
             , R.pointerSize         = 8
-            -- | these are all for shadow stack; leave undefined
+            -- these are all for shadow stack; leave undefined
             , R.allocateMemory            = undefined
             , R.computeStackPointerOffset = undefined
             , R.saveReturnAddress         = undefined
@@ -44,7 +44,7 @@ abi32 = R.ABI { R.isReturn            = ppcIsReturn . R.toGenericInstruction @PP
                                     . R.fromGenericInstruction @PPC.PPC32
                                     . ppcClearRegister
             , R.pointerSize         = 4
-            -- | these are all for shadow stack; leave undefined
+            -- these are all for shadow stack; leave undefined
             , R.allocateMemory            = undefined
             , R.computeStackPointerOffset = undefined
             , R.saveReturnAddress         = undefined
