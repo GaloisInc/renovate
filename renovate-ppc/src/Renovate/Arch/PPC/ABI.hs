@@ -4,7 +4,6 @@
 
 module Renovate.Arch.PPC.ABI ( abi64
                              , abi32
-                             , instrOpcode
                              ) where
 
 import qualified Data.Macaw.PPC as PPC
@@ -53,13 +52,12 @@ abi32 = R.ABI { R.isReturn            = ppcIsReturn . R.toGenericInstruction @PP
             }
 
 
--- | Retrieve the 'String' opcode from an instruction (for diagnostic purposes)
-instrOpcode :: D.Instruction -> String
-instrOpcode (D.Instruction opcode operands) = show opcode
 
 -- is return if it matches BLR (branch to link register) or BLRL 
 ppcIsReturn :: D.Instruction -> Bool
-ppcIsReturn instr = instrOpcode instr == "BLR" || instrOpcode instr == "BLRL"
+ppcIsReturn (D.Instruction D.BLR _)  = True
+ppcIsReturn (D.Instruction D.BLRL _) = True
+ppcIsReturn _                        = False
 
 
 -- | Caller save registers for PPC64 (called "volitile" in the
