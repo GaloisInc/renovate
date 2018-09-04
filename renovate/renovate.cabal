@@ -36,6 +36,7 @@ library
                        Renovate.Analysis.FunctionRecovery
                        Renovate.BasicBlock
                        Renovate.BinaryFormat.ELF
+                       Renovate.BinaryFormat.ELF.Rewriter
                        Renovate.ISA
                        Renovate.Recovery
                        Renovate.Redirect

@@ -1,9 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NondecreasingIndentation #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -26,6 +23,9 @@ module Renovate.BinaryFormat.ELF (
   withMemory,
   rewriteElf,
   analyzeElf,
+  RewriterInfo,
+  SomeBlocks(..),
+  -- * Lenses
   riInitialBytes,
   riSmallBlockCount,
   riReusedByteCount,
@@ -42,13 +42,8 @@ module Renovate.BinaryFormat.ELF (
   riIncompleteBlocks,
   riRedirectionDiagnostics,
   riBlockRecoveryDiagnostics,
-  riBlockMapping,
-  RenovateConfig(..),
-  RewriterInfo,
-  SomeBlocks(..)
+  riBlockMapping
   ) where
-
-import           GHC.Generics ( Generic )
 
 import           Control.Applicative
 import           Control.Arrow ( second )
@@ -62,7 +57,6 @@ import           Data.Bits ( Bits, (.|.) )
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C8
 import qualified Data.Foldable as F
-import qualified Data.Generics.Product as GL
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
@@ -90,61 +84,20 @@ import qualified Renovate.Analysis.FunctionRecovery as FR
 import qualified Renovate.Arch as Arch
 import qualified Renovate.BasicBlock as B
 import qualified Renovate.BasicBlock.Assemble as BA
+import           Renovate.BinaryFormat.ELF.Rewriter
 import           Renovate.Config
 import qualified Renovate.Diagnostic as RD
-import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as R
 import qualified Renovate.Redirect as RE
 import qualified Renovate.Redirect.Symbolize as RS
 import qualified Renovate.Rewrite as RW
 
 import           Debug.Trace
-debug :: a -> String -> a
-debug = flip trace
+
 -- | The system page alignment (assuming 4k pages)
 pageAlignment :: Word32
 pageAlignment = 0x1000
 
--- | Statistics gathered and diagnostics generated during the
--- rewriting phase.
-data RewriterInfo arch =
-  RewriterInfo { _riSegmentVirtualAddress :: Maybe Word64
-               , _riOverwrittenRegions :: [(String, Word64)]
-               -- ^ The name of a data region and its length (which is
-               -- the number of zero bytes that that replaced it)
-               , _riAppendedSegments :: [(E.ElfSegmentType, Word16, Word64, Word64)]
-               -- ^ The type of the segment, the index of the segment,
-               -- the aligned offset at which it will be placed, the
-               -- amount of padding required.
-               , _riEntryPointAddress :: Maybe Word64
-               , _riSectionBaseAddress :: Maybe Word64
-               , _riInitialBytes :: Maybe B.ByteString
-               , _riBlockRecoveryDiagnostics :: [RD.Diagnostic]
-               , _riRedirectionDiagnostics :: [RD.Diagnostic]
-               , _riRecoveredBlocks :: Maybe SomeBlocks
-               , _riInstrumentationSites :: [RW.RewriteSite arch]
-               , _riELF :: E.Elf (MM.ArchAddrWidth arch)
-               , _riSmallBlockCount :: Int
-               -- ^ The number of blocks that were too small to rewrite
-               , _riReusedByteCount :: Int
-               -- ^ The number of bytes re-used in the base program by the compact layout strategy
-               , _riUnrelocatableTerm :: Int
-               -- ^ The number of blocks that could not be relocated because
-               -- they end with an IP-relative jump
-               , _riOriginalTextSize :: Int
-               -- ^ The number of bytes in the original text section
-               , _riNewTextSize :: Int
-               -- ^ The number of bytes allocated in the new text section
-               , _riIncompleteBlocks :: Int
-               -- ^ The number of blocks in incomplete functions
-               , _riBlockMapping :: [(RA.ConcreteAddress arch, RA.ConcreteAddress arch)]
-               -- ^ A mapping of original block addresses to rewritten block addresses
-               }
-  deriving (Generic)
-
-data SomeBlocks = forall arch
-                . (B.InstructionConstraints arch)
-                => SomeBlocks (ISA.ISA arch) [B.ConcreteBlock arch]
 
 -- | Apply an instrumentation pass to the code in an ELF binary,
 -- rewriting the binary.
@@ -224,14 +177,12 @@ rewriteElf :: (B.InstructionConstraints arch,
            -- ^ The layout strategy for blocks in the new binary
            -> IO (E.Elf (MM.ArchAddrWidth arch), b arch, RewriterInfo arch)
 rewriteElf cfg e loadedBinary strat = do
-    (analysisResult, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
-    return (_riELF ri, analysisResult, ri)
-  where
-    act = do
+    (analysisResult, ri) <- runElfRewriter e $ do
       let mem = MBL.memoryImage loadedBinary
       -- FIXME: Use the symbol map from the loaded binary (which we still need to add)
       symmap <- withCurrentELF (buildSymbolMap mem)
       doRewrite cfg loadedBinary symmap strat
+    return (_riELF ri, analysisResult, ri)
 
 -- | Run an analysis over an ELF file without performing any rewriting.
 analyzeElf :: (B.InstructionConstraints arch,
@@ -247,13 +198,11 @@ analyzeElf :: (B.InstructionConstraints arch,
            -- (including statically-allocated data)
            -> IO (b arch, [RE.Diagnostic])
 analyzeElf cfg e loadedBinary = do
-    (b, ri) <- S.runStateT (unElfRewrite act) (emptyRewriterInfo e)
-    return (b, _riBlockRecoveryDiagnostics ri)
-  where
-    act = do
+    (b, ri) <- runElfRewriter e $ do
       let mem = MBL.memoryImage loadedBinary
       symmap <- withCurrentELF (buildSymbolMap mem)
       analyzeTextSection cfg loadedBinary symmap
+    return (b, _riBlockRecoveryDiagnostics ri)
 
 withElf :: E.SomeElf E.Elf -> (forall w . E.Elf w -> a) -> a
 withElf e k =
@@ -999,82 +948,3 @@ data ElfRewriteException = RewrittenTextSectionSizeMismatch Int Int
 
 deriving instance Show ElfRewriteException
 instance C.Exception ElfRewriteException
-
-newtype ElfRewriter arch a = ElfRewriter { unElfRewrite :: S.StateT (RewriterInfo arch) IO a }
-                          deriving (Monad,
-                                    Functor,
-                                    Applicative,
-                                    IO.MonadIO,
-                                    P.MonadThrow,
-                                    S.MonadState (RewriterInfo arch))
-
-emptyRewriterInfo :: E.Elf (MM.ArchAddrWidth arch) -> RewriterInfo arch
-emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
-                                   , _riOverwrittenRegions       = []
-                                   , _riAppendedSegments         = []
-                                   , _riEntryPointAddress        = Nothing
-                                   , _riSectionBaseAddress       = Nothing
-                                   , _riInitialBytes             = Nothing
-                                   , _riBlockRecoveryDiagnostics = []
-                                   , _riRedirectionDiagnostics   = []
-                                   , _riRecoveredBlocks          = Nothing
-                                   , _riInstrumentationSites     = []
-                                   , _riELF                      = e
-                                   , _riSmallBlockCount          = 0
-                                   , _riReusedByteCount          = 0
-                                   , _riUnrelocatableTerm        = 0
-                                   , _riOriginalTextSize         = 0
-                                   , _riIncompleteBlocks         = 0
-                                   , _riNewTextSize              = 0
-                                   , _riBlockMapping             = []
-                                   }
-riOriginalTextSize :: L.Simple L.Lens (RewriterInfo arch) Int
-riOriginalTextSize = GL.field @"_riOriginalTextSize"
-
-riNewTextSize :: L.Simple L.Lens (RewriterInfo arch) Int
-riNewTextSize = GL.field @"_riNewTextSize"
-
-riIncompleteBlocks :: L.Simple L.Lens (RewriterInfo arch) Int
-riIncompleteBlocks = GL.field @"_riIncompleteBlocks"
-
-riSegmentVirtualAddress :: L.Simple L.Lens (RewriterInfo arch) (Maybe Word64)
-riSegmentVirtualAddress = GL.field @"_riSegmentVirtualAddress"
-
-riOverwrittenRegions :: L.Simple L.Lens (RewriterInfo arch) [(String, Word64)]
-riOverwrittenRegions = GL.field @"_riOverwrittenRegions"
-
-riAppendedSegments :: L.Simple L.Lens (RewriterInfo arch) [(E.ElfSegmentType, Word16, Word64, Word64)]
-riAppendedSegments = GL.field @"_riAppendedSegments"
-
-riEntryPointAddress :: L.Simple L.Lens (RewriterInfo arch) (Maybe Word64)
-riEntryPointAddress = GL.field @"_riEntryPointAddress"
-
-riSectionBaseAddress :: L.Simple L.Lens (RewriterInfo arch) (Maybe Word64)
-riSectionBaseAddress = GL.field @"_riSectionBaseAddress"
-
-riInitialBytes :: L.Simple L.Lens (RewriterInfo arch) (Maybe B.ByteString)
-riInitialBytes = GL.field @"_riInitialBytes"
-
-riBlockRecoveryDiagnostics :: L.Simple L.Lens (RewriterInfo arch) [RD.Diagnostic]
-riBlockRecoveryDiagnostics = GL.field @"_riBlockRecoveryDiagnostics"
-
-riRedirectionDiagnostics :: L.Simple L.Lens (RewriterInfo arch) [RD.Diagnostic]
-riRedirectionDiagnostics = GL.field @"_riRedirectionDiagnostics"
-
-riRecoveredBlocks :: L.Simple L.Lens (RewriterInfo arch) (Maybe SomeBlocks)
-riRecoveredBlocks = GL.field @"_riRecoveredBlocks"
-
-riInstrumentationSites :: L.Simple L.Lens (RewriterInfo arch) [RW.RewriteSite arch]
-riInstrumentationSites = GL.field @"_riInstrumentationSites"
-
-riSmallBlockCount :: L.Simple L.Lens (RewriterInfo arch) Int
-riSmallBlockCount = GL.field @"_riSmallBlockCount"
-
-riReusedByteCount :: L.Simple L.Lens (RewriterInfo arch) Int
-riReusedByteCount = GL.field @"_riReusedByteCount"
-
-riUnrelocatableTerm :: L.Simple L.Lens (RewriterInfo arch) Int
-riUnrelocatableTerm = GL.field @"_riUnrelocatableTerm"
-
-riBlockMapping :: L.Simple L.Lens (RewriterInfo arch) [(RA.ConcreteAddress arch, RA.ConcreteAddress arch)]
-riBlockMapping = GL.field @"_riBlockMapping"
