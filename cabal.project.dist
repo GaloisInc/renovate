@@ -21,3 +21,4 @@ packages: deps/elf-edit/
           renovate/
           renovate-x86/
           renovate-ppc/
+          refurbish/
