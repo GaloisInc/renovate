@@ -92,8 +92,6 @@ import qualified Renovate.Redirect as RE
 import qualified Renovate.Redirect.Symbolize as RS
 import qualified Renovate.Rewrite as RW
 
-import           Debug.Trace
-
 -- | The system page alignment (assuming 4k pages)
 pageAlignment :: Word32
 pageAlignment = 0x1000
@@ -486,9 +484,7 @@ buildNewSymbolTable :: (w ~ MM.ArchAddrWidth arch, E.ElfWidthConstraints w, MM.M
                     -- ^ The original symbol table
                     -> E.Elf w
                     -> ElfRewriter arch (E.ElfSymbolTable (E.ElfWordType w))
-buildNewSymbolTable textSecIdx extraTextSecIdx layoutAddr newSyms baseTable elf
-  | trace (printf "New symbol table index is %d" (nextSectionIndex elf)) False = undefined
-  | otherwise =
+buildNewSymbolTable textSecIdx extraTextSecIdx layoutAddr newSyms baseTable elf =
   return $ baseTable { E.elfSymbolTableEntries = E.elfSymbolTableEntries baseTable <>
                        newEntries (toMap (E.elfSymbolTableEntries baseTable))
                      , E.elfSymbolTableIndex = nextSectionIndex elf
