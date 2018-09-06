@@ -5,14 +5,14 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 module Renovate.Arch.PPC.ISA (
   isa,
   assemble,
   disassemble,
   Instruction,
   TargetAddress(..),
-  toInst,
-  fromInst,
   -- * Exceptions
   InstructionDisassemblyFailure(..)
   ) where
@@ -350,8 +350,19 @@ newJumpOffset nBits srcAddr targetAddr
   where
     rawOff = targetAddr `R.addressDiff` srcAddr
 
+-- | These are orphan instances; is there a better place to put them?
+instance R.ToGenericInstruction MP.PPC32 where
+  toGenericInstruction   = toInst
+  fromGenericInstruction = fromInst
+
+instance R.ToGenericInstruction MP.PPC64 where
+  toGenericInstruction   = toInst
+  fromGenericInstruction = fromInst
+
+
 -- | Convert the 'Instruction' wrapper to the base instruction type, dropping
--- annotations.
+-- annotations. This operation is depricated in favor of
+-- 'R.toGenericInstruction'.
 --
 -- Note that the coercion of the opcode is safe, because the second type
 -- parameter is phantom.
@@ -362,7 +373,8 @@ toInst i =
       D.Instruction (coerce opc) (FC.fmapFC unannotateOpcode annotatedOps)
 
 -- | Convert the base instruction type to the wrapped 'Instruction' with a unit
--- annotation.
+-- annotation. This operation is depricated in favor of
+-- 'R.fromGenericInstruction'.
 fromInst :: D.Instruction -> Instruction ()
 fromInst i =
   case i of

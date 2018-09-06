@@ -51,6 +51,7 @@ module Renovate
   B.Instruction,
   B.InstructionAnnotation,
   B.RegisterType,
+  B.ToGenericInstruction(..),
   -- * Addresses
   A.SymbolicAddress,
   A.ConcreteAddress,

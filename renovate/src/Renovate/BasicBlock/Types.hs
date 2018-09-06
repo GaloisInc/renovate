@@ -4,6 +4,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 module Renovate.BasicBlock.Types (
   BasicBlock(..),
   Instruction,
@@ -18,6 +19,7 @@ module Renovate.BasicBlock.Types (
   hasNoSymbolicTarget,
   symbolicTarget,
   projectInstruction,
+  ToGenericInstruction(..),
   -- * Constraints
   InstructionConstraints
   ) where
@@ -27,6 +29,8 @@ import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Typeable ( Typeable )
 
 import qualified Data.Macaw.CFG as MC
+
+import qualified SemMC.Architecture as SA
 
 import           Renovate.Address
 
@@ -58,6 +62,15 @@ type family InstructionAnnotation arch :: *
 
 -- | The type of register values for the architecture
 type family RegisterType arch :: *
+
+-- | Concrete renovate instructions of the type @'Instruction' arch ()@ are in
+-- several cases equivalent to semmc instructions of type
+-- @'SemMC.Architecture.Instruction' arch@. This property is not true for X86
+-- instructions, but is true for PowerPC.
+class ToGenericInstruction arch 
+  where
+    toGenericInstruction   :: Instruction arch a  -> SA.Instruction arch
+    fromGenericInstruction :: SA.Instruction arch -> Instruction arch  ()
 
 -- | Constraints common to all instructions.
 --

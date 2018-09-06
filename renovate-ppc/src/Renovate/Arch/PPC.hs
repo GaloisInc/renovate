@@ -13,6 +13,8 @@ module Renovate.Arch.PPC (
   MP.PPC32,
   -- * Functions
   isa,
+  abi32,
+  abi64,
   -- * Assembly and Disassembly
   assemble,
   disassemble,
@@ -23,9 +25,6 @@ module Renovate.Arch.PPC (
   MP.parseTOC,
   MP.lookupTOC,
   MP.entryPoints,
-  -- * Instruction Helpers
-  toInst,
-  fromInst,
   -- * Exceptions
   InstructionDisassemblyFailure(..)
   ) where
@@ -42,6 +41,7 @@ import qualified Data.Macaw.PPC.Symbolic as MPS
 
 import qualified Renovate as R
 import           Renovate.Arch.PPC.ISA
+import           Renovate.Arch.PPC.ABI
 
 -- | A renovate configuration for 32 bit PowerPC
 config32 :: (MM.MemWidth w, w ~ 32, MC.ArchAddrWidth MP.PPC32 ~ w, MBL.BinaryLoader MP.PPC32 binFmt, MBL.ArchBinaryData MP.PPC32 binFmt ~ MP.TOC MP.PPC32)
@@ -106,6 +106,7 @@ instance R.ArchInfo MP.PPC32 where
                                     k (MPS.ppc32MacawEvalFn sfns)
                                 , R.withArchConstraints = \x -> x
                                 })
+
 
 {- Note [Layout Addresses]
 
