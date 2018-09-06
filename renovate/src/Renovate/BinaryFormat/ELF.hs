@@ -52,6 +52,7 @@ import           Control.Monad ( guard, when )
 import qualified Control.Monad.Catch as C
 import qualified Control.Monad.Catch.Pure as P
 import qualified Control.Monad.IO.Class as IO
+import           Control.Monad.ST ( RealWorld )
 import qualified Control.Monad.State.Strict as S
 import           Data.Bits ( Bits, (.|.) )
 import qualified Data.ByteString as B
@@ -166,6 +167,7 @@ rewriteElf :: (B.InstructionConstraints arch,
                R.ArchBits arch)
            => RenovateConfig arch binFmt b
            -- ^ The configuration for the rewriter
+           -> C.HandleAllocator RealWorld
            -> E.Elf (MM.ArchAddrWidth arch)
            -- ^ The ELF file to rewrite
            -> MBL.LoadedBinary arch binFmt
@@ -174,12 +176,12 @@ rewriteElf :: (B.InstructionConstraints arch,
            -> RE.LayoutStrategy
            -- ^ The layout strategy for blocks in the new binary
            -> IO (E.Elf (MM.ArchAddrWidth arch), b arch, RewriterInfo arch)
-rewriteElf cfg e loadedBinary strat = do
+rewriteElf cfg hdlAlloc e loadedBinary strat = do
     (analysisResult, ri) <- runElfRewriter e $ do
       let mem = MBL.memoryImage loadedBinary
       -- FIXME: Use the symbol map from the loaded binary (which we still need to add)
       symmap <- withCurrentELF (buildSymbolMap mem)
-      doRewrite cfg loadedBinary symmap strat
+      doRewrite cfg hdlAlloc loadedBinary symmap strat
     return (_riELF ri, analysisResult, ri)
 
 -- | Run an analysis over an ELF file without performing any rewriting.
@@ -189,17 +191,18 @@ analyzeElf :: (B.InstructionConstraints arch,
                R.ArchBits arch)
            => RenovateConfig arch binFmt b
            -- ^ The configuration for the analysis
+           -> C.HandleAllocator RealWorld
            -> E.Elf (MM.ArchAddrWidth arch)
            -- ^ The ELF file to analyze
            -> MBL.LoadedBinary arch binFmt
            -- ^ A representation of the contents of memory of the ELF file
            -- (including statically-allocated data)
            -> IO (b arch, [RE.Diagnostic])
-analyzeElf cfg e loadedBinary = do
+analyzeElf cfg hdlAlloc e loadedBinary = do
     (b, ri) <- runElfRewriter e $ do
       let mem = MBL.memoryImage loadedBinary
       symmap <- withCurrentELF (buildSymbolMap mem)
-      analyzeTextSection cfg loadedBinary symmap
+      analyzeTextSection cfg hdlAlloc loadedBinary symmap
     return (b, _riBlockRecoveryDiagnostics ri)
 
 withElf :: E.SomeElf E.Elf -> (forall w . E.Elf w -> a) -> a
@@ -286,11 +289,12 @@ doRewrite :: (B.InstructionConstraints arch,
               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
               R.ArchBits arch)
           => RenovateConfig arch binFmt b
+          -> C.HandleAllocator RealWorld
           -> MBL.LoadedBinary arch binFmt
           -> RE.SymbolMap arch
           -> RE.LayoutStrategy
           -> ElfRewriter arch (b arch)
-doRewrite cfg loadedBinary symmap strat = do
+doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- We pull some information from the unmodified initial binary: the text
   -- section, the entry point(s), and original symbol table (if any).
   textSection <- withCurrentELF findTextSection
@@ -337,7 +341,7 @@ doRewrite cfg loadedBinary symmap strat = do
     , overwrittenBytes
     , instrumentedBytes
     , mNewData
-    , newSyms ) <- instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr
+    , newSyms ) <- instrumentTextSection cfg hdlAlloc loadedBinary textSectionStartAddr textSectionEndAddr
                                        (E.elfSectionData textSection) strat layoutAddr dataAddr symmap
 
   riOriginalTextSize L..= fromIntegral (B.length overwrittenBytes)
@@ -372,7 +376,6 @@ doRewrite cfg loadedBinary symmap strat = do
   -- Now overwrite the original code (in the .text segment) with the
   -- content computed by our transformation.
   modifyCurrentELF (overwriteTextSection overwrittenBytes)
-
 
   -- Increment all of the segment indexes so that we can reserve the first
   -- segment index (0) for our fresh PHDR segment that we want at the beginning
@@ -771,6 +774,7 @@ instrumentTextSection :: forall w arch binFmt b
                           Integral (E.ElfWordType w),
                           R.ArchBits arch)
                       => RenovateConfig arch binFmt b
+                      -> C.HandleAllocator RealWorld
                       -> MBL.LoadedBinary arch binFmt
                       -- ^ The memory space
                       -> RA.ConcreteAddress arch
@@ -788,8 +792,8 @@ instrumentTextSection :: forall w arch binFmt b
                       -> RE.SymbolMap arch
                       -- ^ meta data?
                       -> ElfRewriter arch (b arch, B.ByteString, B.ByteString, Maybe B.ByteString, RE.NewSymbolsMap arch)
-instrumentTextSection cfg loadedBinary textSectionStartAddr textSectionEndAddr textBytes strat layoutAddr newGlobalBase symmap = do
-  withRewriteEnv cfg loadedBinary symmap $ \env -> do
+instrumentTextSection cfg hdlAlloc loadedBinary textSectionStartAddr textSectionEndAddr textBytes strat layoutAddr newGlobalBase symmap = do
+  withRewriteEnv cfg hdlAlloc loadedBinary symmap $ \env -> do
   let isa = rcISA cfg
   let blockInfo = RW.envBlockInfo env
   let blocks = R.biBlocks blockInfo
@@ -876,15 +880,15 @@ withRewriteEnv :: forall w arch binFmt b a
                        Integral (E.ElfWordType w),
                        R.ArchBits arch)
                    => RenovateConfig arch binFmt b
+                   -> C.HandleAllocator RealWorld
                    -> MBL.LoadedBinary arch binFmt
                    -- ^ The memory space
                    -> RE.SymbolMap arch
                    -> (RW.RewriteEnv arch -> ElfRewriter arch a)
                    -> ElfRewriter arch a
-withRewriteEnv cfg loadedBinary symmap k = do
+withRewriteEnv cfg hdlAlloc loadedBinary symmap k = do
   let mem = MBL.memoryImage loadedBinary
   elfEntryPoints@(entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
-  hdlAlloc <- IO.liftIO C.newHandleAllocator
   let isa      = rcISA cfg
       archInfo = rcArchInfo cfg loadedBinary
       recovery = R.Recovery { R.recoveryISA = isa
@@ -910,12 +914,13 @@ analyzeTextSection :: forall w arch binFmt b
                        Integral (E.ElfWordType w),
                        R.ArchBits arch)
                    => RenovateConfig arch binFmt b
+                   -> C.HandleAllocator RealWorld
                    -> MBL.LoadedBinary arch binFmt
                    -- ^ The memory space
                    -> RE.SymbolMap arch
                    -> ElfRewriter arch (b arch)
-analyzeTextSection cfg loadedBinary symmap = do
-  withRewriteEnv cfg loadedBinary symmap $ \env -> do
+analyzeTextSection cfg hdlAlloc loadedBinary symmap = do
+  withRewriteEnv cfg hdlAlloc loadedBinary symmap $ \env -> do
   -- See "FIXME" comment for 'dataAddr' in 'doRewrite': it says there
   -- that this value is wrong, but I assume we should be wrong the
   -- same way here.

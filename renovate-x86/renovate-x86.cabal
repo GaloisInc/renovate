@@ -58,6 +58,7 @@ test-suite renovate-x86-tests
                  tasty-hunit,
                  macaw-semmc,
                  renovate,
-                 renovate-x86
+                 renovate-x86,
+                 crucible
                  -- tasty-quickcheck
                        

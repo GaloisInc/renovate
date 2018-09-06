@@ -21,6 +21,7 @@ executable refurbish
   -- other-extensions:
   build-depends:       base >=4.10 && <5,
                        bytestring,
+                       crucible,
                        optparse-applicative,
                        elf-edit,
                        parameterized-utils,
@@ -39,6 +40,7 @@ test-suite refurbish-tests
   hs-source-dirs: tests
   main-is: Main.hs
   build-depends: base,
+                 crucible,
                  deepseq,
                  bytestring,
                  tasty,

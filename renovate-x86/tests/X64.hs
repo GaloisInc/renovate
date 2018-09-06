@@ -10,6 +10,7 @@ module X64 ( x64Tests ) where
 import           GHC.TypeLits ( KnownNat )
 import           Data.Typeable ( Typeable )
 
+import           Control.Monad.ST ( RealWorld )
 import qualified Data.ByteString as B
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -24,13 +25,15 @@ import qualified Data.Macaw.BinaryLoader as MBL
 import           Data.Macaw.BinaryLoader.X86 ()
 import qualified Data.Macaw.CFG as MM
 
+import qualified Lang.Crucible.FunctionHandle as C
+
 import qualified Renovate as R
 import qualified Renovate.Arch.X86_64 as R64
 
 import qualified Data.ElfEdit as E
 
-x64Tests :: [FilePath] -> T.TestTree
-x64Tests asmFiles = T.testGroup "x64 ABI tests" (map mkTest asmFiles)
+x64Tests :: C.HandleAllocator RealWorld -> [FilePath] -> T.TestTree
+x64Tests hdlAlloc asmFiles = T.testGroup "x64 ABI tests" (map (mkTest hdlAlloc) asmFiles)
 
 {-
 
@@ -75,15 +78,15 @@ data ExpectedResult = ExpectedResult { expectedBlocks :: [ExpectedBlock]
 class (KnownNat (MM.ArchAddrWidth arch)) => TestConstraint arch (b :: * -> *) where
 instance TestConstraint R64.X86_64 b
 
-mkTest :: FilePath -> T.TestTree
-mkTest fp = T.testCase fp $ withELF elfFilename testRewrite
+mkTest :: C.HandleAllocator RealWorld -> FilePath -> T.TestTree
+mkTest hdlAlloc fp = T.testCase fp $ withELF elfFilename testRewrite
   where
     testRewrite :: E.Elf 64 -> IO ()
     testRewrite elf = do
       Just expected <- readMaybe <$> readFile (fp <.> "expected")
       let cfg :: [(R.Architecture, R.SomeConfig TestConstraint TestConfig)]
           cfg = [(R.X86_64, R.SomeConfig NR.knownNat MBL.Elf64Repr (R64.config (analysis expected) R.identity))]
-      R.withElfConfig (E.Elf64 elf) cfg testBlockRecovery
+      R.withElfConfig (E.Elf64 elf) cfg (testBlockRecovery hdlAlloc)
 
     elfFilename = replaceExtension fp "exe"
 
@@ -120,12 +123,13 @@ testBlockRecovery :: (w ~ MM.ArchAddrWidth arch,
                       KnownNat w,
                       Typeable w,
                       R.ArchBits arch)
-                  => R.RenovateConfig arch binFmt TestConfig
+                  => C.HandleAllocator RealWorld
+                  -> R.RenovateConfig arch binFmt TestConfig
                   -> E.Elf w
                   -> MBL.LoadedBinary arch binFmt
                   -> T.Assertion
-testBlockRecovery rc elf loadedBinary = do
-  ((TestCfg status msgs), _) <- R.analyzeElf rc elf loadedBinary
+testBlockRecovery hdlAlloc rc elf loadedBinary = do
+  ((TestCfg status msgs), _) <- R.analyzeElf rc hdlAlloc elf loadedBinary
   T.assertBool (unlines ("Analysis Failed:" : msgs)) status
 
 withELF :: FilePath -> (E.Elf 64 -> IO ()) -> IO ()
