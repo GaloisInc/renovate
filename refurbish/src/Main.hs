@@ -6,6 +6,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ElfEdit as E
 import           Data.Functor.Const ( Const(..) )
+import           Data.Monoid ((<>))
 import qualified Options.Applicative as O
 import qualified System.Exit as IO
 
@@ -16,6 +17,8 @@ import qualified Data.Parameterized.NatRepr as NR
 import qualified Renovate as R
 import qualified Renovate.Arch.PPC as RP
 import qualified Renovate.Arch.X86_64 as RX
+
+import           Prelude hiding ((<>))
 
 data Options = Options { oInput :: FilePath
                        , oOutput :: FilePath
