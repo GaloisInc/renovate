@@ -28,13 +28,24 @@ import qualified Data.Macaw.CFG as MM
 -- relocated.  They will automatically be concretized when blocks are
 -- laid out.
 --
--- The 'Word64' value of the 'SymbolicAddress' is a meaningless nonce,
--- a unique identifier.
-newtype SymbolicAddress = SymbolicAddress Word64
-                        deriving (Eq, Ord, Show)
+-- The 'Word64' value of the 'SymbolicAddress' is a unique identifier.
+--
+--  * 'SymbolicAddress' denotes a referenced address to a code entity that
+--    could be relocated.  In this case, both the source of the reference and
+--    the target of the reference can be relocated
+--  * 'StableAddress' denotes a reference to a code entity that cannot be relocated
+--    (e.g., because it is outside of the text section).  In this case, the source
+--    of the reference may be relocated (so a relative offset may need to be recomputed)
+--    but the target of the reference will not be relocated.
+data SymbolicAddress arch = SymbolicAddress Word64
+                          | StableAddress (ConcreteAddress arch)
+                          deriving (Eq, Ord)
 
-instance PD.Pretty SymbolicAddress where
+deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (SymbolicAddress arch)
+
+instance (MM.MemWidth (MM.ArchAddrWidth arch)) => PD.Pretty (SymbolicAddress arch) where
   pretty (SymbolicAddress a) = "0x" PD.<> PD.pretty (N.showHex a "")
+  pretty (StableAddress a) = PD.pretty a
 
 -- | The type of concrete addresses that can be laid out in memory
 --

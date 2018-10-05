@@ -17,11 +17,21 @@ int f1(long l1, long l2, long l3) {
   return (int)i1;
 }
 
-void _start() {
+void entry() {
   long i1 = (long)&g1;
   long i2 = (long)&g2;
   long i3 = (long)&g3;
   g1 = f1(i1, i2, i3);
-  EXIT(0);
 }
 
+#if defined(NOSTDLIB)
+void _start() {
+  entry();
+  EXIT(0);
+}
+#else
+int main() {
+  entry();
+  return 0;
+}
+#endif

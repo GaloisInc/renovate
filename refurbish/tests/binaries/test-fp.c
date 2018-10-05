@@ -2,7 +2,7 @@
 #include <stdio.h>
 
 
-void _start() {
+void entry() {
   // gcc will init via memset(): float res [] = {0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0};
   float res[8];
   float a=45.4; // r9
@@ -86,6 +86,16 @@ void _start() {
 	: "+r"(da), "+r"(db)
    : "r"(dpointer), "r"(idx3), "r"(idx2));
 #endif
+}
 
+#if defined(NOSTDLIB)
+void _start() {
+  entry();
   EXIT(0);
 }
+#else
+int main() {
+  entry();
+  return 0;
+}
+#endif

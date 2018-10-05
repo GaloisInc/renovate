@@ -26,7 +26,7 @@ data Diagnostic = forall arch. (MC.MemWidth (MC.ArchAddrWidth arch)) => NoSymbol
                   -- describes the context in which the address was
                   -- missing.
                 | InstructionIsNotJump String
-                | NoConcreteAddressForSymbolicTarget !SymbolicAddress String
+                | forall arch. (MC.MemWidth (MC.ArchAddrWidth arch)) => NoConcreteAddressForSymbolicTarget !(SymbolicAddress arch) String
                 | forall arch. (MC.MemWidth (MC.ArchAddrWidth arch)) => BlockTooSmallForRedirection
                     !Word64{- block size-} !Word64{- jump instr size -}
                     (ConcreteAddress arch){- address of block-} !String{- show of block-}

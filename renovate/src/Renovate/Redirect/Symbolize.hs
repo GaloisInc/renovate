@@ -10,7 +10,6 @@ import           Control.Applicative
 import qualified Data.Foldable as F
 import qualified Data.Map as M
 import qualified Data.Traversable as T
-import           Text.Printf ( printf )
 
 import           Prelude
 
@@ -57,27 +56,30 @@ symbolizeBasicBlocks concreteBlocks = do
 -- See Note [Jump Promotion]
 symbolizeJumps :: forall arch m
                 . (Monad m, InstructionConstraints arch)
-               => M.Map (ConcreteAddress arch) SymbolicAddress
-               -> (ConcreteBlock arch, SymbolicAddress)
+               => M.Map (ConcreteAddress arch) (SymbolicAddress arch)
+               -> (ConcreteBlock arch, SymbolicAddress arch)
                -> RewriterT arch m (ConcreteBlock arch, SymbolicBlock arch)
 symbolizeJumps symAddrMap (cb, symAddr) = do
   isa <- askISA
   mem <- askMem
   let lookupSymAddr ca = M.lookup ca symAddrMap
-  insns <- T.forM (instructionAddresses isa cb) $ \iaddr@(i, addr) -> do
+  insns <- T.forM (instructionAddresses isa cb) $ \(i, addr) -> do
     case isaJumpType isa i mem addr of
       AbsoluteJump _ target -> do
-        symTarget <- lookupSymbolicAddress isa iaddr target
+        symTarget <- lookupSymbolicAddress target
         return $ isaSymbolizeAddresses isa mem lookupSymAddr addr (Just symTarget) i
-      RelativeJump _ _ offset -> do
-        symTarget <- lookupSymbolicAddress isa iaddr (addr `addressAddOffset` offset)
-        return $ isaSymbolizeAddresses isa mem lookupSymAddr addr (Just symTarget) i
+      RelativeJump _ _ offset
+        | absoluteAddress addr + fromIntegral offset < absoluteAddress concAddr + fromIntegral (concreteBlockSize isa cb) ->
+          return $ isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
+        | otherwise -> do
+          symTarget <- lookupSymbolicAddress (addr `addressAddOffset` offset)
+          return $ isaSymbolizeAddresses isa mem lookupSymAddr addr (Just symTarget) i
       IndirectJump _ ->
         -- We do not know the destination of indirect jumps, so we
         -- can't tag them (or rewrite them later)
         return $ isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
       DirectCall _ offset -> do
-        symTarget <- lookupSymbolicAddress isa iaddr (addr `addressAddOffset` offset)
+        symTarget <- lookupSymbolicAddress (addr `addressAddOffset` offset)
         return $ isaSymbolizeAddresses isa mem lookupSymAddr addr (Just symTarget) i
       IndirectCall ->
         return $ isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
@@ -91,17 +93,10 @@ symbolizeJumps symAddrMap (cb, symAddr) = do
                          })
   where
     concAddr = basicBlockAddress cb
-    lookupSymbolicAddress isa (i, addr) target =
+    lookupSymbolicAddress target =
       case M.lookup target symAddrMap of
         Just saddr -> return saddr
-        Nothing -> do
-          -- traceM ("target: " ++ show target)
-          -- traceM ("symAddrs:  \n" ++ show (PD.vcat ((\(k, a) -> PD.pretty (show k) PD.<+> PD.pretty "=>" PD.<+> PD.pretty a) <$>
-          --                                       (M.toList symAddrMap))))
-          let err :: Diagnostic
-              err = NoSymbolicAddressForTarget (printf "%s:%s" (show addr) (isaPrettyInstruction isa i)) target "symbolizeJumps"
-          logDiagnostic err
-          throwError err
+        Nothing -> return (StableAddress target)
 
 {- Note [Jump Promotion]
 

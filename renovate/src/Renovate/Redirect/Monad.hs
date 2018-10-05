@@ -187,7 +187,7 @@ throwError :: (E.Exception e, Monad m) => e -> RewriterT arch m a
 throwError = ET.throwError . E.SomeException
 
 -- | Return the next 'SymbolicAddress' that is available.
-nextSymbolicAddress :: (Monad m) => RewriterT arch m SymbolicAddress
+nextSymbolicAddress :: (Monad m) => RewriterT arch m (SymbolicAddress arch)
 nextSymbolicAddress = do
   addr <- RWS.gets rwsSymbolicAddressSource
   RWS.modify $ \s -> s { rwsSymbolicAddressSource = addr + 1 }

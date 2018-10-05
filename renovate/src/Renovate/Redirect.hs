@@ -36,7 +36,8 @@ import qualified Data.Macaw.CFG as MM
 import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
-import           Renovate.Recovery ( BlockInfo, isIncompleteBlockAddress )
+import           Renovate.Recovery ( BlockInfo, isIncompleteBlockAddress, biOverlap )
+import           Renovate.Recovery.Overlap ( disjoint )
 import           Renovate.Redirect.Concretize
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , Status(..)
@@ -81,13 +82,19 @@ redirect :: (Monad m, InstructionConstraints arch)
 redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr baseSymBlocks = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
-    -- We only want to instrument blocks that live in the .text
+    -- We only want to instrument blocks that:
+    --
+    -- 1. Live in the .text
+    -- 2. Do not rely on their location (e.g. via PIC jumps)
+    -- 3. Do not reside in incomplete functions (where unknown control flow might break our assumptions)
+    -- 4. Do not overlap other blocks (which are hard for us to rewrite)
     --
     -- Also, see Note [PIC Jump Tables]
     case and [ textStart <= basicBlockAddress cb
              , basicBlockAddress cb < textEnd
              , isRelocatableTerminatorType (terminatorType isa mem cb)
              , not (isIncompleteBlockAddress blockInfo (basicBlockAddress cb))
+             , disjoint isa (biOverlap blockInfo) cb
              ] of
      True ->  do
        insns' <- lift $ instrumentor sb

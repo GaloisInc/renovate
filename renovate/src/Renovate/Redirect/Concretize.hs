@@ -102,7 +102,7 @@ these could be sentinels that require translation back to IP relative
 -- this transformation, but the idea might be worth considering.
 concretizeJumps :: (Monad m, InstructionConstraints arch)
                 => ISA arch
-                -> M.Map SymbolicAddress (ConcreteAddress arch)
+                -> M.Map (SymbolicAddress arch) (ConcreteAddress arch)
                 -> AddressAssignedPair arch
                 -> RewriterT arch m (ConcretePair arch)
 concretizeJumps isa concreteAddressMap (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock sb baddr) Modified)) = do
@@ -125,14 +125,22 @@ concretizeJumps _isa _concreteAddressMap (AddressAssignedPair (LayoutPair cb _ U
 -- to 32 bit offset).
 mapJumpAddress :: forall m arch
                 . (Monad m, InstructionConstraints arch)
-               => M.Map SymbolicAddress (ConcreteAddress arch)
+               => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
                -> (TaggedInstruction arch (InstructionAnnotation arch), ConcreteAddress arch)
                -> RewriterT arch m (Instruction arch ())
 mapJumpAddress concreteAddressMap (tagged, insnAddr) = do
   isa <- askISA
   mem <- askMem
   case symbolicTarget tagged of
-    Just symAddr
+    Just (StableAddress concAddr) ->
+      case isaModifyJumpTarget isa (isaConcretizeAddresses isa mem insnAddr i) insnAddr concAddr of
+        Nothing -> do
+          let err :: Diagnostic
+              err = InstructionIsNotJump (show i)
+          logDiagnostic err
+          throwError err
+        Just insn -> return insn
+    Just symAddr@(SymbolicAddress _)
       | Just concAddr <- M.lookup symAddr concreteAddressMap ->
         case isaModifyJumpTarget isa (isaConcretizeAddresses isa mem insnAddr i) insnAddr concAddr of
           Nothing -> do

@@ -135,7 +135,7 @@ ppcMakeRelativeJumpTo srcAddr targetAddr
     jumpInstr = D.Instruction D.B (D.Directbrtarget (D.BT shiftedOffset) D.:< D.Nil)
 
 ppcMakeSymbolicJump :: (MM.MemWidth (MM.ArchAddrWidth arch), R.Instruction arch ~ Instruction)
-                    => R.SymbolicAddress
+                    => R.SymbolicAddress arch
                     -> [R.TaggedInstruction arch (TargetAddress arch)]
 ppcMakeSymbolicJump symAddr = [R.tagInstruction (Just symAddr) i]
   where
@@ -173,9 +173,9 @@ ppcConcretizeAddresses _mem _addr i =
 -- target is specified through the symbolic target.
 ppcSymbolizeAddresses :: (MM.MemWidth (MM.ArchAddrWidth arch), R.Instruction arch ~ Instruction)
                       => MM.Memory (MM.ArchAddrWidth arch)
-                      -> (R.ConcreteAddress arch -> Maybe R.SymbolicAddress)
+                      -> (R.ConcreteAddress arch -> Maybe (R.SymbolicAddress arch))
                       -> R.ConcreteAddress arch
-                      -> Maybe R.SymbolicAddress
+                      -> Maybe (R.SymbolicAddress arch)
                       -> Instruction ()
                       -> [R.TaggedInstruction arch (TargetAddress arch)]
 ppcSymbolizeAddresses _mem lookupSymAddr insnAddr mSymbolicTarget i =

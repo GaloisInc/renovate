@@ -24,10 +24,10 @@ import qualified Control.Monad.State.Strict as St
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Lazy as L
+import qualified Data.Foldable as F
 import qualified Data.List as L
 import           Data.Monoid
 import qualified Data.Text.Prettyprint.Doc as PD
-import qualified Data.Traversable as T
 
 import           Prelude
 
@@ -37,14 +37,13 @@ import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
 
-
--- import Debug.Trace
-
 data BlockAssemblyException where
   -- A discontiguous block was starting with the given concrete block
   DiscontiguousBlocks         :: forall arch
                                . (InstructionConstraints arch)
-                              => ConcreteBlock arch -> BlockAssemblyException
+                              => ConcreteBlock arch
+                              -> ConcreteAddress arch
+                              -> BlockAssemblyException
 
   UnexpectedMemoryContents    :: forall w
                                . (MM.MemWidth w)
@@ -63,8 +62,8 @@ data BlockAssemblyException where
 deriving instance Show BlockAssemblyException
 
 instance PD.Pretty BlockAssemblyException where
-  pretty (DiscontiguousBlocks cb) =
-    PD.pretty "DiscontiguousBlocks:" PD.<+> PD.pretty cb
+  pretty (DiscontiguousBlocks cb nextAddr) =
+    PD.pretty "DiscontiguousBlocks:" PD.<+> PD.pretty cb PD.<+> PD.pretty "/" PD.<+> PD.pretty nextAddr
   pretty (UnexpectedMemoryContents seg) =
     PD.pretty "UnexpectedMemoryContents:" PD.<+> PD.pretty (show seg)
   pretty (AssemblyError e) = PD.pretty $ "AssemblyError: " ++ show e
@@ -83,6 +82,9 @@ instance C.Exception BlockAssemblyException
 --
 -- This function assumes that the extra contiguous blocks are at higher
 -- addresses than the original text section.
+--
+-- This function assumes (and asserts) that, if any blocks are overlapped, the
+-- overlap is complete and the overlapped blocks share an end address.
 assembleBlocks :: (L.HasCallStack, C.MonadThrow m, InstructionConstraints arch)
                => MM.Memory (MM.ArchAddrWidth arch)
                -> ISA arch
@@ -167,7 +169,7 @@ assembleAsExtra b = do
   -- traceM $ "nextExtraAddr = " ++ show nextExtraAddr
   -- traceM $ "b = " ++ show (basicBlockAddress b)
   unless (nextExtraAddr == basicBlockAddress b) $ do
-    C.throwM (DiscontiguousBlocks b)
+    C.throwM (DiscontiguousBlocks b nextExtraAddr)
   bytes <- assembleBlock b
   let bsize = B.length bytes
   St.modify' $ \s -> s { asExtraAddr = asExtraAddr s `addressAddOffset` fromIntegral bsize
@@ -188,16 +190,25 @@ assembleAsText :: (L.HasCallStack, C.MonadThrow m, InstructionConstraints arch)
                => ConcreteBlock arch
                -> Assembler arch m ()
 assembleAsText b = do
+  -- If there is a gap between the next layout address and the start of this
+  -- block, fill the gap with bytes from the original text section.
   padToBlockStart b
-  -- Now look ahead to see if we have any blocks completely overlapping this -
-  -- write a function that returns them all (and asserts that none extend past
-  -- the end of the block).
-  --
-  -- Lay out the prefix (assert that there is enough space for the redirecting
-  -- jump), then lay out the embedded blocks.  Then fill the suffix with traps.
+
+  -- Look up any blocks that overlap the current block and return them (while
+  -- removing them from the assembly queue).
   overlapping <- lookupOverlappingBlocks b
 
+  -- Ensure that all of the restrictions we have in place are obeyed and then
+  -- add the block to the text section.
   checkedOverlappingAssemble b overlapping
+
+-- | Compute the end address of a basic block
+blockEndAddress :: (MM.MemWidth (MM.ArchAddrWidth arch))
+                => ISA arch
+                -> ConcreteBlock arch
+                -> ConcreteAddress arch
+blockEndAddress isa b =
+  basicBlockAddress b `addressAddOffset` fromIntegral (concreteBlockSize isa b)
 
 -- | Assemble a block with its overlapping blocks into the text section.
 --
@@ -211,62 +222,28 @@ checkedOverlappingAssemble :: (L.HasCallStack, C.MonadThrow m, MM.MemWidth (MM.A
                            -> [ConcreteBlock arch]
                            -> Assembler arch m ()
 checkedOverlappingAssemble b overlays = do
-  baseBytes <- assembleBlock b
-  (prefixSize, suffixSize) <- computeBaseBlockBytes b overlays
-  assertM (prefixSize <= B.length baseBytes)
-  let prefixBytes = B.take prefixSize baseBytes
-  assertM (B.length prefixBytes == prefixSize)
-  appendTextBytes prefixBytes
-
-  -- Splice in all of the overlays
-  overlayByteCounts <- T.forM overlays $ \overlay -> do
-    curTextAddr <- St.gets asTextAddr
-    assertM (curTextAddr == basicBlockAddress overlay)
-    overlayBytes <- assembleBlock overlay
-    appendTextBytes overlayBytes
-    return (B.length overlayBytes)
-
-  -- Construct the suffix and splice it in
-  --
-  -- FIXME: Note that we are splicing in byte sequences of odd lengths, so we
-  -- might end up slicing a trap instruction in half to create a new instruction
-  -- that isn't what we intended.
-  --
-  -- For x86_64, this isn't a problem because traps are one byte.  Most other
-  -- architectures have fixed-length instructions, so it might not matter.
-  -- Thumb could be a problem, as some instructions are four bytes, while others
-  -- are two.  We need to audit that.
-  let overlayBytes = sum overlayByteCounts
-  assertM (B.length baseBytes == prefixSize + overlayBytes + suffixSize)
-  let suffixBytes = B.drop (prefixSize + overlayBytes) baseBytes
-  appendTextBytes suffixBytes
-
--- | Compute the prefix bytes of the concrete block that must be preserved and
--- the suffix bytes not occupied by overlaid blocks.
---
--- The prefix is the number of bytes required for the redirection jump.
---
--- The suffix is the number of bytes not occupied by overlay blocks, which could
--- be the rest of the bytes in the block.  The suffix bytes are copied from the
--- base block (and filled with traps).
-computeBaseBlockBytes :: (Monad m) => ConcreteBlock arch -> [ConcreteBlock arch] -> Assembler arch m (Int, Int)
-computeBaseBlockBytes b overlays = do
   isa <- St.gets asISA
-  let fakeJump = isaMakeRelativeJumpTo isa (basicBlockAddress b) (basicBlockAddress b)
-      jumpSize = sum (map (isaInstructionSize isa) fakeJump)
-      overlaySizes = sum (map (fromIntegral . concreteBlockSize isa) overlays)
-      blockSize = concreteBlockSize isa b
-  let prefix = min (fromIntegral jumpSize) (fromIntegral blockSize)
-  let suffix = max 0 (fromIntegral blockSize - (overlaySizes + prefix))
-  return (prefix, suffix)
+  let blockEnd = blockEndAddress isa b
+  -- assert that the overlays are all completely contained in the first block
+  F.forM_ overlays $ \overlay -> do
+    -- FIXME: Also assert that overlapped blocks have identical suffixes (to
+    -- ensure that nobody was doing any rewriting)
+    let overlayEnd = blockEndAddress isa overlay
+    assertM (basicBlockAddress overlay > basicBlockAddress b)
+    assertM (overlayEnd == blockEnd)
 
+  baseBytes <- assembleBlock b
+  appendTextBytes baseBytes
+
+-- | Append bytes to the text section, updating the next available layout
+-- address
 appendTextBytes :: (MM.MemWidth (MM.ArchAddrWidth arch), Monad m) => B.ByteString -> Assembler arch m ()
 appendTextBytes bs = do
   St.modify' $ \s -> s { asTextSection = asTextSection s <> B.byteString bs
                        , asTextAddr = asTextAddr s `addressAddOffset` fromIntegral (B.length bs)
                        }
 
--- | Look up all of the blocks overlapping the given block.
+-- | Look up (and return) all of the blocks overlapping the given block.
 --
 -- If any of the overlapping blocks are not completely contained within the
 -- input block, raises an error.
@@ -285,6 +262,8 @@ lookupOverlappingBlocks b = do
       blockEnd  = basicBlockAddress b `addressAddOffset` fromIntegral blockSize
   go isa blockEnd (basicBlockAddress b `addressAddOffset` fromIntegral jumpSize)
   where
+    -- Look up the next block and see if it overlaps the current block @b@.
+    -- Stop looking when we find a block that clearly does not overlap.
     go :: ISA arch -> ConcreteAddress arch -> ConcreteAddress arch -> Assembler arch m [ConcreteBlock arch]
     go isa blockEnd nextAllowableAddress = do
       mb' <- takeNextOrigBlock
@@ -304,8 +283,6 @@ lookupOverlappingBlocks b = do
                   -- appear to be overlapping when really there is no
                   -- redirection jump at all.
                   C.throwM (BlockOverlappingRedirection b')
-              | basicBlockAddress b' > nextAllowableAddress -> do
-                  C.throwM (DiscontiguousBlocks b')
               | (basicBlockAddress b' `addressAddOffset` bsize) > blockEnd ->
                   C.throwM (OverlayBlockNotContained b')
               | otherwise -> do

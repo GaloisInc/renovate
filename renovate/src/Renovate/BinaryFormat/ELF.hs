@@ -202,7 +202,9 @@ analyzeElf cfg hdlAlloc e loadedBinary = do
     (b, ri) <- runElfRewriter e $ do
       let mem = MBL.memoryImage loadedBinary
       symmap <- withCurrentELF (buildSymbolMap mem)
-      analyzeTextSection cfg hdlAlloc loadedBinary symmap
+      textSection <- withCurrentELF findTextSection
+      let textRange = sectionAddressRange textSection
+      analyzeTextSection cfg hdlAlloc loadedBinary symmap textRange
     return (b, _riBlockRecoveryDiagnostics ri)
 
 withElf :: E.SomeElf E.Elf -> (forall w . E.Elf w -> a) -> a
@@ -253,6 +255,17 @@ modifyCurrentELF k = do
   (res, elf') <- k elf
   S.modify' $ \s -> s { _riELF = elf' }
   return res
+
+-- | Compute the starting and ending address (address range) of an ELF section
+--
+-- FIXME: It would be nice to bundle the return value up in an ADT instead of a pair
+sectionAddressRange :: (MM.MemWidth (MM.ArchAddrWidth arch), Integral a)
+                    => E.ElfSection a
+                    -> (RE.ConcreteAddress arch, RE.ConcreteAddress arch)
+sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
+  where
+    textSectionStartAddr = RA.concreteFromAbsolute (fromIntegral (E.elfSectionAddr sec))
+    textSectionEndAddr = RA.addressAddOffset textSectionStartAddr (fromIntegral ((E.elfSectionSize sec)))
 
 
 -- | The rewriter driver
@@ -334,14 +347,13 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
       -- generate.  Maybe we can do something with congruence where we waste up
       -- to a page of space to maintain alignment.
       dataAddr = RA.concreteFromAbsolute (fromIntegral (rcDataLayoutBase cfg))
-      textSectionStartAddr = RA.concreteFromAbsolute (fromIntegral (E.elfSectionAddr textSection))
-      textSectionEndAddr = RA.addressAddOffset textSectionStartAddr (fromIntegral ((E.elfSectionSize textSection)))
+      textSectionRange = sectionAddressRange textSection
 
   ( analysisResult
     , overwrittenBytes
     , instrumentedBytes
     , mNewData
-    , newSyms ) <- instrumentTextSection cfg hdlAlloc loadedBinary textSectionStartAddr textSectionEndAddr
+    , newSyms ) <- instrumentTextSection cfg hdlAlloc loadedBinary textSectionRange
                                        (E.elfSectionData textSection) strat layoutAddr dataAddr symmap
 
   riOriginalTextSize L..= fromIntegral (B.length overwrittenBytes)
@@ -777,10 +789,8 @@ instrumentTextSection :: forall w arch binFmt b
                       -> C.HandleAllocator RealWorld
                       -> MBL.LoadedBinary arch binFmt
                       -- ^ The memory space
-                      -> RA.ConcreteAddress arch
-                      -- ^ The address of the start of the text section
-                      -> RA.ConcreteAddress arch
-                      -- ^ The address of the end of the text section
+                      -> (RA.ConcreteAddress arch, RA.ConcreteAddress arch)
+                      -- ^ The address of the (start, end) of the text section
                       -> B.ByteString
                       -- ^ The bytes of the text section
                       -> RE.LayoutStrategy
@@ -792,8 +802,8 @@ instrumentTextSection :: forall w arch binFmt b
                       -> RE.SymbolMap arch
                       -- ^ meta data?
                       -> ElfRewriter arch (b arch, B.ByteString, B.ByteString, Maybe B.ByteString, RE.NewSymbolsMap arch)
-instrumentTextSection cfg hdlAlloc loadedBinary textSectionStartAddr textSectionEndAddr textBytes strat layoutAddr newGlobalBase symmap = do
-  withRewriteEnv cfg hdlAlloc loadedBinary symmap $ \env -> do
+instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartAddr, textSectionEndAddr) textBytes strat layoutAddr newGlobalBase symmap = do
+  withRewriteEnv cfg hdlAlloc loadedBinary symmap textAddrRange $ \env -> do
   let isa = rcISA cfg
   let blockInfo = RW.envBlockInfo env
   let blocks = R.biBlocks blockInfo
@@ -884,9 +894,10 @@ withRewriteEnv :: forall w arch binFmt b a
                    -> MBL.LoadedBinary arch binFmt
                    -- ^ The memory space
                    -> RE.SymbolMap arch
+                   -> (RA.ConcreteAddress arch, RA.ConcreteAddress arch)
                    -> (RW.RewriteEnv arch -> ElfRewriter arch a)
                    -> ElfRewriter arch a
-withRewriteEnv cfg hdlAlloc loadedBinary symmap k = do
+withRewriteEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
   let mem = MBL.memoryImage loadedBinary
   elfEntryPoints@(entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
   let isa      = rcISA cfg
@@ -898,7 +909,7 @@ withRewriteEnv cfg hdlAlloc loadedBinary symmap k = do
                             , R.recoveryBlockCallback = rcBlockCallback cfg
                             , R.recoveryFuncCallback = fmap (second ($ loadedBinary)) (rcFunctionCallback cfg)
                             }
-  blockInfo <- IO.liftIO (R.recoverBlocks recovery mem symmap elfEntryPoints)
+  blockInfo <- IO.liftIO (R.recoverBlocks recovery mem symmap elfEntryPoints textAddrRange)
   riBlockRecoveryDiagnostics L..= []
   let blocks = R.biBlocks blockInfo
   riRecoveredBlocks L..= Just (SomeBlocks isa blocks)
@@ -918,9 +929,10 @@ analyzeTextSection :: forall w arch binFmt b
                    -> MBL.LoadedBinary arch binFmt
                    -- ^ The memory space
                    -> RE.SymbolMap arch
+                   -> (RA.ConcreteAddress arch, RA.ConcreteAddress arch)
                    -> ElfRewriter arch (b arch)
-analyzeTextSection cfg hdlAlloc loadedBinary symmap = do
-  withRewriteEnv cfg hdlAlloc loadedBinary symmap $ \env -> do
+analyzeTextSection cfg hdlAlloc loadedBinary symmap textAddrRange = do
+  withRewriteEnv cfg hdlAlloc loadedBinary symmap textAddrRange $ \env -> do
   -- See "FIXME" comment for 'dataAddr' in 'doRewrite': it says there
   -- that this value is wrong, but I assume we should be wrong the
   -- same way here.

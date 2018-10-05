@@ -15,7 +15,7 @@ int f1(long l1) {
   return (int)i1;
 }
 
-void _start() {
+void entry() {
   long i1 = (long)&g1;
   long i2 = (long)&g2;
   long i3 = (long)&g3;
@@ -24,6 +24,16 @@ void _start() {
     fptr = &f2;
 
   g1 = fptr(i3 + i2);
-  EXIT(0);
 }
 
+#if defined(NOSTDLIB)
+void _start() {
+  entry();
+  EXIT(0);
+}
+#else
+int main() {
+  entry();
+  return 0;
+}
+#endif

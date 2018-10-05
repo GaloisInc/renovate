@@ -111,7 +111,7 @@ type ConcreteBlock arch = BasicBlock (ConcreteAddress arch) (Instruction arch) (
 -- than one possible target (if there is such a thing).  If that
 -- becomes an issue, the annotation will need to sink into the operand
 -- annotations, and we'll need a helper to collect those.
-newtype TaggedInstruction arch a = Tag { unTag :: (Instruction arch a, Maybe SymbolicAddress) }
+newtype TaggedInstruction arch a = Tag { unTag :: (Instruction arch a, Maybe (SymbolicAddress arch)) }
 
 instance PD.Pretty (Instruction arch a) => PD.Pretty (TaggedInstruction arch a) where
   pretty (Tag (i, _)) = PD.pretty i
@@ -121,7 +121,7 @@ instance PD.Pretty (Instruction arch a) => PD.Pretty (TaggedInstruction arch a) 
 -- We use this if the instruction is a jump and we will need to
 -- relocate it, so we need to know the symbolic block it is jumping
 -- to.
-tagInstruction :: Maybe SymbolicAddress -> Instruction arch a -> TaggedInstruction arch a
+tagInstruction :: Maybe (SymbolicAddress arch) -> Instruction arch a -> TaggedInstruction arch a
 tagInstruction ma i = Tag (i, ma)
 
 -- | Return 'True' if the 'TaggedInstruction' has no symbolic target.
@@ -130,7 +130,7 @@ hasNoSymbolicTarget = isNothing . symbolicTarget
 
 -- | If the 'TaggedInstruction' has a 'SymbolicAddress' as a target,
 -- return it.
-symbolicTarget :: TaggedInstruction arch a -> Maybe SymbolicAddress
+symbolicTarget :: TaggedInstruction arch a -> Maybe (SymbolicAddress arch)
 symbolicTarget = snd . unTag
 
 -- | Remove the tag from an instruction
@@ -156,13 +156,13 @@ data AddressAssignedBlock arch = AddressAssignedBlock
 -- identifies the block.  It also includes the original concrete
 -- address of the corresponding 'ConcreteBlock' for this symbolic
 -- block.
-data SymbolicInfo arch = SymbolicInfo { symbolicAddress :: SymbolicAddress
+data SymbolicInfo arch = SymbolicInfo { symbolicAddress :: SymbolicAddress arch
                                       , concreteAddress :: ConcreteAddress arch
                                       }
                     deriving (Eq, Ord)
 
 deriving instance (MC.MemWidth (MC.ArchAddrWidth arch)) => Show (SymbolicInfo arch)
 
-instance PD.Pretty (SymbolicInfo arch) where
+instance (MC.MemWidth (MC.ArchAddrWidth arch)) => PD.Pretty (SymbolicInfo arch) where
   pretty si = PD.pretty (symbolicAddress si)
 

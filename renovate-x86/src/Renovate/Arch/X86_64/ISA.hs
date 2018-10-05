@@ -144,7 +144,7 @@ x64MakeRelativeJumpTo srcAddr targetAddr
     i32Max :: Integer
     i32Max = fromIntegral (maxBound :: Int32)
 
-x64MakeSymbolicJump :: R.SymbolicAddress -> [R.TaggedInstruction X86.X86_64 TargetAddress]
+x64MakeSymbolicJump :: R.SymbolicAddress X86.X86_64 -> [R.TaggedInstruction X86.X86_64 TargetAddress]
 x64MakeSymbolicJump sa = [R.tagInstruction (Just sa) i]
   where
     i = annotateInstr (makeInstr "jmp" [off]) NoAddress
@@ -249,9 +249,9 @@ absoluteDisplacement _mem endAddr disp =
 -- However, we do need to extend any jumps we find into jumps with 4 byte
 -- offsets.
 x64SymbolizeAddresses :: MM.Memory 64
-                      -> (R.ConcreteAddress X86.X86_64 -> Maybe R.SymbolicAddress)
+                      -> (R.ConcreteAddress X86.X86_64 -> Maybe (R.SymbolicAddress X86.X86_64))
                       -> R.ConcreteAddress X86.X86_64
-                      -> Maybe R.SymbolicAddress
+                      -> Maybe (R.SymbolicAddress X86.X86_64)
                       -> Instruction ()
                       -> [R.TaggedInstruction X86.X86_64 TargetAddress]
 x64SymbolizeAddresses mem _lookup insnAddr mSymbolicTarget xi@(XI ii)

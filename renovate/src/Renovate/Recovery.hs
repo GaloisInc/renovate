@@ -54,13 +54,13 @@ import qualified Lang.Crucible.CFG.Reg as CR
 import qualified Lang.Crucible.FunctionHandle as C
 import qualified What4.FunctionName as C
 import qualified What4.ProgramLoc as C
-import qualified What4.Interface as WI
 
 import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.Diagnostic
 import           Renovate.ISA
 import           Renovate.Redirect.Monad ( SymbolMap )
+import           Renovate.Recovery.Overlap
 
 type ArchBits arch = (  MC.ArchConstraints arch,
                         MC.RegisterInfo (MC.ArchReg arch),
@@ -109,6 +109,9 @@ data BlockInfo arch = BlockInfo
   -- ^ The Crucible CFG for each function (if possible to construct), see
   -- Note [CrucibleCFG]
   , biRegCFG           :: M.Map (ConcreteAddress arch) (SymbolicRegCFG arch)
+  , biOverlap          :: BlockRegions arch
+  -- ^ A structure that lets us determine which blocks in the program overlap
+  -- other blocks in the program (so that we can avoid every trying to rewrite them)
   }
 
 isIncompleteBlockAddress :: BlockInfo arch -> ConcreteAddress arch -> Bool
@@ -117,11 +120,12 @@ isIncompleteBlockAddress bi a = S.member a (biIncomplete bi)
 analyzeDiscoveredFunctions :: (ArchBits arch)
                            => Recovery arch
                            -> MC.Memory (MC.ArchAddrWidth arch)
+                           -> (ConcreteAddress arch, ConcreteAddress arch)
                            -> MC.DiscoveryState arch
                            -> Int
                            -- ^ Iteration count
                            -> IO (MC.DiscoveryState arch)
-analyzeDiscoveredFunctions recovery mem info !iterations =
+analyzeDiscoveredFunctions recovery mem textAddrRange info !iterations =
   case M.lookupMin (info L.^. MC.unexploredFunctions) of
     Nothing -> return info
     Just (addr, rsn) -> do
@@ -130,10 +134,10 @@ analyzeDiscoveredFunctions recovery mem info !iterations =
       case recoveryFuncCallback recovery of
         Just (freq, fcb)
           | iterations `mod` freq == 0 -> do
-              bi <- blockInfo recovery mem info'
+              bi <- blockInfo recovery mem textAddrRange info'
               fcb addr bi
         _ -> return ()
-      analyzeDiscoveredFunctions recovery mem info' (iterations + 1)
+      analyzeDiscoveredFunctions recovery mem textAddrRange info' (iterations + 1)
 
 data ArchVals arch =
   ArchVals { archFunctions :: MS.MacawSymbolicArchFunctions arch
@@ -177,34 +181,65 @@ toCFG symRegCFG = do
 cfgFromAddrsWith :: (ArchBits arch)
                  => Recovery arch
                  -> MC.Memory (MC.ArchAddrWidth arch)
+                 -> (ConcreteAddress arch, ConcreteAddress arch)
                  -> MC.AddrSymMap (MC.ArchAddrWidth arch)
                  -> [MC.ArchSegmentOff arch]
                  -> [(MC.ArchSegmentOff arch, MC.ArchSegmentOff arch)]
                  -> IO (MC.DiscoveryState arch)
-cfgFromAddrsWith recovery mem symbols initAddrs memWords = do
+cfgFromAddrsWith recovery mem textAddrRange symbols initAddrs memWords = do
   let s1 = MC.markAddrsAsFunction MC.InitAddr initAddrs s0
-  s2 <- analyzeDiscoveredFunctions recovery mem s1 0
+  s2 <- analyzeDiscoveredFunctions recovery mem textAddrRange s1 0
   let s3 = MC.exploreMemPointers memWords s2
-  analyzeDiscoveredFunctions recovery mem s3 0
+  analyzeDiscoveredFunctions recovery mem textAddrRange s3 0
   where
     s0 = MC.emptyDiscoveryState mem symbols (recoveryArchInfo recovery)
+
+-- There can be overlapping blocks
+--
+-- We deduplicate identical blocks in this function.  We deal with overlapping
+-- blocks by just never instrumenting them.
+accumulateBlocks :: (MC.MemWidth (MC.ArchAddrWidth arch))
+                 => M.Map (MC.ArchSegmentOff arch) (PU.Some (MC.ParsedBlock arch))
+                 -> PU.Some (MC.ParsedBlock arch)
+                 -> M.Map (MC.ArchSegmentOff arch) (PU.Some (MC.ParsedBlock arch))
+accumulateBlocks m (PU.Some pb0)
+  | Just (PU.Some pb) <- M.lookup (MC.pblockAddr pb0) m
+  , MC.blockSize pb0 == MC.blockSize pb = m
+  | otherwise = M.insert (MC.pblockAddr pb0) (PU.Some pb0) m
+
+addrInRange :: (MC.MemWidth (MC.ArchAddrWidth arch))
+            => MC.Memory (MC.ArchAddrWidth arch)
+            -> (ConcreteAddress arch, ConcreteAddress arch)
+            -> MC.ArchSegmentOff arch
+            -> Bool
+addrInRange mem (textStart, textEnd) addr = fromMaybe False $ do
+  absAddr <- MC.msegAddr addr
+  soStart <- MC.msegAddr =<< concreteAsSegmentOff mem textStart
+  soEnd <- MC.msegAddr =<< concreteAsSegmentOff mem textEnd
+  return (absAddr >= soStart && absAddr < soEnd)
 
 blockInfo :: (ArchBits arch)
           => Recovery arch
           -> MC.Memory (MC.RegAddrWidth (MC.ArchReg arch))
+          -> (ConcreteAddress arch, ConcreteAddress arch)
           -> MC.DiscoveryState arch
           -> IO (BlockInfo arch)
-blockInfo recovery mem di = do
-  let blockBuilder = buildBlock (recoveryISA recovery) (recoveryDis recovery) mem (S.fromList (mapMaybe (concreteFromSegmentOff mem) (F.toList absoluteBlockStarts)))
-  blocks <- catMaybes <$> mapM blockBuilder (F.toList absoluteBlockStarts)
+blockInfo recovery mem textAddrRange di = do
+  let blockBuilder = buildBlock (recoveryDis recovery) mem
+  let macawBlocks = F.foldl' accumulateBlocks M.empty [ PU.Some pb
+                                                      | PU.Some dfi <- validFuncs
+                                                      , pb <- M.elems (dfi L.^. MC.parsedBlocks)
+                                                      , addrInRange mem textAddrRange (MC.pblockAddr pb)
+                                                      ]
+  blocks <- catMaybes <$> mapM blockBuilder (M.elems macawBlocks)
   let addBlock m b = M.insert (basicBlockAddress b) b m
   let blockIndex = F.foldl' addBlock M.empty blocks
   let funcBlocks = M.fromList [ (funcAddr, mapMaybe (\a -> M.lookup a blockIndex) blockAddrs)
-                              | PU.Some dfi <- M.elems (di L.^. MC.funInfo)
+                              | PU.Some dfi <- validFuncs
                               , Just funcAddr <- [concreteFromSegmentOff mem (MC.discoveredFunAddr dfi)]
                               , let blockAddrs = mapMaybe (concreteFromSegmentOff mem) (M.keys (dfi L.^. MC.parsedBlocks))
                               ]
-  mcfgs <- T.forM (M.elems (di L.^. MC.funInfo)) $ \(PU.Some dfi) -> do
+  mcfgs <- T.forM validFuncs $ \(PU.Some dfi) -> do
     regIor <- IO.newIORef Nothing
     cfgIor <- IO.newIORef Nothing
     fromMaybe (return Nothing) $ do
@@ -225,14 +260,12 @@ blockInfo recovery mem di = do
                    , biIncomplete = indexIncompleteBlocks mem infos
                    , biCFG = M.map fst cfgPairs
                    , biRegCFG = M.map snd cfgPairs
+                   , biOverlap = blockRegions mem di
                    }
   where
-    absoluteBlockStarts = S.fromList [ entry
-                                     | PU.Some dfi <- M.elems (di L.^. MC.funInfo)
-                                     , entry <- M.keys (dfi L.^. MC.parsedBlocks)
-                                     ]
+    validFuncs = M.elems (di L.^. MC.funInfo)
     funcEntries = [ MC.discoveredFunAddr dfi
-                  | PU.Some dfi <- MC.exploredFunctions di
+                  | PU.Some dfi <- validFuncs
                   ]
     infos = M.fromList [ (concAddr, val)
                        | (segOff, val) <- M.toList (di L.^. MC.funInfo)
@@ -248,16 +281,35 @@ data Recovery arch =
            , recoveryFuncCallback :: Maybe (Int, MC.ArchSegmentOff arch -> BlockInfo arch -> IO ())
            }
 
+-- | Use macaw to discover code in a binary
+--
+-- > recoverBlocks recovery mem symmap entries textAddrRange
+--
+-- Performs code discover for a given memory image (@mem@) from a set of entry
+-- points (@entries@).  Recovered functions are mapped to symbol table entries
+-- (@symmap@) if possible.
+--
+-- The @textAddrRange@ parameter is used to constrain code recovery to a desired
+-- range (usually the text section of the binary).  Macaw aggressively explores
+-- all addresses encountered that live in an executable segment of memory.  This
+-- is normally fine and a decent heuristic for dealing with code only reachable
+-- via indirect call; however, on PowerPC it is problematic, as the Table of
+-- Contents (TOC) is mapped in executable memory.  This causes macaw to decode
+-- much of the TOC as code, most of which is not really valid code.  The code
+-- that attempts to make code relocatable (the symbolization phase) fails badly
+-- in this case.  To avoid these failures, we constrain our code recovery to the
+-- text section.
 recoverBlocks :: (ArchBits arch)
               => Recovery arch
               -> MC.Memory (MC.ArchAddrWidth arch)
               -> SymbolMap arch
               -> NEL.NonEmpty (MC.MemSegmentOff (MC.ArchAddrWidth arch))
+              -> (ConcreteAddress arch, ConcreteAddress arch)
               -> IO (BlockInfo arch)
-recoverBlocks recovery mem symmap entries = do
+recoverBlocks recovery mem symmap entries textAddrRange = do
   sam <- toMacawSymbolMap mem symmap
-  di <- cfgFromAddrsWith recovery mem sam (F.toList entries) []
-  blockInfo recovery mem di
+  di <- cfgFromAddrsWith recovery mem textAddrRange sam (F.toList entries) []
+  blockInfo recovery mem textAddrRange di
 
 toMacawSymbolMap :: (MC.MemWidth (MC.ArchAddrWidth arch)) => MC.Memory (MC.ArchAddrWidth arch) -> SymbolMap arch -> IO (MC.AddrSymMap (MC.ArchAddrWidth arch))
 toMacawSymbolMap mem sm = return (M.mapKeys toSegOff sm)
@@ -274,28 +326,29 @@ toMacawSymbolMap mem sm = return (M.mapKeys toSegOff sm)
 -- The block starts are obtained from Macaw.  We disassemble from the
 -- start address until we hit a terminator instruction or the start of
 -- another basic block.
+--
+-- FIXME: Keep a record of which macaw blocks we can't translate (for whatever reason)
 buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow m)
-           => ISA arch
-           -> (B.ByteString -> Maybe (Int, Instruction arch ()))
+           => (B.ByteString -> Maybe (Int, Instruction arch ()))
            -- ^ The function to pull a single instruction off of the
            -- byte stream; it returns the number of bytes consumed and
            -- the new instruction.
            -> MC.Memory (MC.ArchAddrWidth arch)
-           -> S.Set (ConcreteAddress arch)
-           -- ^ The set of all basic block entry points
-           -> MC.MemSegmentOff (MC.ArchAddrWidth arch)
-           -- ^ The address to start disassembling this block from
+           -> PU.Some (MC.ParsedBlock arch)
+           -- ^ The macaw block to re-disassemble
            -> m (Maybe (ConcreteBlock arch))
-buildBlock isa dis1 mem absStarts segAddr
+buildBlock dis1 mem (PU.Some pb)
   | Just concAddr <- concreteFromSegmentOff mem segAddr = do
       case MC.addrContentsAfter mem (MC.relativeSegmentAddr segAddr) of
         Left err -> C.throwM (MemoryError err)
-        Right [MC.ByteRegion bs] -> Just <$> go concAddr concAddr (S.lookupGT concAddr absStarts) bs []
+        Right [MC.ByteRegion bs] -> do
+          let stopAddr = concAddr `addressAddOffset` fromIntegral (MC.blockSize pb)
+          Just <$> go concAddr concAddr stopAddr bs []
         _ -> C.throwM (NoByteRegionAtAddress (MC.relativeSegmentAddr segAddr))
   | otherwise = return Nothing
   where
+    segAddr = MC.pblockAddr pb
     addOff       = addressAddOffset
-    isJustAnd    = maybe False
     go blockAbsAddr insnAddr stopAddr bs insns = do
       case dis1 bs of
         -- Actually, we should probably never hit this case.  We
@@ -307,14 +360,13 @@ buildBlock isa dis1 mem absStarts segAddr
         Just (bytesRead, i)
           -- We have parsed an instruction that crosses a block boundary. We
           -- should probably give up -- this executable is too wonky.
-          | isJustAnd (nextAddr>) stopAddr -> do
+          | nextAddr > stopAddr -> do
             C.throwM (OverlappingBlocks insnAddr)
 
           -- The next instruction we would decode starts another
           -- block, OR the instruction we just decoded is a
           -- terminator, so end the block and stop decoding
-          | isJustAnd (nextAddr==) stopAddr ||
-            isaJumpType isa i mem insnAddr /= NoJump -> do
+          | nextAddr == stopAddr -> do
             return BasicBlock { basicBlockAddress      = blockAbsAddr
                               , basicBlockInstructions = reverse (i : insns)
                               }

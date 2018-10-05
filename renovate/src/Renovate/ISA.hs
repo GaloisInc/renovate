@@ -77,9 +77,9 @@ data ISA arch =
   ISA { isaInstructionSize :: forall t . Instruction arch t -> Word8
         -- ^ Compute the size of an instruction in bytes
       , isaSymbolizeAddresses :: MM.Memory (MM.ArchAddrWidth arch)
-                              -> (ConcreteAddress arch -> Maybe SymbolicAddress)
+                              -> (ConcreteAddress arch -> Maybe (SymbolicAddress arch))
                               -> ConcreteAddress arch
-                              -> Maybe SymbolicAddress
+                              -> Maybe (SymbolicAddress arch)
                               -> Instruction arch ()
                               -> [TaggedInstruction arch (InstructionAnnotation arch)]
         -- ^ Abstract instructions and annotate them. The contract is that this
@@ -128,7 +128,7 @@ data ISA arch =
         -- instruction meets the given predicate.  For example, it
         -- could create a conditional halt if the instruction created
         -- a signed overflow.
-      , isaMakeSymbolicJump :: SymbolicAddress -> [TaggedInstruction arch (InstructionAnnotation arch)]
+      , isaMakeSymbolicJump :: SymbolicAddress arch -> [TaggedInstruction arch (InstructionAnnotation arch)]
       -- ^ Make an unconditional jump that takes execution to the given symbolic
       -- target.
       , isaPrettyInstruction :: forall t . Instruction arch t -> String
