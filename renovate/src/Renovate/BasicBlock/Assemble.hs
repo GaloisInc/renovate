@@ -256,16 +256,14 @@ lookupOverlappingBlocks :: forall arch m
                         -> Assembler arch m [ConcreteBlock arch]
 lookupOverlappingBlocks b = do
   isa <- St.gets asISA
-  let dummyJump = isaMakeRelativeJumpTo isa (basicBlockAddress b) (basicBlockAddress b)
-      jumpSize  = sum (map (isaInstructionSize isa) dummyJump)
-      blockSize = concreteBlockSize isa b
+  let blockSize = concreteBlockSize isa b
       blockEnd  = basicBlockAddress b `addressAddOffset` fromIntegral blockSize
-  go isa blockEnd (basicBlockAddress b `addressAddOffset` fromIntegral jumpSize)
+  go isa blockEnd
   where
     -- Look up the next block and see if it overlaps the current block @b@.
     -- Stop looking when we find a block that clearly does not overlap.
-    go :: ISA arch -> ConcreteAddress arch -> ConcreteAddress arch -> Assembler arch m [ConcreteBlock arch]
-    go isa blockEnd nextAllowableAddress = do
+    go :: ISA arch -> ConcreteAddress arch -> Assembler arch m [ConcreteBlock arch]
+    go isa blockEnd = do
       mb' <- takeNextOrigBlock
       case mb' of
         Nothing -> return []
@@ -277,16 +275,14 @@ lookupOverlappingBlocks b = do
                   -- it back and return
                   asOrigBlocks L.%= (b':)
                   return []
-              | basicBlockAddress b' < nextAllowableAddress -> do
-                  -- We check this case second in case the block is shorter than
-                  -- a redirection jump; in that case, the next block will
-                  -- appear to be overlapping when really there is no
-                  -- redirection jump at all.
-                  C.throwM (BlockOverlappingRedirection b')
               | (basicBlockAddress b' `addressAddOffset` bsize) > blockEnd ->
+                -- We want to assert that, if any blocks overlap, they all end
+                -- at the same instruction.  If that isn't the case, it kind of
+                -- indicates an inconsistent set of blocks coming from macaw or
+                -- the rewriter.
                   C.throwM (OverlayBlockNotContained b')
               | otherwise -> do
-                  (b':) <$> go isa blockEnd (nextAllowableAddress `addressAddOffset` bsize)
+                  (b':) <$> go isa blockEnd
 
 -- | If the given block doesn't start at the next expected address in the text
 -- section, pull bytes from the original text section to pad it out until we
