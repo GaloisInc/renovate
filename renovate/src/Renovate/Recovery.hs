@@ -208,14 +208,13 @@ accumulateBlocks m (PU.Some pb0)
   | otherwise = M.insert (MC.pblockAddr pb0) (PU.Some pb0) m
 
 addrInRange :: (MC.MemWidth (MC.ArchAddrWidth arch))
-            => MC.Memory (MC.ArchAddrWidth arch)
-            -> (ConcreteAddress arch, ConcreteAddress arch)
+            => (ConcreteAddress arch, ConcreteAddress arch)
             -> MC.ArchSegmentOff arch
             -> Bool
-addrInRange mem (textStart, textEnd) addr = fromMaybe False $ do
+addrInRange (textStart, textEnd) addr = fromMaybe False $ do
   absAddr <- MC.msegAddr addr
-  soStart <- MC.msegAddr =<< concreteAsSegmentOff mem textStart
-  soEnd <- MC.msegAddr =<< concreteAsSegmentOff mem textEnd
+  let soStart = absoluteAddress textStart
+  let soEnd = absoluteAddress textEnd
   return (absAddr >= soStart && absAddr < soEnd)
 
 blockInfo :: (ArchBits arch)
@@ -229,7 +228,7 @@ blockInfo recovery mem textAddrRange di = do
   let macawBlocks = F.foldl' accumulateBlocks M.empty [ PU.Some pb
                                                       | PU.Some dfi <- validFuncs
                                                       , pb <- M.elems (dfi L.^. MC.parsedBlocks)
-                                                      , addrInRange mem textAddrRange (MC.pblockAddr pb)
+                                                      , addrInRange textAddrRange (MC.pblockAddr pb)
                                                       ]
   blocks <- catMaybes <$> mapM blockBuilder (M.elems macawBlocks)
   let addBlock m b = M.insert (basicBlockAddress b) b m
