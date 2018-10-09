@@ -6,7 +6,7 @@ ppc64exe = $(patsubst %.c,%.nostdlib.ppc64.exe,$(wildcard *.c)) $(patsubst %.c,%
 
 all: $(x86exe) $(ppc64exe)
 
-x86cc = gcc
+x86cc = musl-gcc
 ppc32cc = powerpc-linux-gnu-gcc
 ppc64cc = powerpc64-linux-gnu-gcc
 
@@ -16,7 +16,7 @@ CFLAGS = -static -fno-stack-protector
 	$(x86cc) -DNOSTDLIB -nostdlib $(CFLAGS) $< -o $@
 
 %.stdlib.x86_64.exe: %.c
-	$(x86cc) $(CFLAGS) $< -o $@
+	$(x86cc) $(CFLAGS) -mno-avx -mno-avx2 $< -o $@
 
 %.ppc32.exe: %.c
 	$(ppc32cc) $(CFLAGS) $< -o $@
