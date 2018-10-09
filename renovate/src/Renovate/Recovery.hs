@@ -360,7 +360,7 @@ buildBlock dis1 mem (PU.Some pb)
           -- We have parsed an instruction that crosses a block boundary. We
           -- should probably give up -- this executable is too wonky.
           | nextAddr > stopAddr -> do
-            C.throwM (OverlappingBlocks insnAddr)
+            C.throwM (OverlappingBlocks insnAddr nextAddr stopAddr)
 
           -- The next instruction we would decode starts another
           -- block, OR the instruction we just decoded is a
