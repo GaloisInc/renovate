@@ -24,6 +24,8 @@ module Renovate
   Arch.Architecture(..),
   C.SomeConfig(..),
   LB.LayoutStrategy(..),
+  LB.LoopStrategy(..),
+  LB.loopStrategy,
   LB.CompactOrdering(..),
   C.AnalyzeOnly(..),
   C.AnalyzeAndRewrite(..),

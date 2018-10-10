@@ -947,13 +947,13 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
         -- rewriter-specific initialization based on the analysis result (e.g.,
         -- allocating new global variable storage).  Finally, we pass both the
         -- analysis result and setup value to the actual rewriter.
-        let runrw k = IO.liftIO (RW.runRewriteM internalRwEnv newGlobalBase symAlloc1 k)
+        let runrw k = IO.liftIO (RW.runRewriteMT internalRwEnv newGlobalBase symAlloc1 k)
         ((eBlocks, r1), info) <- runrw $ do
-          preAnalysisResult <- preAnalyze rae
-          analysisResult <- RW.rewriteIO (analyze rae preAnalysisResult)
-          setupVal <- preRewrite rae analysisResult
+          preAnalysisResult <- RW.hoist (preAnalyze rae)
+          analysisResult <- IO.liftIO (analyze rae preAnalysisResult)
+          setupVal <- RW.hoist (preRewrite rae analysisResult)
           RE.runRewriterT isa mem symmap $ do
-            let rewriter = rewrite rae analysisResult setupVal
+            let rewriter = RW.hoist . rewrite rae analysisResult setupVal
             r <- RE.redirect isa blockInfo textAddrRange rewriter mem strat layoutAddr baseSymBlocks
             return (analysisResult, r)
         (analysisResult, (allBlocks, injected)) <- extractOrThrowRewriterResult eBlocks r1
