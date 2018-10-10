@@ -337,6 +337,7 @@ buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow
            -- ^ The macaw block to re-disassemble
            -> m (Maybe (ConcreteBlock arch))
 buildBlock dis1 mem (PU.Some pb)
+  | MC.blockSize pb == 0 = return Nothing
   | Just concAddr <- concreteFromSegmentOff mem segAddr = do
       case MC.addrContentsAfter mem (MC.relativeSegmentAddr segAddr) of
         Left err -> C.throwM (MemoryError err)
