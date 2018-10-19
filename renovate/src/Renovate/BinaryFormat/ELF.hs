@@ -901,6 +901,7 @@ withRewriteEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
   let mem = MBL.memoryImage loadedBinary
   elfEntryPoints@(entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
   let isa      = rcISA cfg
+      abi      = rcABI cfg
       archInfo = rcArchInfo cfg loadedBinary
       recovery = R.Recovery { R.recoveryISA = isa
                             , R.recoveryDis = rcDisassembler cfg
@@ -915,7 +916,7 @@ withRewriteEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
   riRecoveredBlocks L..= Just (SomeBlocks isa blocks)
   let cfgs = FR.recoverFunctions isa mem blockInfo
       Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
-      env = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo isa
+      env = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo isa abi
   k env
 
 analyzeTextSection :: forall w arch binFmt b

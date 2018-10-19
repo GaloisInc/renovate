@@ -50,18 +50,62 @@ disassemble b =
 -- This particular implementation uses @int 3@ for padding and encodes
 -- jumps as @push ADDR ; ret@.
 isa :: R.ISA X86.X86_64
-isa =
-  R.ISA { R.isaInstructionSize = x64Size
-        , R.isaJumpType = x64JumpType
-        , R.isaMakeRelativeJumpTo = x64MakeRelativeJumpTo
-        , R.isaModifyJumpTarget = x64ModifyJumpTarget
-        , R.isaMakePadding = x64MakePadding
-        , R.isaMakeTrapIf = x64MakeTrapIf
-        , R.isaSymbolizeAddresses = x64SymbolizeAddresses
-        , R.isaConcretizeAddresses = x64ConcretizeAddresses
-        , R.isaMakeSymbolicJump = x64MakeSymbolicJump
-        , R.isaPrettyInstruction = show . PD.pretty
-        }
+isa = R.ISA
+  { R.isaInstructionSize = x64Size
+  , R.isaJumpType = x64JumpType
+  , R.isaMakeRelativeJumpTo = x64MakeRelativeJumpTo
+  , R.isaModifyJumpTarget = x64ModifyJumpTarget
+  , R.isaMakePadding = x64MakePadding
+  , R.isaMakeTrapIf = x64MakeTrapIf
+  , R.isaSymbolizeAddresses = x64SymbolizeAddresses
+  , R.isaConcretizeAddresses = x64ConcretizeAddresses
+  , R.isaMakeSymbolicJump = x64MakeSymbolicJump
+  , R.isaPrettyInstruction = show . PD.pretty
+  , R.isaMove = x86Move
+  , R.isaLoad = x86Load
+  , R.isaStore = x86Store
+  , R.isaAddImmediate = x86AddImmediate
+  , R.isaSubtractImmediate = x86SubtractImmediate
+  }
+
+x86StackAddress :: R.StackAddress X86.X86_64 -> Integer -> Value
+x86StackAddress addr size = do
+  let (D.QWordReg base_reg) = R.saBase addr
+  let x86_addr = D.Addr_64 D.SS
+        (Just base_reg)
+        Nothing
+        (D.Disp32 $ D.Imm32Concrete $ fromIntegral $ R.saOffset addr)
+  case size of
+    8 -> D.Mem8 x86_addr
+    16 -> D.Mem16 x86_addr
+    32 -> D.Mem32 x86_addr
+    64 -> D.Mem64 x86_addr
+    128 -> D.Mem128 x86_addr
+    _ -> error $ "unexpected move size: " ++ show size
+
+x86Move :: Integer -> Value -> Value -> Instruction TargetAddress
+x86Move _ dest_reg src_reg =
+  noAddr $ makeInstr "mov" [dest_reg, src_reg]
+
+x86Load
+  :: Integer -> Value -> R.StackAddress X86.X86_64 -> Instruction TargetAddress
+x86Load size reg addr =
+  noAddr $ makeInstr "mov" [reg, x86StackAddress addr size]
+
+x86Store
+  :: Integer -> R.StackAddress X86.X86_64 -> Value -> Instruction TargetAddress
+x86Store size addr reg =
+  noAddr $ makeInstr "mov" [x86StackAddress addr size, reg]
+
+x86AddImmediate :: Value -> Integer -> Instruction TargetAddress
+x86AddImmediate = x86OpImmediate "add"
+
+x86SubtractImmediate :: Value -> Integer -> Instruction TargetAddress
+x86SubtractImmediate reg imm = x86OpImmediate "sub" reg $ -imm
+
+x86OpImmediate :: String -> Value -> Integer -> Instruction TargetAddress
+x86OpImmediate op reg imm =
+  noAddr $ makeInstr op [reg, D.DWordImm $ D.Imm32Concrete $ fromIntegral imm]
 
 -- | Classify different kinds of jump instructions.
 --

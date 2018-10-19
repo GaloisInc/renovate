@@ -7,19 +7,21 @@
 -- to the rewriter.
 --
 -- Implementations of 'ISA's are in separate @renovate-<arch>@ packages.
-module Renovate.ISA (
-  ISA(..),
-  JumpType(..),
-  JumpCondition(..),
-  TrapPredicate(..)
+module Renovate.ISA
+  ( ISA(..)
+  , JumpType(..)
+  , JumpCondition(..)
+  , TrapPredicate(..)
+  , StackAddress(..)
   ) where
 
+import Data.Int ( Int32 )
 import Data.Word ( Word8, Word64 )
 
 import qualified Data.Macaw.CFG as MM
 
 import Renovate.Address
-import Renovate.BasicBlock.Types ( Instruction, InstructionAnnotation, TaggedInstruction )
+import Renovate.BasicBlock.Types ( Instruction, InstructionAnnotation, RegisterType, TaggedInstruction )
 
 -- | The variety of a jump: either conditional or unconditional.  This
 -- is used as a tag for 'JumpType's.  One day, we could model the type
@@ -73,67 +75,99 @@ deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (JumpType arch)
 --
 -- See separate @renovate-<arch>@ packages for actual 'ISA'
 -- definitions.
-data ISA arch =
-  ISA { isaInstructionSize :: forall t . Instruction arch t -> Word8
-        -- ^ Compute the size of an instruction in bytes
-      , isaSymbolizeAddresses :: MM.Memory (MM.ArchAddrWidth arch)
-                              -> (ConcreteAddress arch -> Maybe (SymbolicAddress arch))
-                              -> ConcreteAddress arch
-                              -> Maybe (SymbolicAddress arch)
-                              -> Instruction arch ()
-                              -> [TaggedInstruction arch (InstructionAnnotation arch)]
-        -- ^ Abstract instructions and annotate them. The contract is that this
-        -- function can change the opcode, but the selected instruction must
-        -- never change sizes later (during concretization). That is, for all
-        -- concrete addresses, the chosen instruction must have the same size.
-        --
-        -- * The 'ConcreteAddress' is the address of the instruction
-        --
-        -- * The 'SymbolicAddress' (if any) is the direct jump target (possibly conditional) if any
-        --
-        -- NOTE: This function is allowed to return larger instructions now and,
-        -- in fact, may return extra instructions.
-      , isaConcretizeAddresses :: MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> Instruction arch (InstructionAnnotation arch) -> Instruction arch ()
-        -- ^ Remove the annotation, with possible post-processing.
-      , isaJumpType :: forall t . Instruction arch t -> MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> JumpType arch
-        -- ^ Test if an instruction is a jump; if it is, return some
-        -- metadata about the jump (destination or offset).
-        --
-        -- The 'MC.Memory' parameter is the memory space containing
-        -- the known code region.  Jumps outside of the known code
-        -- region are treated as library code and are not
-        -- followed.
-        --
-        -- The 'Address' parameter is the address of the instruction,
-        -- which is needed to resolve relative jumps.
-      , isaMakeRelativeJumpTo :: ConcreteAddress arch -> ConcreteAddress arch -> [Instruction arch ()]
-        -- ^ Create a relative jump from the first 'ConcreteAddress'
-        -- to the second.  This will call error if the range is too
-        -- far (probably more than 2GB).
-      , isaModifyJumpTarget :: Instruction arch () -> ConcreteAddress arch -> ConcreteAddress arch -> Maybe (Instruction arch ())
-        -- ^ Modify the given jump instruction, rather than creating
-        -- an entirely new one.  This differs from
-        -- 'isaMakeRelativeJumpTo' in that it preserves the jump type
-        -- (e.g., the type of conditional jump).
-        --
-        -- NOTE: This function must not change the size of the instruction, as
-        -- it is called after code layout is done, so we cannot re-arrange
-        -- anything.
-      , isaMakePadding :: Word64 -> [Instruction arch ()]
-        -- ^ Make the given number of bytes of padding instructions.
-        -- The semantics of the instruction stream should either be
-        -- no-ops or halts (i.e., not meant to be executed).
-      , isaMakeTrapIf :: forall t. Instruction arch t -> TrapPredicate -> [Instruction arch (InstructionAnnotation arch)]
-        -- ^ Create an instruction sequence that halts if the given
-        -- instruction meets the given predicate.  For example, it
-        -- could create a conditional halt if the instruction created
-        -- a signed overflow.
-      , isaMakeSymbolicJump :: SymbolicAddress arch -> [TaggedInstruction arch (InstructionAnnotation arch)]
-      -- ^ Make an unconditional jump that takes execution to the given symbolic
-      -- target.
-      , isaPrettyInstruction :: forall t . Instruction arch t -> String
-      -- ^ Pretty print an instruction for diagnostic purposes
-      }
+data ISA arch = ISA
+  { isaInstructionSize :: forall t . Instruction arch t -> Word8
+    -- ^ Compute the size of an instruction in bytes
+  , isaSymbolizeAddresses :: MM.Memory (MM.ArchAddrWidth arch)
+                          -> (ConcreteAddress arch -> Maybe (SymbolicAddress arch))
+                          -> ConcreteAddress arch
+                          -> Maybe (SymbolicAddress arch)
+                          -> Instruction arch ()
+                          -> [TaggedInstruction arch (InstructionAnnotation arch)]
+    -- ^ Abstract instructions and annotate them. The contract is that this
+    -- function can change the opcode, but the selected instruction must
+    -- never change sizes later (during concretization). That is, for all
+    -- concrete addresses, the chosen instruction must have the same size.
+    --
+    -- * The 'ConcreteAddress' is the address of the instruction
+    --
+    -- * The 'SymbolicAddress' (if any) is the direct jump target (possibly conditional) if any
+    --
+    -- NOTE: This function is allowed to return larger instructions now and,
+    -- in fact, may return extra instructions.
+  , isaConcretizeAddresses :: MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> Instruction arch (InstructionAnnotation arch) -> Instruction arch ()
+    -- ^ Remove the annotation, with possible post-processing.
+  , isaJumpType :: forall t . Instruction arch t -> MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> JumpType arch
+    -- ^ Test if an instruction is a jump; if it is, return some
+    -- metadata about the jump (destination or offset).
+    --
+    -- The 'MC.Memory' parameter is the memory space containing
+    -- the known code region.  Jumps outside of the known code
+    -- region are treated as library code and are not
+    -- followed.
+    --
+    -- The 'Address' parameter is the address of the instruction,
+    -- which is needed to resolve relative jumps.
+  , isaMakeRelativeJumpTo :: ConcreteAddress arch -> ConcreteAddress arch -> [Instruction arch ()]
+    -- ^ Create a relative jump from the first 'ConcreteAddress'
+    -- to the second.  This will call error if the range is too
+    -- far (probably more than 2GB).
+  , isaModifyJumpTarget :: Instruction arch () -> ConcreteAddress arch -> ConcreteAddress arch -> Maybe (Instruction arch ())
+    -- ^ Modify the given jump instruction, rather than creating
+    -- an entirely new one.  This differs from
+    -- 'isaMakeRelativeJumpTo' in that it preserves the jump type
+    -- (e.g., the type of conditional jump).
+    --
+    -- NOTE: This function must not change the size of the instruction, as
+    -- it is called after code layout is done, so we cannot re-arrange
+    -- anything.
+  , isaMakePadding :: Word64 -> [Instruction arch ()]
+    -- ^ Make the given number of bytes of padding instructions.
+    -- The semantics of the instruction stream should either be
+    -- no-ops or halts (i.e., not meant to be executed).
+  , isaMakeTrapIf :: forall t. Instruction arch t -> TrapPredicate -> [Instruction arch (InstructionAnnotation arch)]
+    -- ^ Create an instruction sequence that halts if the given
+    -- instruction meets the given predicate.  For example, it
+    -- could create a conditional halt if the instruction created
+    -- a signed overflow.
+  , isaMakeSymbolicJump :: SymbolicAddress arch -> [TaggedInstruction arch (InstructionAnnotation arch)]
+  -- ^ Make an unconditional jump that takes execution to the given symbolic
+  -- target.
+  , isaPrettyInstruction :: forall t . Instruction arch t -> String
+  -- ^ Pretty print an instruction for diagnostic purposes
+  , isaMove
+      :: Integer
+      -> RegisterType arch
+      -> RegisterType arch
+      -> Instruction arch (InstructionAnnotation arch)
+  , isaLoad
+      :: Integer
+      -> RegisterType arch
+      -> StackAddress arch
+      -> Instruction arch (InstructionAnnotation arch)
+  , isaStore
+      :: Integer
+      -> StackAddress arch
+      -> RegisterType arch
+      -> Instruction arch (InstructionAnnotation arch)
+  , isaAddImmediate
+      :: RegisterType arch
+      -> Integer
+      -> Instruction arch (InstructionAnnotation arch)
+  , isaSubtractImmediate
+      :: RegisterType arch
+      -> Integer
+      -> Instruction arch (InstructionAnnotation arch)
+  }
+
+data StackAddress arch = StackAddress
+  { saBase :: RegisterType arch
+  , saOffset :: Integer
+  }
+
+deriving instance Eq (RegisterType arch) => Eq (StackAddress arch)
+deriving instance Ord (RegisterType arch) => Ord (StackAddress arch)
+deriving instance Show (RegisterType arch) => Show (StackAddress arch)
 
 -- | Predicates supported for 'isaMakeTrapIf'
 data TrapPredicate = SignedOverflow

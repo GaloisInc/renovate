@@ -51,21 +51,22 @@ config32 :: (MM.MemWidth w, w ~ 32, MC.ArchAddrWidth MP.PPC32 ~ w, MBL.BinaryLoa
          -> R.Rewrite MP.PPC32 binFmt a
          -- ^ A rewriting action
          -> R.RenovateConfig MP.PPC32 binFmt a
-config32 analysis rewriter =
-  R.RenovateConfig { R.rcISA = isa
-                   , R.rcArchInfo = MP.ppc32_linux_info . MBL.archBinaryData
-                   , R.rcAssembler = assemble
-                   , R.rcDisassembler = disassemble
-                   , R.rcBlockCallback = Nothing
-                   , R.rcFunctionCallback = Nothing
-                   , R.rcELFEntryPoints = MP.entryPoints . MBL.archBinaryData
-                   , R.rcAnalysis = analysis
-                   , R.rcRewriter = rewriter
-                   , R.rcUpdateSymbolTable = False
-                   -- See Note [Layout Addresses]
-                   , R.rcCodeLayoutBase = 0x10100000
-                   , R.rcDataLayoutBase = 0x20000000
-                   }
+config32 analysis rewriter = R.RenovateConfig
+  { R.rcISA = isa
+  , R.rcABI = abi32
+  , R.rcArchInfo = MP.ppc32_linux_info . MBL.archBinaryData
+  , R.rcAssembler = assemble
+  , R.rcDisassembler = disassemble
+  , R.rcBlockCallback = Nothing
+  , R.rcFunctionCallback = Nothing
+  , R.rcELFEntryPoints = MP.entryPoints . MBL.archBinaryData
+  , R.rcAnalysis = analysis
+  , R.rcRewriter = rewriter
+  , R.rcUpdateSymbolTable = False
+  -- See Note [Layout Addresses]
+  , R.rcCodeLayoutBase = 0x10100000
+  , R.rcDataLayoutBase = 0x20000000
+  }
 
 -- | A renovate configuration for 64 bit PowerPC
 config64 :: (MM.MemWidth w, w ~ 64, MC.ArchAddrWidth MP.PPC64 ~ w, MBL.BinaryLoader MP.PPC64 binFmt, MBL.ArchBinaryData MP.PPC64 binFmt ~ MP.TOC MP.PPC64)
@@ -75,21 +76,22 @@ config64 :: (MM.MemWidth w, w ~ 64, MC.ArchAddrWidth MP.PPC64 ~ w, MBL.BinaryLoa
          -> R.Rewrite MP.PPC64 binFmt a
          -- ^ A rewriting action
          -> R.RenovateConfig MP.PPC64 binFmt a
-config64 analysis rewriter =
-  R.RenovateConfig { R.rcISA = isa
-                   , R.rcArchInfo = MP.ppc64_linux_info . MBL.archBinaryData
-                   , R.rcAssembler = assemble
-                   , R.rcDisassembler = disassemble
-                   , R.rcBlockCallback = Nothing
-                   , R.rcFunctionCallback = Nothing
-                   , R.rcELFEntryPoints = MP.entryPoints . MBL.archBinaryData
-                   , R.rcAnalysis = analysis
-                   , R.rcRewriter = rewriter
-                   , R.rcUpdateSymbolTable = False
-                   -- See Note [Layout Addresses]
-                   , R.rcCodeLayoutBase = 0x10100000
-                   , R.rcDataLayoutBase = 0x20000000
-                   }
+config64 analysis rewriter = R.RenovateConfig
+  { R.rcISA = isa
+  , R.rcABI = abi64
+  , R.rcArchInfo = MP.ppc64_linux_info . MBL.archBinaryData
+  , R.rcAssembler = assemble
+  , R.rcDisassembler = disassemble
+  , R.rcBlockCallback = Nothing
+  , R.rcFunctionCallback = Nothing
+  , R.rcELFEntryPoints = MP.entryPoints . MBL.archBinaryData
+  , R.rcAnalysis = analysis
+  , R.rcRewriter = rewriter
+  , R.rcUpdateSymbolTable = False
+  -- See Note [Layout Addresses]
+  , R.rcCodeLayoutBase = 0x10100000
+  , R.rcDataLayoutBase = 0x20000000
+  }
 
 instance R.ArchInfo MP.PPC64 where
   archVals _ = Just (R.ArchVals { R.archFunctions = MPS.ppc64MacawSymbolicFns

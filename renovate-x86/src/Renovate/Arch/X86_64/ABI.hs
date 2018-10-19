@@ -19,8 +19,6 @@ import           Renovate.Arch.X86_64.Internal
 
 import qualified Flexdis86 as D
 
-type instance R.RegisterType X86.X86_64 = Value
-
 -- | An ABI for x86_64 using flexdis.
 --
 -- The implementation is currently very simple.  It assumes that any
@@ -115,9 +113,6 @@ prot_Write = 0x2
 
 map_Anon :: Word64
 map_Anon = 0x20
-
-noAddr :: Instruction () -> Instruction TargetAddress
-noAddr i = annotateInstr i NoAddress
 
 -- | Using RBX here because mov %rax has a strange encoding that isn't
 -- supported in the assembler yet.

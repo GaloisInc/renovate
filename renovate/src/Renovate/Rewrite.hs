@@ -14,6 +14,7 @@ module Renovate.Rewrite (
   lookupEntryAddress,
   newGlobalVar,
   lookupGlobalVar,
+  getABI,
   getISA,
   recordRewrite
   ) where
@@ -31,6 +32,7 @@ import qualified Data.Macaw.CFG as MM
 import qualified Renovate.Address as A
 import qualified Renovate.Analysis.FunctionRecovery as FR
 import qualified Renovate.BasicBlock as B
+import qualified Renovate.ABI as ABI
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as RR
 
@@ -56,21 +58,23 @@ data RewriteInfo arch =
               -- variable.
               }
 
-data RewriteEnv arch =
-  RewriteEnv { envBlockCFGIndex :: BlockCFGIndex arch
-             -- ^ A map of block addresses to the set of CFGs that
-             -- contains them (if any). Note that a single block may
-             -- be contained in multiple CFGs. Indeed, the
-             -- @embrittle-examples.sh@ in @sfe@ include such CFGs.
-             , envEntryAddress :: A.ConcreteAddress arch
-             -- ^ The address of the entry point of the program
-             , envMemory :: MM.Memory (MM.ArchAddrWidth arch)
-             -- ^ The program memory
-             , envBlockInfo :: RR.BlockInfo arch
-             -- ^ Information on recovered basic blocks
-             , envISA :: ISA.ISA arch
-             -- ^ ISA for arch
-             }
+data RewriteEnv arch = RewriteEnv
+  { envBlockCFGIndex :: BlockCFGIndex arch
+  -- ^ A map of block addresses to the set of CFGs that
+  -- contains them (if any). Note that a single block may
+  -- be contained in multiple CFGs. Indeed, the
+  -- @embrittle-examples.sh@ in @sfe@ include such CFGs.
+  , envEntryAddress :: A.ConcreteAddress arch
+  -- ^ The address of the entry point of the program
+  , envMemory :: MM.Memory (MM.ArchAddrWidth arch)
+  -- ^ The program memory
+  , envBlockInfo :: RR.BlockInfo arch
+  -- ^ Information on recovered basic blocks
+  , envISA :: ISA.ISA arch
+  -- ^ ISA for arch
+  , envABI :: ABI.ABI arch
+  -- ^ ABI for arch
+  }
 -- | A map of block addresses to the set of CFGs that contains them
 -- (if any).
 type BlockCFGIndex arch = M.Map (A.ConcreteAddress arch) (S.Set (FR.FunctionCFG arch))
@@ -93,20 +97,23 @@ mkBlockCFGIndex cfgs = F.foldl' indexCFGBlocks M.empty cfgs
 -- | Make a rewriter environment.
 --
 -- Used with 'runRewriteM', and also in analysis.
-mkRewriteEnv :: [FR.FunctionCFG arch]
-                -- ^ The control flow graphs discovered by previous analysis
-             -> A.ConcreteAddress arch
-             -> MM.Memory (MM.ArchAddrWidth arch)
-             -> RR.BlockInfo arch
-             -> ISA.ISA arch
-             -> RewriteEnv arch
-mkRewriteEnv cfgs entryAddr mem blockInfo isa =
-  RewriteEnv { envBlockCFGIndex = mkBlockCFGIndex cfgs
-             , envEntryAddress = entryAddr
-             , envMemory = mem
-             , envBlockInfo = blockInfo
-             , envISA = isa
-             }
+mkRewriteEnv
+  :: [FR.FunctionCFG arch]
+  -- ^ The control flow graphs discovered by previous analysis
+  -> A.ConcreteAddress arch
+  -> MM.Memory (MM.ArchAddrWidth arch)
+  -> RR.BlockInfo arch
+  -> ISA.ISA arch
+  -> ABI.ABI arch
+  -> RewriteEnv arch
+mkRewriteEnv cfgs entryAddr mem blockInfo isa abi = RewriteEnv
+  { envBlockCFGIndex = mkBlockCFGIndex cfgs
+  , envEntryAddress = entryAddr
+  , envMemory = mem
+  , envBlockInfo = blockInfo
+  , envISA = isa
+  , envABI = abi
+  }
 
 -- | Run rewriting computation and return its value, along with metadata about
 -- transformations applied.
@@ -133,6 +140,10 @@ recordRewrite ty baddr off =
     site = RewriteSite { siteDescriptor = (baddr, off)
                        , siteType = ty
                        }
+
+-- | Get the ABI from environment.
+getABI :: RewriteM arch (ABI.ABI arch)
+getABI = RWS.asks envABI
 
 -- | Get the ISA from environment.
 getISA :: RewriteM arch (ISA.ISA arch)

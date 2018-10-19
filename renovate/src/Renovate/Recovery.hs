@@ -62,6 +62,8 @@ import           Renovate.ISA
 import           Renovate.Redirect.Monad ( SymbolMap )
 import           Renovate.Recovery.Overlap
 
+import qualified Text.PrettyPrint.ANSI.Leijen as PP
+
 type ArchBits arch = (  MC.ArchConstraints arch,
                         MC.RegisterInfo (MC.ArchReg arch),
                         MC.HasRepr (MC.ArchReg arch) MC.TypeRepr,
@@ -238,6 +240,18 @@ blockInfo recovery mem textAddrRange di = do
                               , Just funcAddr <- [concreteFromSegmentOff mem (MC.discoveredFunAddr dfi)]
                               , let blockAddrs = mapMaybe (concreteFromSegmentOff mem) (M.keys (dfi L.^. MC.parsedBlocks))
                               ]
+
+  F.forM_ validFuncs $ \(PU.Some dfi) -> do
+    let addr = MC.discoveredFunAddr dfi
+    putStrLn ("addr = " ++ show addr)
+    let seg = MC.msegSegment addr
+    putStrLn ("  segment size = " ++ show (MC.segmentSize seg))
+    putStrLn ("  segoff = " ++ show (MC.msegOffset addr))
+    print (MC.msegSegment (MC.discoveredFunAddr dfi))
+    print (PP.pretty dfi)
+    F.forM_ (M.elems (dfi L.^. MC.parsedBlocks)) $ \pb -> do
+      putStrLn ("Reason: " ++ show (MC.blockReason pb))
+
   mcfgs <- T.forM validFuncs $ \(PU.Some dfi) -> do
     regIor <- IO.newIORef Nothing
     cfgIor <- IO.newIORef Nothing

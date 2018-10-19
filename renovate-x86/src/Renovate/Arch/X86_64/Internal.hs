@@ -14,6 +14,7 @@ module Renovate.Arch.X86_64.Internal (
   instrOperands,
   mkUnitAnnot,
   annotateInstr,
+  noAddr,
   x64Size,
   -- * Errors
   AssemblyFailure(..),
@@ -39,6 +40,8 @@ import qualified Renovate as R
 
 -- | The type of operands to x86_64 instructions
 type Value = D.Value
+
+type instance R.RegisterType X86.X86_64 = D.Value
 
 -- | The target address of a jump.  This is used as the annotation
 -- type for symbolic instructions.
@@ -132,6 +135,8 @@ makeInstr mnemonic operands =
 annotateInstr :: Instruction () -> a -> Instruction a
 annotateInstr (XI ii) a = XI (fmap (\ao -> ao { aoAnnotation = a}) ii)
 
+noAddr :: Instruction () -> Instruction TargetAddress
+noAddr i = annotateInstr i NoAddress
 
 -- | Compute the size of an instruction by assembling it and
 -- measuring.

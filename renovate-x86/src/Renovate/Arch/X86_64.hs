@@ -51,22 +51,22 @@ config :: R.Analyze X86.X86_64 binFmt a
        -> R.Rewrite X86.X86_64 binFmt a
        -- ^ A rewriting action
        -> R.RenovateConfig X86.X86_64 binFmt a
-config analysis rewriter =
-  R.RenovateConfig
-    { R.rcISA           = isa
-    , R.rcArchInfo      = const X86.x86_64_linux_info
-    , R.rcAssembler     = assemble
-    , R.rcDisassembler  = disassemble
-    , R.rcBlockCallback = Nothing
-    , R.rcFunctionCallback = Nothing
-    , R.rcELFEntryPoints = const []
-    , R.rcAnalysis      = analysis
-    , R.rcRewriter      = rewriter
-    , R.rcUpdateSymbolTable = True
-    -- See Note [Layout Addresses]
-    , R.rcCodeLayoutBase = 0x800000
-    , R.rcDataLayoutBase = 0xa00000
-    }
+config analysis rewriter = R.RenovateConfig
+  { R.rcISA           = isa
+  , R.rcABI           = abi
+  , R.rcArchInfo      = const X86.x86_64_linux_info
+  , R.rcAssembler     = assemble
+  , R.rcDisassembler  = disassemble
+  , R.rcBlockCallback = Nothing
+  , R.rcFunctionCallback = Nothing
+  , R.rcELFEntryPoints = const []
+  , R.rcAnalysis      = analysis
+  , R.rcRewriter      = rewriter
+  , R.rcUpdateSymbolTable = True
+  -- See Note [Layout Addresses]
+  , R.rcCodeLayoutBase = 0x800000
+  , R.rcDataLayoutBase = 0xa00000
+  }
 
 instance R.ArchInfo X86.X86_64 where
   archVals _ = Just (R.ArchVals { R.archFunctions = SX86.x86_64MacawSymbolicFns
