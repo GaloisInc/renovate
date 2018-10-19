@@ -22,12 +22,15 @@ module Renovate.Rewrite (
 import qualified GHC.Err.Located as L
 
 import qualified Control.Monad.RWS.Strict as RWS
+import           Control.Monad.ST ( RealWorld )
 import qualified Data.Foldable as F
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import           Data.Word ( Word32 )
 
 import qualified Data.Macaw.CFG as MM
+
+import qualified Lang.Crucible.FunctionHandle as C
 
 import qualified Renovate.Address as A
 import qualified Renovate.Analysis.FunctionRecovery as FR
@@ -74,6 +77,8 @@ data RewriteEnv arch = RewriteEnv
   -- ^ ISA for arch
   , envABI :: ABI.ABI arch
   -- ^ ABI for arch
+  , envHandleAllocator :: C.HandleAllocator RealWorld
+  -- ^ Crucible handle allocator in use
   }
 -- | A map of block addresses to the set of CFGs that contains them
 -- (if any).
@@ -105,14 +110,16 @@ mkRewriteEnv
   -> RR.BlockInfo arch
   -> ISA.ISA arch
   -> ABI.ABI arch
+  -> C.HandleAllocator RealWorld
   -> RewriteEnv arch
-mkRewriteEnv cfgs entryAddr mem blockInfo isa abi = RewriteEnv
+mkRewriteEnv cfgs entryAddr mem blockInfo isa abi hAlloc = RewriteEnv
   { envBlockCFGIndex = mkBlockCFGIndex cfgs
   , envEntryAddress = entryAddr
   , envMemory = mem
   , envBlockInfo = blockInfo
   , envISA = isa
   , envABI = abi
+  , envHandleAllocator = hAlloc
   }
 
 -- | Run rewriting computation and return its value, along with metadata about

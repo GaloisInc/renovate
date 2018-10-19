@@ -916,7 +916,7 @@ withRewriteEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
   riRecoveredBlocks L..= Just (SomeBlocks isa blocks)
   let cfgs = FR.recoverFunctions isa mem blockInfo
       Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
-      env = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo isa abi
+      env = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo isa abi hdlAlloc
   k env
 
 analyzeTextSection :: forall w arch binFmt b
