@@ -17,6 +17,8 @@ module Renovate.Recovery (
   getSymbolicCFG,
   getSymbolicRegCFG,
   isIncompleteBlockAddress,
+  isIncompleteFunction,
+  isIncompleteBlock,
   ArchBits,
   ArchInfo(..),
   ArchVals(..),
@@ -414,12 +416,19 @@ addFunInfoIfIncomplete mem (PU.Some fi) s
     pbs = fi L.^. MC.parsedBlocks
     blockAddrs = mapMaybe (concreteFromSegmentOff mem) (M.keys pbs)
 
+-- | Use 'isIncompleteFunction' to determine if particular function
+-- has been fully analyzed or if the analysis was incomplete for any
+-- block in the function.
 isIncompleteFunction :: (MC.MemWidth (MC.ArchAddrWidth arch)) => MC.DiscoveryFunInfo arch ids -> Bool
 isIncompleteFunction fi =
-  any isIncomplete (M.elems (fi L.^. MC.parsedBlocks))
+  any isIncompleteBlock (M.elems (fi L.^. MC.parsedBlocks))
 
-isIncomplete :: (MC.MemWidth (MC.ArchAddrWidth arch)) => MC.ParsedBlock arch ids -> Bool
-isIncomplete pb =
+-- | Use 'isIncompleteBlock' to determine if a specific CFG block has
+-- been fully analyzed or if the analysis was incomplete.  A @show $
+-- pretty blk@ operation can be used to get a readable explanation of
+-- why the analysis of @blk@ was incomplete.
+isIncompleteBlock :: (MC.MemWidth (MC.ArchAddrWidth arch)) => MC.ParsedBlock arch ids -> Bool
+isIncompleteBlock pb =
   case MC.stmtsTerm (MC.blockStatementList pb) of
     MC.ParsedTranslateError {} -> True
     MC.ClassifyFailure {} -> True
