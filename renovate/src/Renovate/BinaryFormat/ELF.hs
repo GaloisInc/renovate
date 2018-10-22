@@ -824,7 +824,7 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
       analysisResult <- IO.liftIO $ analysis analyzeEnv loadedBinary
       let ((eBlocks, r1), info) = RW.runRewriteM env newGlobalBase . RE.resumeRewriterT isa mem symmap r0 $ do
             RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult loadedBinary) mem strat layoutAddr baseSymBlocks
-      (overwrittenBlocks, instrumentationBlocks) <- extractOrThrowRewriterResult eBlocks r1
+      allBlocks <- extractOrThrowRewriterResult eBlocks r1
 
       let s1 = RE.rrState r1
       let newSyms = RE.rwsNewSymbolsMap s1
@@ -834,7 +834,6 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
       riSmallBlockCount L..= RE.rwsSmallBlockCount s1
       riUnrelocatableTerm L..= RE.rwsUnrelocatableTerm s1
       riBlockMapping L..= RE.rwsBlockMapping s1
-      let allBlocks = overwrittenBlocks ++ instrumentationBlocks
       case cfg of
         RenovateConfig { rcAssembler = asm } -> do
           (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks

@@ -56,7 +56,6 @@ redirectBlock input@(ConcretePair (LayoutPair origBlock instrBlock Modified)) = 
                         (show origBlock ++ " |-> " ++ show instrBlock)
       return input
     False -> do
-      let padding = isaMakePadding isa (origBlockSize - jmpSize)
-          origBlock' = origBlock { basicBlockInstructions = jmpInsns <> padding }
+      let origBlock' = origBlock { basicBlockInstructions = jmpInsns }
       return (ConcretePair (LayoutPair origBlock' instrBlock Modified))
 redirectBlock unmodified@(ConcretePair (LayoutPair _ _ Unmodified)) = return unmodified

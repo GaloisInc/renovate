@@ -9,7 +9,7 @@ module Renovate.Redirect.LayoutBlocks (
 import qualified Data.Traversable as T
 
 import           Renovate.Address
-import           Renovate.BasicBlock ( InstructionConstraints )
+import           Renovate.BasicBlock ( InstructionConstraints, ConcreteBlock )
 import           Renovate.Redirect.Monad
 import           Renovate.Redirect.LayoutBlocks.Compact ( compactLayout )
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
@@ -26,6 +26,6 @@ layoutBlocks :: (Monad m, T.Traversable t, InstructionConstraints arch)
              -> ConcreteAddress arch
              -- ^ Address to begin block layout of instrumented blocks
              -> t (SymbolicPair arch)
-             -> RewriterT arch m [AddressAssignedPair arch]
+             -> RewriterT arch m ([AddressAssignedPair arch], [ConcreteBlock arch])
 layoutBlocks strat startAddr blocks =
   compactLayout startAddr strat blocks

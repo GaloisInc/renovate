@@ -46,13 +46,13 @@ concretize :: (Monad m, T.Traversable t, InstructionConstraints arch)
            -> ConcreteAddress arch
            -- ^ The start address of the concretized (instrumented) blocks
            -> t (SymbolicPair arch)
-           -> RewriterT arch m [ConcretePair arch]
+           -> RewriterT arch m ([ConcretePair arch], [ConcreteBlock arch])
 concretize strat startAddr blocks = do
   -- First, build up a mapping of symbolic address to new concrete
   -- address
   isa <- askISA
   symmap <- askSymbolMap
-  concreteAddresses <- layoutBlocks strat startAddr blocks
+  (concreteAddresses, paddingBlocks) <- layoutBlocks strat startAddr blocks
   let concreteAddressMap = M.fromList [ (symbolicAddress (basicBlockAddress sb), ca)
                                       | AddressAssignedPair (LayoutPair _ (AddressAssignedBlock sb ca) _) <- F.toList concreteAddresses
                                       ]
@@ -66,7 +66,8 @@ concretize strat startAddr blocks = do
   putNewSymbolsMap brittleMap
   -- Now go through and fix up all of the jumps to symbolic addresses
   -- (which happen to occur at the end of basic blocks).
-  T.traverse (concretizeJumps isa concreteAddressMap) concreteAddresses
+  v <- T.traverse (concretizeJumps isa concreteAddressMap) concreteAddresses
+  return (v, paddingBlocks)
 
 {-
 
