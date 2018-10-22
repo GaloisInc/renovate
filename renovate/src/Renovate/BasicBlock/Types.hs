@@ -82,6 +82,7 @@ type InstructionConstraints arch =
   , PD.Pretty (Instruction arch (InstructionAnnotation arch))
   , Show (Instruction arch (InstructionAnnotation arch))
   , Show (Instruction arch ())
+  , Eq (Instruction arch ())
   , Ord (RegisterType arch)
   , Typeable (Instruction arch (InstructionAnnotation arch))
   , Typeable (Instruction arch)

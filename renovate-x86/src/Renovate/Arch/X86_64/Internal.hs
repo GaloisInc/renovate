@@ -53,12 +53,12 @@ data TargetAddress = NoAddress
 data AnnotatedOperand a = AnnotatedOperand { aoOperand :: (D.Value, D.OperandType)
                                            , aoAnnotation :: a
                                            }
-                        deriving (Functor, Show)
+                        deriving (Functor, Eq, Show)
 
 -- | A wrapper around a flexdis86 instruction with an arbitrary
 -- annotation on each operand of type @a@.
 newtype Instruction a = XI { unXI :: D.InstructionInstanceF (AnnotatedOperand a) }
-                         deriving (Functor, Show)
+                         deriving (Functor, Eq, Show)
 
 type instance R.Instruction X86.X86_64 = Instruction
 type instance R.InstructionAnnotation X86.X86_64 = TargetAddress

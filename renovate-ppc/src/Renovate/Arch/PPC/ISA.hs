@@ -44,7 +44,7 @@ data TargetAddress arch = NoAddress
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (TargetAddress arch)
 
 newtype Instruction a = I { unI :: D.AnnotatedInstruction a }
-  deriving (Show)
+  deriving (Eq, Show)
 
 type instance R.Instruction MP.PPC32 = Instruction
 type instance R.InstructionAnnotation MP.PPC32 = TargetAddress MP.PPC32

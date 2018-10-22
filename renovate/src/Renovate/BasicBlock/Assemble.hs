@@ -23,7 +23,7 @@ import qualified Control.Monad.Catch as C
 import qualified Control.Monad.State.Strict as St
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Builder as B
-import qualified Data.ByteString.Lazy as L
+import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Foldable as F
 import qualified Data.List as L
 import           Data.Monoid
@@ -117,6 +117,7 @@ assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble 
                        , _asAllocatedBlocks = L.sortOn basicBlockAddress allocatedBlocks
                        , asISA              = isa
                        , asMemory           = mem
+                       , asInstructionConstraints = id
                        }
     -- Split the inputs block list into 2 lists. One for blocks that fit in the
     -- original address space and one for the newly allocated blocks.
@@ -221,16 +222,16 @@ checkedOverlappingAssemble :: (L.HasCallStack, C.MonadThrow m, MM.MemWidth (MM.A
                            => ConcreteBlock arch
                            -> [ConcreteBlock arch]
                            -> Assembler arch m ()
-checkedOverlappingAssemble b overlays = do
+checkedOverlappingAssemble b overlays = withInstructionConstraints $ do
   isa <- St.gets asISA
   let blockEnd = blockEndAddress isa b
+      reversedInstructions = reverse (basicBlockInstructions b)
   -- assert that the overlays are all completely contained in the first block
   F.forM_ overlays $ \overlay -> do
-    -- FIXME: Also assert that overlapped blocks have identical suffixes (to
-    -- ensure that nobody was doing any rewriting)
     let overlayEnd = blockEndAddress isa overlay
     assertM (basicBlockAddress overlay > basicBlockAddress b)
     assertM (overlayEnd == blockEnd)
+    assertM (reverse (basicBlockInstructions overlay) `L.isPrefixOf` reversedInstructions)
 
   baseBytes <- assembleBlock b
   appendTextBytes baseBytes
@@ -435,6 +436,7 @@ data AssembleState arch =
                 , asISA :: ISA arch
                 , asMemory :: MM.Memory (MM.ArchAddrWidth arch)
                 -- ^ The macaw memory object
+                , asInstructionConstraints :: forall a. (InstructionConstraints arch => a) -> a
                 }
 
 asOrigBlocks :: L.Lens' (AssembleState arch) [ConcreteBlock arch]
@@ -443,5 +445,10 @@ asOrigBlocks = L.lens _asOrigBlocks (\as bs -> as { _asOrigBlocks = bs })
 asAllocatedBlocks :: L.Lens' (AssembleState arch) [ConcreteBlock arch]
 asAllocatedBlocks = L.lens _asAllocatedBlocks (\as bs -> as { _asAllocatedBlocks = bs })
 
+withInstructionConstraints :: Monad m => (InstructionConstraints arch => Assembler arch m a) -> Assembler arch m a
+withInstructionConstraints act = do
+  as <- St.get
+  asInstructionConstraints as act
+
 fromBuilder :: B.Builder -> B.ByteString
-fromBuilder = L.toStrict . B.toLazyByteString
+fromBuilder = LBS.toStrict . B.toLazyByteString
