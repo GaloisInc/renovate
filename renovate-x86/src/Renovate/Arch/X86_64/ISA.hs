@@ -21,6 +21,7 @@ import           Data.Word ( Word8, Word64 )
 import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.X86 as X86
 import qualified Flexdis86 as D
+import qualified Flexdis86.Sizes as D
 
 import qualified Renovate as R
 import           Renovate.Arch.X86_64.Internal
@@ -76,12 +77,12 @@ x86StackAddress addr size = do
         Nothing
         (D.Disp32 $ D.Imm32Concrete $ fromIntegral $ R.saOffset addr)
   case size of
-    8 -> D.Mem8 x86_addr
-    16 -> D.Mem16 x86_addr
-    32 -> D.Mem32 x86_addr
-    64 -> D.Mem64 x86_addr
-    128 -> D.Mem128 x86_addr
-    _ -> error $ "unexpected move size: " ++ show size
+    1  -> D.Mem8 x86_addr
+    2  -> D.Mem16 x86_addr
+    4  -> D.Mem32 x86_addr
+    8  -> D.Mem64 x86_addr
+    16 -> D.Mem128 x86_addr
+    _  -> error $ "unexpected move size: " ++ show size
 
 x86Move :: Integer -> Value -> Value -> Instruction TargetAddress
 x86Move _ dest_reg src_reg =
@@ -98,10 +99,56 @@ x86Store size addr reg =
   noAddr $ makeInstr "mov" [x86StackAddress addr size, reg]
 
 x86AddImmediate :: Value -> Integer -> Instruction TargetAddress
-x86AddImmediate = x86OpImmediate "add"
+-- x86AddImmediate = x86OpImmediate "add"
+x86AddImmediate reg imm =
+  noAddr $ fromFlexInst $ D.II
+    { D.iiLockPrefix = D.NoLockPrefix
+    , D.iiAddrSize = D.Size64
+    , D.iiOp = "add"
+    , D.iiArgs =
+      [ (reg, D.OpType D.ModRM_reg D.VSize)
+      , (D.ByteSignedImm (fromIntegral imm), D.IM_SB)
+      ]
+    , D.iiPrefixes = D.Prefixes
+      { D._prLockPrefix = D.NoLockPrefix
+      , D._prSP  = D.SegmentPrefix { D.unwrapSegmentPrefix = 0 }
+      , D._prREX = D.REX 48
+      , D._prVEX = Nothing
+      , D._prASO = False
+      , D._prOSO = False
+      }
+    , D.iiRequiredPrefix = Nothing
+    , D.iiOpcode = [131]
+    , D.iiRequiredMod = Nothing
+    , D.iiRequiredReg = Just (D.maskFin8 0)
+    , D.iiRequiredRM = Nothing
+    }
 
 x86SubtractImmediate :: Value -> Integer -> Instruction TargetAddress
-x86SubtractImmediate reg imm = x86OpImmediate "sub" reg $ -imm
+-- x86SubtractImmediate = x86OpImmediate "sub"
+x86SubtractImmediate reg imm =
+  noAddr $ fromFlexInst $ D.II
+    { D.iiLockPrefix = D.NoLockPrefix
+    , D.iiAddrSize = D.Size64
+    , D.iiOp = "sub"
+    , D.iiArgs =
+      [ (reg, D.OpType D.ModRM_reg D.VSize)
+      , (D.ByteSignedImm (fromIntegral imm), D.IM_SB)
+      ]
+    , D.iiPrefixes = D.Prefixes
+      { D._prLockPrefix = D.NoLockPrefix
+      , D._prSP  = D.SegmentPrefix { D.unwrapSegmentPrefix = 0 }
+      , D._prREX = D.REX 48
+      , D._prVEX = Nothing
+      , D._prASO = False
+      , D._prOSO = False
+      }
+    , D.iiRequiredPrefix = Nothing
+    , D.iiOpcode = [131]
+    , D.iiRequiredMod = Nothing
+    , D.iiRequiredReg = Just (D.maskFin8 5)
+    , D.iiRequiredRM = Nothing
+    }
 
 x86OpImmediate :: String -> Value -> Integer -> Instruction TargetAddress
 x86OpImmediate op reg imm =
