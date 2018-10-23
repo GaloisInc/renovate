@@ -58,7 +58,7 @@ library
                        prettyprinter,
                        ansi-wl-pprint,
                        parameterized-utils,
-                       macaw-base,
+                       macaw-base >= 0.3.2,
                        -- macaw-semmc is only for the binary loader (for now)
                        macaw-semmc,
                        macaw-symbolic,

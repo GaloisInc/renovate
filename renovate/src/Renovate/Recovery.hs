@@ -169,7 +169,7 @@ toRegCFG halloc dfi = do
   let memBaseVarMap = M.empty
   let nmTxt = T.decodeUtf8With T.lenientDecode (MC.discoveredFunName dfi)
   let nm = C.functionNameFromText nmTxt
-  let posFn addr = C.BinaryPos nmTxt (maybe 0 fromIntegral (MC.msegAddr addr))
+  let posFn addr = C.BinaryPos nmTxt (maybe 0 fromIntegral (MC.segoffAsAbsoluteAddr addr))
   return (MS.mkFunRegCFG archFns halloc memBaseVarMap nm posFn dfi)
 
 toCFG :: forall arch
@@ -216,7 +216,7 @@ addrInRange :: (MC.MemWidth (MC.ArchAddrWidth arch))
             -> MC.ArchSegmentOff arch
             -> Bool
 addrInRange (textStart, textEnd) addr = fromMaybe False $ do
-  absAddr <- MC.msegAddr addr
+  absAddr <- MC.segoffAsAbsoluteAddr addr
   let soStart = absoluteAddress textStart
   let soEnd = absoluteAddress textEnd
   return (absAddr >= soStart && absAddr < soEnd)
@@ -246,10 +246,10 @@ blockInfo recovery mem textAddrRange di = do
   F.forM_ validFuncs $ \(PU.Some dfi) -> do
     let addr = MC.discoveredFunAddr dfi
     putStrLn ("addr = " ++ show addr)
-    let seg = MC.msegSegment addr
+    let seg = MC.segoffSegment addr
     putStrLn ("  segment size = " ++ show (MC.segmentSize seg))
-    putStrLn ("  segoff = " ++ show (MC.msegOffset addr))
-    print (MC.msegSegment (MC.discoveredFunAddr dfi))
+    putStrLn ("  segoff = " ++ show (MC.segoffOffset addr))
+    print (MC.segoffSegment (MC.discoveredFunAddr dfi))
     print (PP.pretty dfi)
     F.forM_ (M.elems (dfi L.^. MC.parsedBlocks)) $ \pb -> do
       putStrLn ("Reason: " ++ show (MC.blockReason pb))
@@ -355,12 +355,12 @@ buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow
 buildBlock dis1 mem (PU.Some pb)
   | MC.blockSize pb == 0 = return Nothing
   | Just concAddr <- concreteFromSegmentOff mem segAddr = do
-      case MC.addrContentsAfter mem (MC.relativeSegmentAddr segAddr) of
+      case MC.addrContentsAfter mem (MC.segoffAddr segAddr) of
         Left err -> C.throwM (MemoryError err)
         Right [MC.ByteRegion bs] -> do
           let stopAddr = concAddr `addressAddOffset` fromIntegral (MC.blockSize pb)
           Just <$> go concAddr concAddr stopAddr bs []
-        _ -> C.throwM (NoByteRegionAtAddress (MC.relativeSegmentAddr segAddr))
+        _ -> C.throwM (NoByteRegionAtAddress (MC.segoffAddr segAddr))
   | otherwise = return Nothing
   where
     segAddr = MC.pblockAddr pb
