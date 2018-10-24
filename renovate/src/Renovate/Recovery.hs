@@ -103,15 +103,31 @@ getCached (Cached r gen) = do
 -- | Information on recovered basic blocks
 data BlockInfo arch = BlockInfo
   { biBlocks           :: [ConcreteBlock arch]
+  -- ^ All blocks found
   , biFunctionEntries  :: [ConcreteAddress arch]
+  -- ^ All known function addresses
   , biFunctionBlocks   :: M.Map (ConcreteAddress arch) [ConcreteBlock arch]
+  -- ^ Map from a function address to the set of all blocks in that function
   , biDiscoveryFunInfo :: M.Map (ConcreteAddress arch) (PU.Some (MC.DiscoveryFunInfo arch))
+  -- ^ Map from a function address to the discovered information abou
+  -- that function.  Note that the function might be incomplete if
+  -- some of the blocks could not be fully analyzed.
   , biIncomplete       :: S.Set (ConcreteAddress arch)
-  -- ^ The set of blocks that reside in incomplete functions (i.e., functions
-  -- for which we cannot find all of the code)
+  -- ^ The set of blocks that reside in incomplete functions (i.e.,
+  -- functions for which we cannot find all of the code).  Note that
+  -- this is the set of *all* *block* addresses; these are not
+  -- function addresses, and these are all blocks in a function which
+  -- is incomplete (because attempting to reason about or rewrite
+  -- these blocks could be dangerous because the incomplete blocks
+  -- might jump back into the middle known blocks, therefore the known
+  -- blocks cannot be considered to be complete either.
   , biCFG              :: M.Map (ConcreteAddress arch) (SymbolicCFG arch)
-  -- ^ The Crucible CFG for each function (if possible to construct), see
-  -- Note [CrucibleCFG]
+  -- ^ The Crucible CFG for each function (if possible to
+  -- construct). Crucible CFGs are only constructed for functions that
+  -- are complete (i.e., for which all control flow is resolved).
+  -- Furthermore, the appropriate symbolic backend is required.  For
+  -- architectures that lack a symbolic backend, there will be
+  -- noentries in the CFG map.
   , biRegCFG           :: M.Map (ConcreteAddress arch) (SymbolicRegCFG arch)
   , biOverlap          :: BlockRegions arch
   -- ^ A structure that lets us determine which blocks in the program overlap
@@ -447,11 +463,3 @@ to support or encourage it.
 
 -}
 
-{- Note [CrucibleCFG]
-
-We construct Crucible CFGs only for functions that are complete (i.e., for which
-all control flow is resolved).  Furthermore, we require the appropriate symbolic
-backend.  For architectures that lack a symbolic backend, there will be no
-entries in the CFG map.
-
--}
