@@ -130,9 +130,15 @@ data ISA arch = ISA
     -- instruction meets the given predicate.  For example, it
     -- could create a conditional halt if the instruction created
     -- a signed overflow.
-  , isaMakeSymbolicJump :: SymbolicAddress arch -> [TaggedInstruction arch (InstructionAnnotation arch)]
+  , isaMakeSymbolicJump
+      :: SymbolicAddress arch
+      -> [TaggedInstruction arch (InstructionAnnotation arch)]
   -- ^ Make an unconditional jump that takes execution to the given symbolic
   -- target.
+  , isaMakeSymbolicCall
+      :: SymbolicAddress arch
+      -> TaggedInstruction arch (InstructionAnnotation arch)
+  -- ^ Make an call that takes execution to the given symbolic target.
   , isaPrettyInstruction :: forall t . Instruction arch t -> String
   -- ^ Pretty print an instruction for diagnostic purposes
   , isaMove

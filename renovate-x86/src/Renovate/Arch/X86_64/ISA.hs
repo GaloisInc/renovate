@@ -61,6 +61,7 @@ isa = R.ISA
   , R.isaSymbolizeAddresses = x64SymbolizeAddresses
   , R.isaConcretizeAddresses = x64ConcretizeAddresses
   , R.isaMakeSymbolicJump = x64MakeSymbolicJump
+  , R.isaMakeSymbolicCall = x64MakeSymbolicCall
   , R.isaPrettyInstruction = show . PD.pretty
   , R.isaMove = x86Move
   , R.isaLoad = x86Load
@@ -235,11 +236,23 @@ x64MakeRelativeJumpTo srcAddr targetAddr
     i32Max :: Integer
     i32Max = fromIntegral (maxBound :: Int32)
 
-x64MakeSymbolicJump :: R.SymbolicAddress X86.X86_64 -> [R.TaggedInstruction X86.X86_64 TargetAddress]
-x64MakeSymbolicJump sa = [R.tagInstruction (Just sa) i]
-  where
-    i = annotateInstr (makeInstr "jmp" [off]) NoAddress
-    off = D.JumpOffset D.JSize32 (D.FixedOffset 0)
+x64MakeSymbolicJump
+  :: R.SymbolicAddress X86.X86_64
+  -> [R.TaggedInstruction X86.X86_64 TargetAddress]
+x64MakeSymbolicJump sym_addr = [x64MakeSymbolicJumpOrCall "jmp" sym_addr]
+
+x64MakeSymbolicCall
+  :: R.SymbolicAddress X86.X86_64
+  -> R.TaggedInstruction X86.X86_64 TargetAddress
+x64MakeSymbolicCall = x64MakeSymbolicJumpOrCall "call"
+
+x64MakeSymbolicJumpOrCall
+  :: String
+  -> R.SymbolicAddress X86.X86_64
+  -> R.TaggedInstruction X86.X86_64 TargetAddress
+x64MakeSymbolicJumpOrCall op_code sym_addr =
+  R.tagInstruction (Just sym_addr) $
+    noAddr $ makeInstr op_code [D.JumpOffset D.JSize32 $ D.FixedOffset 0]
 
 x64ModifyJumpTarget :: Instruction () -> R.ConcreteAddress X86.X86_64 -> R.ConcreteAddress X86.X86_64 -> Maybe (Instruction ())
 x64ModifyJumpTarget (XI ii) srcAddr targetAddr
