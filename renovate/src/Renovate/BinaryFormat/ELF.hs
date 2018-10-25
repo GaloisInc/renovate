@@ -352,7 +352,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   ( analysisResult
     , overwrittenBytes
     , instrumentedBytes
-    , mNewData
+    , _mNewData
     , newSyms ) <- instrumentTextSection cfg hdlAlloc loadedBinary textSectionRange
                                        (E.elfSectionData textSection) strat layoutAddr dataAddr symmap
 

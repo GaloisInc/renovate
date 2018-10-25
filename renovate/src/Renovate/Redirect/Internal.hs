@@ -5,7 +5,6 @@
 -- external API.
 module Renovate.Redirect.Internal ( redirectOriginalBlocks ) where
 
-import           Data.Monoid
 import qualified Data.Traversable as T
 
 import           Prelude

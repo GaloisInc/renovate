@@ -15,7 +15,6 @@ module Renovate.ISA
   , StackAddress(..)
   ) where
 
-import Data.Int ( Int32 )
 import Data.Word ( Word8, Word64 )
 
 import qualified Data.Macaw.CFG as MM
