@@ -36,6 +36,7 @@ module Renovate
   B.SymbolicInfo(..),
   Recovery.BlockInfo(..),
   Recovery.isIncompleteBlockAddress,
+  Recovery.numBlockRegions,
   Recovery.SymbolicCFG,
   Recovery.SymbolicRegCFG,
   Recovery.getSymbolicCFG,

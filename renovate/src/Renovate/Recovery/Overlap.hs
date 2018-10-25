@@ -3,6 +3,7 @@
 module Renovate.Recovery.Overlap (
   BlockRegions,
   blockRegions,
+  numBlockRegions,
   disjoint
   ) where
 
@@ -58,6 +59,11 @@ addBlock mem im (Some pb) = fromMaybe im $ do
   -- NOTE: it isn't actually a problem for us, as we only really care about
   -- cases where blocks overlap but are not identical.
   return (IM.insert i (Some pb) im)
+
+-- | The number of block regions
+numBlockRegions :: BlockRegions arch -> Int
+numBlockRegions = F.length . brIntervals
+
 
 -- | Check if a block is disjoint from all other blocks in the binary
 --

@@ -19,6 +19,7 @@ module Renovate.Recovery (
   isIncompleteBlockAddress,
   isIncompleteFunction,
   isIncompleteBlock,
+  numBlockRegions,
   ArchBits,
   ArchInfo(..),
   ArchVals(..),
