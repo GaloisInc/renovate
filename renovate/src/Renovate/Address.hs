@@ -78,7 +78,7 @@ concreteFromSegmentOff :: (L.HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch))
                        -> MM.MemSegmentOff (MM.ArchAddrWidth arch)
                        -> Maybe (ConcreteAddress arch)
 concreteFromSegmentOff _mem segOff = do
-  let memAddr = MM.relativeSegmentAddr segOff
+  let memAddr = MM.segoffAddr segOff
   _ <- MM.asAbsoluteAddr memAddr
   return (ConcreteAddress memAddr)
 
