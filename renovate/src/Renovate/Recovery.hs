@@ -115,7 +115,7 @@ data BlockInfo arch = BlockInfo
   , biIncomplete       :: S.Set (ConcreteAddress arch)
   -- ^ The set of blocks that reside in incomplete functions (i.e.,
   -- functions for which we cannot find all of the code).  Note that
-  -- this is the set of *all* *block* addresses; these are not
+  -- this is the set of *all* addresses of *blocks*; these are not
   -- function addresses, and these are all blocks in a function which
   -- is incomplete (because attempting to reason about or rewrite
   -- these blocks could be dangerous because the incomplete blocks
@@ -127,7 +127,7 @@ data BlockInfo arch = BlockInfo
   -- are complete (i.e., for which all control flow is resolved).
   -- Furthermore, the appropriate symbolic backend is required.  For
   -- architectures that lack a symbolic backend, there will be
-  -- noentries in the CFG map.
+  -- no entries in the CFG map.
   , biRegCFG           :: M.Map (ConcreteAddress arch) (SymbolicRegCFG arch)
   , biOverlap          :: BlockRegions arch
   -- ^ A structure that lets us determine which blocks in the program overlap
