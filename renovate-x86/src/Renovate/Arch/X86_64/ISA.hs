@@ -14,8 +14,9 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy.Builder as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Functor.Identity as I
-import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Int ( Int32 )
+import           Data.Maybe
+import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Word ( Word8, Word64 )
 
 import qualified Data.Macaw.Memory as MM
@@ -99,61 +100,22 @@ x86Store
 x86Store size addr reg =
   noAddr $ makeInstr "mov" [x86StackAddress addr size, reg]
 
-x86AddImmediate :: Value -> Integer -> Instruction TargetAddress
--- x86AddImmediate = x86OpImmediate "add"
-x86AddImmediate reg imm =
-  noAddr $ fromFlexInst $ D.II
-    { D.iiLockPrefix = D.NoLockPrefix
-    , D.iiAddrSize = D.Size64
-    , D.iiOp = "add"
-    , D.iiArgs =
-      [ (reg, D.OpType D.ModRM_reg D.VSize)
-      , (D.ByteSignedImm (fromIntegral imm), D.IM_SB)
-      ]
-    , D.iiPrefixes = D.Prefixes
-      { D._prLockPrefix = D.NoLockPrefix
-      , D._prSP  = D.SegmentPrefix { D.unwrapSegmentPrefix = 0 }
-      , D._prREX = D.REX 48
-      , D._prVEX = Nothing
-      , D._prASO = False
-      , D._prOSO = False
-      }
-    , D.iiRequiredPrefix = Nothing
-    , D.iiOpcode = [131]
-    , D.iiRequiredMod = Nothing
-    , D.iiRequiredReg = Just (D.maskFin8 0)
-    , D.iiRequiredRM = Nothing
-    }
+x86AddImmediate :: Value -> Integer -> [Instruction TargetAddress]
+x86AddImmediate _ = x86OpSPImmediate $ B.pack [0x4c, 0x01, 0xd4]
 
-x86SubtractImmediate :: Value -> Integer -> Instruction TargetAddress
--- x86SubtractImmediate = x86OpImmediate "sub"
-x86SubtractImmediate reg imm =
-  noAddr $ fromFlexInst $ D.II
-    { D.iiLockPrefix = D.NoLockPrefix
-    , D.iiAddrSize = D.Size64
-    , D.iiOp = "sub"
-    , D.iiArgs =
-      [ (reg, D.OpType D.ModRM_reg D.VSize)
-      , (D.ByteSignedImm (fromIntegral imm), D.IM_SB)
-      ]
-    , D.iiPrefixes = D.Prefixes
-      { D._prLockPrefix = D.NoLockPrefix
-      , D._prSP  = D.SegmentPrefix { D.unwrapSegmentPrefix = 0 }
-      , D._prREX = D.REX 48
-      , D._prVEX = Nothing
-      , D._prASO = False
-      , D._prOSO = False
-      }
-    , D.iiRequiredPrefix = Nothing
-    , D.iiOpcode = [131]
-    , D.iiRequiredMod = Nothing
-    , D.iiRequiredReg = Just (D.maskFin8 5)
-    , D.iiRequiredRM = Nothing
-    }
+x86SubtractImmediate :: Value -> Integer -> [Instruction TargetAddress]
+x86SubtractImmediate _ = x86OpSPImmediate $ B.pack [0x4c, 0x29, 0xd4]
 
-x86OpImmediate :: String -> Value -> Integer -> Instruction TargetAddress
-x86OpImmediate op reg imm =
-  noAddr $ makeInstr op [reg, D.DWordImm $ D.Imm32Concrete $ fromIntegral imm]
+-- x86OpImmediate :: String -> Value -> Integer -> Instruction TargetAddress
+-- x86OpImmediate op reg imm =
+--   noAddr $ makeInstr op [reg, D.DWordImm $ D.Imm32Concrete $ fromIntegral imm]
+x86OpSPImmediate :: B.ByteString -> Integer -> [Instruction TargetAddress]
+x86OpSPImmediate op_bytes imm = do
+  let tmp_reg = D.QWordReg D.R10
+  map noAddr $
+    [makeInstr "mov" [tmp_reg, D.QWordImm $ fromIntegral imm]]
+    ++ (map fromFlexInst $
+        mapMaybe D.disInstruction $ D.disassembleBuffer op_bytes)
 
 -- | Classify different kinds of jump instructions.
 --

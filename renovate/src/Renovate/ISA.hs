@@ -159,11 +159,11 @@ data ISA arch = ISA
   , isaAddImmediate
       :: RegisterType arch
       -> Integer
-      -> Instruction arch (InstructionAnnotation arch)
+      -> [Instruction arch (InstructionAnnotation arch)]
   , isaSubtractImmediate
       :: RegisterType arch
       -> Integer
-      -> Instruction arch (InstructionAnnotation arch)
+      -> [Instruction arch (InstructionAnnotation arch)]
   }
 
 data StackAddress arch = StackAddress
