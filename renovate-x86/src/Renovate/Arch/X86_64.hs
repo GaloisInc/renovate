@@ -60,7 +60,6 @@ config analysis rewriter = R.RenovateConfig
   , R.rcDisassembler  = disassemble
   , R.rcBlockCallback = Nothing
   , R.rcFunctionCallback = Nothing
-  , R.rcELFEntryPoints = const []
   , R.rcAnalysis      = analysis
   , R.rcRewriter      = rewriter
   , R.rcUpdateSymbolTable = True

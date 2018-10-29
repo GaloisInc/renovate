@@ -85,8 +85,6 @@ data RenovateConfig arch binFmt (b :: * -> *) = RenovateConfig
   -- ^ Architecture info for macaw
   , rcAssembler     :: forall m . (C.MonadThrow m) => B.Instruction arch () -> m B.ByteString
   , rcDisassembler  :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, B.Instruction arch ())
-  , rcELFEntryPoints :: MBL.LoadedBinary arch binFmt -> [MM.MemAddr (MM.ArchAddrWidth arch)]
-  -- ^ Extra entry points that can be discovered from ELF files
   , rcBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
   -- ^ A callback called for each discovered block; the argument
   -- is the address of the discovered block
