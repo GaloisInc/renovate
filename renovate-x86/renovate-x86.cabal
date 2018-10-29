@@ -62,14 +62,3 @@ test-suite renovate-x86-tests
                  renovate-x86,
                  crucible
                  -- tasty-quickcheck
-
-executable renovate-dump-x86
-  default-language: Haskell2010
-  ghc-options: -Wall
-  main-is: DumpMain.hs
-  hs-source-dirs: tools
-  build-depends: base,
-                 macaw-loader,
-                 macaw-loader-x86,
-                 renovate-x86
-           
