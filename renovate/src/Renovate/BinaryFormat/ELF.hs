@@ -116,6 +116,7 @@ withElfConfig :: (C.MonadThrow m)
               -> [(Arch.Architecture, SomeConfig c b)]
               -> (forall arch . (R.ArchBits arch,
                                   MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch)),
+                                  MBL.BinaryAddrWidth (E.Elf (MM.ArchAddrWidth arch)) ~ MM.RegAddrWidth (MM.ArchReg arch),
                                   E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                                   B.InstructionConstraints arch,
                                   c arch b)
@@ -163,6 +164,7 @@ withElfConfig e0 configs k = do
 -- metadata is provided by rewriter passes in the 'RW.RewriteM' environment.
 rewriteElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
+               MBL.BinaryAddrWidth binFmt ~ MM.ArchAddrWidth arch,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                R.ArchBits arch)
            => RenovateConfig arch binFmt b
@@ -187,6 +189,7 @@ rewriteElf cfg hdlAlloc e loadedBinary strat = do
 -- | Run an analysis over an ELF file without performing any rewriting.
 analyzeElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
+               MBL.BinaryAddrWidth binFmt ~ MM.ArchAddrWidth arch,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                R.ArchBits arch)
            => RenovateConfig arch binFmt b
@@ -299,6 +302,7 @@ sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
 --    are currently page aligned - is that necessary?)
 doRewrite :: (B.InstructionConstraints arch,
               MBL.BinaryLoader arch binFmt,
+              MBL.BinaryAddrWidth binFmt ~ MM.ArchAddrWidth arch,
               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
               R.ArchBits arch)
           => RenovateConfig arch binFmt b
@@ -782,6 +786,7 @@ nextSegmentIndex = fromIntegral . programHeaderCount
 instrumentTextSection :: forall w arch binFmt b
                        . (w ~ MM.ArchAddrWidth arch,
                           MBL.BinaryLoader arch binFmt,
+                          MBL.BinaryAddrWidth binFmt ~ MM.ArchAddrWidth arch,
                           B.InstructionConstraints arch,
                           Integral (E.ElfWordType w),
                           R.ArchBits arch)
@@ -885,6 +890,7 @@ mkAnalyzeEnv cfg env symmap newGlobalBase = do
 withRewriteEnv :: forall w arch binFmt b a
                     . (w ~ MM.ArchAddrWidth arch,
                        MBL.BinaryLoader arch binFmt,
+                       MBL.BinaryAddrWidth binFmt ~ MM.ArchAddrWidth arch,
                        B.InstructionConstraints arch,
                        Integral (E.ElfWordType w),
                        R.ArchBits arch)
@@ -921,6 +927,7 @@ withRewriteEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
 analyzeTextSection :: forall w arch binFmt b
                     . (w ~ MM.ArchAddrWidth arch,
                        MBL.BinaryLoader arch binFmt,
+                       MBL.BinaryAddrWidth binFmt ~ MM.ArchAddrWidth arch,
                        B.InstructionConstraints arch,
                        Integral (E.ElfWordType w),
                        R.ArchBits arch)

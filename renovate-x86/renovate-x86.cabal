@@ -27,8 +27,8 @@ library
                        macaw-x86,
                        macaw-x86-symbolic,
                        macaw-base,
-                       -- macaw-semmc is only being used for the definition of BinaryLoader
-                       macaw-semmc,
+                       macaw-loader,
+                       macaw-loader-x86,
                        ansi-wl-pprint,
                        exceptions,
                        prettyprinter,
@@ -56,9 +56,20 @@ test-suite renovate-x86-tests
                  elf-edit,
                  filepath,
                  tasty-hunit,
-                 macaw-semmc,
+                 macaw-loader,
+                 macaw-loader-x86,
                  renovate,
                  renovate-x86,
                  crucible
                  -- tasty-quickcheck
-                       
+
+executable renovate-dump-x86
+  default-language: Haskell2010
+  ghc-options: -Wall
+  main-is: DumpMain.hs
+  hs-source-dirs: tools
+  build-depends: base,
+                 macaw-loader,
+                 macaw-loader-x86,
+                 renovate-x86
+           

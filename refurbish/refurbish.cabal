@@ -25,7 +25,8 @@ executable refurbish
                        optparse-applicative,
                        elf-edit,
                        parameterized-utils,
-                       macaw-semmc,
+                       macaw-loader,
+                       macaw-loader-x86,
                        renovate,
                        renovate-ppc,
                        renovate-x86
@@ -49,7 +50,8 @@ test-suite refurbish-tests
                  elf-edit,
                  parameterized-utils,
                  macaw-base,
-                 macaw-semmc,
+                 macaw-loader,
+                 macaw-loader-x86,
                  renovate,
                  renovate-ppc,
                  renovate-x86

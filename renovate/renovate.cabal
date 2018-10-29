@@ -59,8 +59,7 @@ library
                        ansi-wl-pprint,
                        parameterized-utils,
                        macaw-base >= 0.3.2,
-                       -- macaw-semmc is only for the binary loader (for now)
-                       macaw-semmc,
+                       macaw-loader,
                        macaw-symbolic,
                        crucible,
                        elf-edit >= 0.28,

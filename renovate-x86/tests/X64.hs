@@ -81,14 +81,13 @@ instance TestConstraint R64.X86_64 b
 mkTest :: C.HandleAllocator RealWorld -> FilePath -> T.TestTree
 mkTest hdlAlloc fp = T.testCase fp $ withELF elfFilename testRewrite
   where
-    testRewrite :: E.Elf 64 -> IO ()
+    elfFilename = replaceExtension fp "exe"
     testRewrite elf = do
       Just expected <- readMaybe <$> readFile (fp <.> "expected")
       let cfg :: [(R.Architecture, R.SomeConfig TestConstraint TestConfig)]
           cfg = [(R.X86_64, R.SomeConfig NR.knownNat MBL.Elf64Repr (R64.config (analysis expected) R.identity))]
       R.withElfConfig (E.Elf64 elf) cfg (testBlockRecovery hdlAlloc)
 
-    elfFilename = replaceExtension fp "exe"
 
 analysis :: Monad m
          => ExpectedResult -> R.AnalyzeEnv R64.X86_64 -> MBL.LoadedBinary R64.X86_64 binFmt
@@ -119,6 +118,7 @@ data TestConfig a = TestCfg Bool [String]
 testBlockRecovery :: (w ~ MM.ArchAddrWidth arch,
                       R.InstructionConstraints arch,
                       MBL.BinaryLoader arch binFmt,
+                      MBL.BinaryAddrWidth binFmt ~ w,
                       E.ElfWidthConstraints w,
                       KnownNat w,
                       Typeable w,

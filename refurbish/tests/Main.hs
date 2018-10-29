@@ -65,6 +65,7 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , R.ArchBits arch
                 , R.InstructionConstraints arch
                 , MBL.BinaryLoader arch (E.Elf w)
+                , MBL.BinaryAddrWidth (E.Elf w) ~ w
                 )
              => C.HandleAllocator RealWorld
              -> R.LayoutStrategy
