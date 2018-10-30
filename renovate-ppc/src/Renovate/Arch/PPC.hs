@@ -30,8 +30,7 @@ import qualified Data.Macaw.CFG.Core as MC
 import qualified Data.Macaw.Memory as MM
 
 import qualified Data.Macaw.PPC as MP
-import qualified Data.Macaw.BinaryLoader.PPC.TOC as TOC
-import qualified Data.Macaw.BinaryLoader.PPC ()
+import qualified Data.Macaw.BinaryLoader.PPC as BLP
 -- FIXME: We probably shouldn't need this import, since the PPCReg type is
 -- re-exported from Data.Macaw.PPC
 import           Data.Macaw.PPC.PPCReg ()
@@ -42,8 +41,11 @@ import           Renovate.Arch.PPC.ISA
 import           Renovate.Arch.PPC.ABI
 
 -- | A renovate configuration for 32 bit PowerPC
-config32 :: (MM.MemWidth w, w ~ 32, MC.ArchAddrWidth MP.PPC32 ~ w, MBL.BinaryLoader MP.PPC32 binFmt
-            , MBL.ArchBinaryData MP.PPC32 binFmt ~ TOC.TOC w
+config32 :: ( MM.MemWidth w
+            , w ~ 32
+            , MC.ArchAddrWidth MP.PPC32 ~ w
+            , MBL.BinaryLoader MP.PPC32 binFmt
+            , BLP.HasTOC MP.PPC32 binFmt
             )
          => R.Analyze MP.PPC32 binFmt a
          -- ^ An analysis function that produces a summary result that will be
@@ -68,8 +70,11 @@ config32 analysis rewriter = R.RenovateConfig
   }
 
 -- | A renovate configuration for 64 bit PowerPC
-config64 :: (MM.MemWidth w, w ~ 64, MC.ArchAddrWidth MP.PPC64 ~ w, MBL.BinaryLoader MP.PPC64 binFmt
-            , MBL.ArchBinaryData MP.PPC64 binFmt ~ TOC.TOC w
+config64 :: ( MM.MemWidth w
+            , w ~ 64
+            , MC.ArchAddrWidth MP.PPC64 ~ w
+            , MBL.BinaryLoader MP.PPC64 binFmt
+            , BLP.HasTOC MP.PPC64 binFmt
             )
          => R.Analyze MP.PPC64 binFmt a
          -- ^ An analysis function that produces a summary result that will be
