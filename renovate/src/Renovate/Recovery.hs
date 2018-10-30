@@ -260,16 +260,16 @@ blockInfo recovery mem textAddrRange di = do
                               , let blockAddrs = mapMaybe (concreteFromSegmentOff mem) (M.keys (dfi L.^. MC.parsedBlocks))
                               ]
 
-  F.forM_ validFuncs $ \(PU.Some dfi) -> do
-    let addr = MC.discoveredFunAddr dfi
-    putStrLn ("addr = " ++ show addr)
-    let seg = MC.segoffSegment addr
-    putStrLn ("  segment size = " ++ show (MC.segmentSize seg))
-    putStrLn ("  segoff = " ++ show (MC.segoffOffset addr))
-    print (MC.segoffSegment (MC.discoveredFunAddr dfi))
-    print (PP.pretty dfi)
-    F.forM_ (M.elems (dfi L.^. MC.parsedBlocks)) $ \pb -> do
-      putStrLn ("Reason: " ++ show (MC.blockReason pb))
+  -- F.forM_ validFuncs $ \(PU.Some dfi) -> do
+  --   let addr = MC.discoveredFunAddr dfi
+  --   putStrLn ("addr = " ++ show addr)
+  --   let seg = MC.segoffSegment addr
+  --   putStrLn ("  segment size = " ++ show (MC.segmentSize seg))
+  --   putStrLn ("  segoff = " ++ show (MC.segoffOffset addr))
+  --   print (MC.segoffSegment (MC.discoveredFunAddr dfi))
+  --   print (PP.pretty dfi)
+  --   F.forM_ (M.elems (dfi L.^. MC.parsedBlocks)) $ \pb -> do
+  --     putStrLn ("Reason: " ++ show (MC.blockReason pb))
 
   mcfgs <- T.forM validFuncs $ \(PU.Some dfi) -> do
     regIor <- IO.newIORef Nothing
