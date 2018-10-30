@@ -43,7 +43,6 @@ import           Renovate.Arch.PPC.ABI
 
 -- | A renovate configuration for 32 bit PowerPC
 config32 :: (MM.MemWidth w, w ~ 32, MC.ArchAddrWidth MP.PPC32 ~ w, MBL.BinaryLoader MP.PPC32 binFmt
-            , MBL.BinaryAddrWidth binFmt ~ w
             , MBL.ArchBinaryData MP.PPC32 binFmt ~ TOC.TOC w
             )
          => R.Analyze MP.PPC32 binFmt a
@@ -70,7 +69,6 @@ config32 analysis rewriter = R.RenovateConfig
 
 -- | A renovate configuration for 64 bit PowerPC
 config64 :: (MM.MemWidth w, w ~ 64, MC.ArchAddrWidth MP.PPC64 ~ w, MBL.BinaryLoader MP.PPC64 binFmt
-            , MBL.BinaryAddrWidth binFmt ~ w
             , MBL.ArchBinaryData MP.PPC64 binFmt ~ TOC.TOC w
             )
          => R.Analyze MP.PPC64 binFmt a

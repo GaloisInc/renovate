@@ -56,7 +56,6 @@ data SomeConfig c (b :: * -> *) = forall arch binFmt
                   . (B.InstructionConstraints arch,
                      R.ArchBits arch,
                      MBL.BinaryLoader arch binFmt,
-                     MBL.BinaryAddrWidth binFmt ~ MM.RegAddrWidth (MM.ArchReg arch),
                      c arch b)
                   => SomeConfig (NR.NatRepr (MM.ArchAddrWidth arch)) (MBL.BinaryRepr binFmt) (RenovateConfig arch binFmt b)
 
