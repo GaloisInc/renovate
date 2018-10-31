@@ -118,7 +118,6 @@ data TestConfig a = TestCfg Bool [String]
 testBlockRecovery :: (w ~ MM.ArchAddrWidth arch,
                       R.InstructionConstraints arch,
                       MBL.BinaryLoader arch binFmt,
-                      MBL.BinaryAddrWidth binFmt ~ w,
                       E.ElfWidthConstraints w,
                       KnownNat w,
                       Typeable w,
