@@ -554,7 +554,7 @@ newFromEntry :: (w ~ MM.ArchAddrWidth arch, MM.MemWidth w, E.ElfWidthConstraints
              -> B.ByteString
              -> E.ElfSymbolTableEntry (E.ElfWordType w)
 newFromEntry textSecIdx extraTextSecIdx layoutAddr e addr nm = e
-  { E.steName  = "__embrittled_" `B.append` nm
+  { E.steName  = "__renovate_" `B.append` nm
   , E.steValue = fromIntegral absAddr
   , E.steIndex = if absAddr >= RA.absoluteAddress layoutAddr
                  then extraTextSecIdx
