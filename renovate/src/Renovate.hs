@@ -115,6 +115,7 @@ module Renovate
   E.riNewTextSize,
   E.riIncompleteBlocks,
   E.riBlockMapping,
+  E.riOutputBlocks,
   D.Diagnostic(..),
   D.Diagnostics(..),
   -- * Constraints

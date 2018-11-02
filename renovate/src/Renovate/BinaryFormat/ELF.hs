@@ -42,7 +42,8 @@ module Renovate.BinaryFormat.ELF (
   riIncompleteBlocks,
   riRedirectionDiagnostics,
   riBlockRecoveryDiagnostics,
-  riBlockMapping
+  riBlockMapping,
+  riOutputBlocks
   ) where
 
 import           Control.Applicative
@@ -353,7 +354,8 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
     , overwrittenBytes
     , instrumentedBytes
     , _mNewData
-    , newSyms ) <- instrumentTextSection cfg hdlAlloc loadedBinary textSectionRange
+    , newSyms
+    , addrMap ) <- instrumentTextSection cfg hdlAlloc loadedBinary textSectionRange
                                        (E.elfSectionData textSection) strat layoutAddr dataAddr symmap
 
   riOriginalTextSize L..= fromIntegral (B.length overwrittenBytes)
@@ -376,12 +378,16 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   modifyCurrentELF (appendSegment newTextSegment)
 
   -- Update the symbol table (if there is one)
+  --
+  -- FIXME: If we aren't updating the symbol table (but there is one), just
+  -- preserve the original one.  The current code just throws it away.
   case mBaseSymtab of
     Just baseSymtab
       | rcUpdateSymbolTable cfg -> do
-          newSymtab <- withCurrentELF (buildNewSymbolTable (E.elfSectionIndex textSection) newTextSecIdx layoutAddr newSyms baseSymtab)
+          newSymtab <- withCurrentELF (buildNewSymbolTable (E.elfSectionIndex textSection) newTextSecIdx layoutAddr newSyms addrMap baseSymtab)
           let symbolTableAlignment = 8
           modifyCurrentELF (appendDataRegion (E.ElfDataSymtab newSymtab) symbolTableAlignment)
+      | otherwise -> return ()
     _ -> return ()
   modifyCurrentELF appendHeaders
 
@@ -495,17 +501,25 @@ buildNewSymbolTable :: (w ~ MM.ArchAddrWidth arch, E.ElfWidthConstraints w, MM.M
                     -> E.ElfSectionIndex
                     -> RA.ConcreteAddress arch
                     -> RE.NewSymbolsMap arch
+                    -> [(RA.ConcreteAddress arch, RA.ConcreteAddress arch)]
                     -> E.ElfSymbolTable (E.ElfWordType w)
                     -- ^ The original symbol table
                     -> E.Elf w
                     -> ElfRewriter arch (E.ElfSymbolTable (E.ElfWordType w))
-buildNewSymbolTable textSecIdx extraTextSecIdx layoutAddr newSyms baseTable elf =
-  return $ baseTable { E.elfSymbolTableEntries = E.elfSymbolTableEntries baseTable <>
-                       newEntries (toMap (E.elfSymbolTableEntries baseTable))
+buildNewSymbolTable textSecIdx extraTextSecIdx layoutAddr newSyms addrMap baseTable elf = do
+  let newEnts = newEntries (toMap (E.elfSymbolTableEntries baseTable))
+  let redirections = redirs
+  let tableEntries = V.concat [ E.elfSymbolTableEntries baseTable, V.fromList redirections, newEnts ]
+  return $ baseTable { E.elfSymbolTableEntries = tableEntries
                      , E.elfSymbolTableIndex = nextSectionIndex elf
                      }
   where
     toMap      t = Map.fromList [ (E.steValue e, e) | e <- V.toList t ]
+    redirectionMap = Map.fromList addrMap
+    redirs = [ newFromEntry textSecIdx extraTextSecIdx layoutAddr e redirectedAddr (E.steName e)
+             | e <- V.toList (E.elfSymbolTableEntries baseTable)
+             , redirectedAddr <- maybeToList (Map.lookup (RA.concreteFromAbsolute (fromIntegral (E.steValue e))) redirectionMap)
+             ]
     newEntries t = V.fromList   [ newFromEntry textSecIdx extraTextSecIdx layoutAddr e ca nm
                                 | (ca, (oa, nm)) <- Map.toList newSyms
                                 , e <- maybeToList $! Map.lookup (fromIntegral (RA.absoluteAddress oa)) t
@@ -801,7 +815,7 @@ instrumentTextSection :: forall w arch binFmt b
                       -- ^ The address to lay out the new data section
                       -> RE.SymbolMap arch
                       -- ^ meta data?
-                      -> ElfRewriter arch (b arch, B.ByteString, B.ByteString, Maybe B.ByteString, RE.NewSymbolsMap arch)
+                      -> ElfRewriter arch (b arch, B.ByteString, B.ByteString, Maybe B.ByteString, RE.NewSymbolsMap arch, [(RE.ConcreteAddress arch, RE.ConcreteAddress arch)])
 instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartAddr, textSectionEndAddr) textBytes strat layoutAddr newGlobalBase symmap = do
   withRewriteEnv cfg hdlAlloc loadedBinary symmap textAddrRange $ \env -> do
   let isa = rcISA cfg
@@ -834,11 +848,12 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
       riSmallBlockCount L..= RE.rwsSmallBlockCount s1
       riUnrelocatableTerm L..= RE.rwsUnrelocatableTerm s1
       riBlockMapping L..= RE.rwsBlockMapping s1
+      riOutputBlocks L..= Just (SomeBlocks isa allBlocks)
       case cfg of
         RenovateConfig { rcAssembler = asm } -> do
           (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks
           let newDataBytes = mkNewDataSection newGlobalBase info
-          return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms)
+          return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms, RE.rwsBlockMapping s1)
 
 -- | Helper for handling the error case of `RewriterT`.
 extractOrThrowRewriterResult :: Either P.SomeException a
