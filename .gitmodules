@@ -29,5 +29,5 @@
 	path = deps/llvm-pretty
 	url = git@github.com:elliottt/llvm-pretty.git
 [submodule "submodules/macaw-loader"]
-	path = submodules/macaw-loader
+	path = deps/macaw-loader
 	url = git@github.com:GaloisInc/macaw-loader.git
