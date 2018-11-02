@@ -517,7 +517,7 @@ buildNewSymbolTable textSecIdx extraTextSecIdx layoutAddr newSyms baseTable elf 
 -- is very high, which would waste a lot of space.  It seems like setting it
 -- lower is safe...
 newTextAlign :: Word64
-newTextAlign = 0x1000
+newTextAlign = 0x10000
 
 -- | Increment the segment numbers for segments that elf-edit handles specially
 --
