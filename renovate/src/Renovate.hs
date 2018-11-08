@@ -22,6 +22,8 @@ module Renovate
   C.TrivialConfigConstraint,
   LB.LayoutStrategy(..),
   LB.CompactOrdering(..),
+  C.AnalyzeOnly(..),
+  C.AnalyzeAndRewrite(..),
   C.RenovateConfig(..),
   Recovery.ArchInfo(..),
   Recovery.ArchVals(..),

@@ -28,6 +28,7 @@ import qualified Data.Foldable as F
 import qualified Data.List as L
 import           Data.Monoid
 import qualified Data.Text.Prettyprint.Doc as PD
+import           Data.Word ( Word64 )
 
 import           Prelude
 
@@ -41,7 +42,7 @@ data BlockAssemblyException where
   -- A discontiguous block was starting with the given concrete block
   DiscontiguousBlocks         :: forall arch
                                . (InstructionConstraints arch)
-                              => ConcreteBlock arch
+                              => Chunk arch
                               -> ConcreteAddress arch
                               -> BlockAssemblyException
 
@@ -53,11 +54,11 @@ data BlockAssemblyException where
 
   BlockOverlappingRedirection :: forall arch
                                . (InstructionConstraints arch)
-                              => ConcreteBlock arch -> BlockAssemblyException
+                              => Chunk arch -> BlockAssemblyException
 
   OverlayBlockNotContained    :: forall arch
                                . (InstructionConstraints arch)
-                              => ConcreteBlock arch -> BlockAssemblyException
+                              => Chunk arch -> BlockAssemblyException
 
 deriving instance Show BlockAssemblyException
 
@@ -71,6 +72,10 @@ instance PD.Pretty BlockAssemblyException where
     PD.pretty "BlockOverlappingRedirection:" PD.<+> PD.pretty cb
   pretty (OverlayBlockNotContained cb) =
     PD.pretty "OverlayBlockNotContained:" PD.<+> PD.pretty cb
+
+instance (InstructionConstraints arch) => PD.Pretty (Chunk arch) where
+  pretty (BlockChunk b) = PD.pretty b
+  pretty (RawChunk addr bs) = PD.pretty addr PD.<> PD.pretty "@" PD.<> PD.pretty (B.length bs)
 
 instance C.Exception BlockAssemblyException
 
@@ -114,21 +119,30 @@ assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble 
                        , asExtraAddr        = extraAddr
                        , asExtraText        = mempty
                        , asAssemble         = assemble
-                       , _asOrigBlocks      = L.sortOn basicBlockAddress filteredBlocks
-                       , _asAllocatedBlocks = L.sortOn basicBlockAddress allocatedBlocks
+                       , _asOrigChunks      = L.sortOn chunkAddress filteredBlocks
+                       , _asAllocatedChunks = L.sortOn chunkAddress allocatedBlocks
                        , asISA              = isa
                        , asMemory           = mem
                        , asInstructionConstraints = id
                        }
     -- Split the inputs block list into 2 lists. One for blocks that fit in the
     -- original address space and one for the newly allocated blocks.
-    (origBlocks, allocatedBlocks) = foldr go ([],[]) blocks
+    --
+    -- We mix basic blocks and raw injected code using the 'Chunk' abstraction
+    -- below.  Most of the code here doesn't really need to know anything
+    -- besides the address and size of each chunk (and how to turn a chunk into
+    -- a bytestring).
+    allCode = map BlockChunk blocks ++ [ RawChunk addr bytes | (addr, bytes) <- injectedCode ]
+    (origBlocks, allocatedBlocks) = foldr go ([],[]) allCode
     filteredBlocks = filter inText origBlocks
-    inText b = absoluteAddress absStartAddr <= absoluteAddress (basicBlockAddress b) &&
-               absoluteAddress (basicBlockAddress b) < absoluteAddress absEndAddr
-    go b (origAcc, allocatedAcc) = case MM.resolveAbsoluteAddr mem (absoluteAddress (basicBlockAddress b)) of
-      Nothing -> (origAcc, b:allocatedAcc)
-      Just _  -> (b:origAcc, allocatedAcc)
+    inText c = absoluteAddress absStartAddr <= absoluteAddress (chunkAddress c) &&
+               absoluteAddress (chunkAddress c) < absoluteAddress absEndAddr
+    -- NOTE: This test (using resolveAbsoluteAddr) is depending on the fact that
+    -- resolveAbsoluteAddr will fail for any address that is not in the macaw
+    -- Memory (which our new code will not be)
+    go c (origAcc, allocatedAcc) = case MM.resolveAbsoluteAddr mem (absoluteAddress (chunkAddress c)) of
+      Nothing -> (origAcc, c:allocatedAcc)
+      Just _  -> (c:origAcc, allocatedAcc)
 
 -- | Process all the input blocks. First, look at each block that will be in the
 -- original address space of the binary. Then look at each block that will be
@@ -137,8 +151,8 @@ assembleDriver :: forall m arch . (C.MonadThrow m, InstructionConstraints arch) 
 assembleDriver = do
   mb <- takeNextOrigBlock
   case mb of
-    Just b -> do
-      assembleAsTextOrExtra b
+    Just c -> do
+      assembleAsTextOrExtra c
       isLast <- isLastOrigBlock
       -- If this is the last block in the original address space but does not
       -- fill out the address space then we need to use the rest of the
@@ -146,31 +160,31 @@ assembleDriver = do
       when isLast padLastBlock
       assembleDriver
     Nothing -> do
-      mb' <- takeNextAllocatedBlock
+      mb' <- takeNextAllocatedChunk
       case mb' of
         Nothing -> return ()
-        Just b  -> do
-          assembleAsTextOrExtra b
+        Just c  -> do
+          assembleAsTextOrExtra c
           assembleDriver
   where
-  assembleAsTextOrExtra :: ConcreteBlock arch -> Assembler arch m ()
-  assembleAsTextOrExtra b = do
+  assembleAsTextOrExtra :: Chunk arch -> Assembler arch m ()
+  assembleAsTextOrExtra c = do
     extraStart <- St.gets asExtraStart
-    case basicBlockAddress b < extraStart of
-      True  -> assembleAsText b
-      False -> assembleAsExtra b
+    case chunkAddress c < extraStart of
+      True  -> assembleAsText c
+      False -> assembleAsExtra c
 
 -- | Code in the extra section never overlaps, so we can just perform some basic
 -- consistency check sand then append it.
 assembleAsExtra :: (L.HasCallStack, C.MonadThrow m, InstructionConstraints arch)
-                => ConcreteBlock arch
+                => Chunk arch
                 -> Assembler arch m ()
 assembleAsExtra b = do
   padToBlockStartExtra b
   nextExtraAddr <- St.gets asExtraAddr
   -- traceM $ "nextExtraAddr = " ++ show nextExtraAddr
-  -- traceM $ "b = " ++ show (basicBlockAddress b)
-  unless (nextExtraAddr == basicBlockAddress b) $ do
+  -- traceM $ "b = " ++ show (chunkAddress b)
+  unless (nextExtraAddr == chunkAddress b) $ do
     C.throwM (DiscontiguousBlocks b nextExtraAddr)
   bytes <- assembleBlock b
   let bsize = B.length bytes
@@ -189,20 +203,20 @@ assertM b = assert b (pure ())
 -- some slack space after the last overlapping block where no other blocks could
 -- fit).
 assembleAsText :: (L.HasCallStack, C.MonadThrow m, InstructionConstraints arch)
-               => ConcreteBlock arch
+               => Chunk arch
                -> Assembler arch m ()
-assembleAsText b = do
+assembleAsText c = do
   -- If there is a gap between the next layout address and the start of this
   -- block, fill the gap with bytes from the original text section.
-  padToBlockStart b
+  padToBlockStart c
 
   -- Look up any blocks that overlap the current block and return them (while
   -- removing them from the assembly queue).
-  overlapping <- lookupOverlappingBlocks b
+  overlapping <- lookupOverlappingBlocks c
 
   -- Ensure that all of the restrictions we have in place are obeyed and then
   -- add the block to the text section.
-  checkedOverlappingAssemble b overlapping
+  checkedOverlappingAssemble c overlapping
 
 -- | Compute the end address of a basic block
 blockEndAddress :: (MM.MemWidth (MM.ArchAddrWidth arch))
@@ -220,22 +234,37 @@ blockEndAddress isa b =
 --
 -- There may be space after the last block that will be filled with traps.
 checkedOverlappingAssemble :: (L.HasCallStack, C.MonadThrow m, MM.MemWidth (MM.ArchAddrWidth arch))
-                           => ConcreteBlock arch
-                           -> [ConcreteBlock arch]
+                           => Chunk arch
+                           -> [Chunk arch]
                            -> Assembler arch m ()
-checkedOverlappingAssemble b overlays = withInstructionConstraints $ do
-  isa <- St.gets asISA
-  let blockEnd = blockEndAddress isa b
-      reversedInstructions = reverse (basicBlockInstructions b)
-  -- assert that the overlays are all completely contained in the first block
-  F.forM_ overlays $ \overlay -> do
-    let overlayEnd = blockEndAddress isa overlay
-    assertM (basicBlockAddress overlay > basicBlockAddress b)
-    assertM (overlayEnd == blockEnd)
-    assertM (reverse (basicBlockInstructions overlay) `L.isPrefixOf` reversedInstructions)
-
-  baseBytes <- assembleBlock b
-  appendTextBytes baseBytes
+checkedOverlappingAssemble c overlays = do
+  case c of
+    RawChunk {} ->
+      -- RawChunks represent new code that the caller has injected.  This code
+      -- should *never* overlap any other code in the binary
+      assertM (null overlays)
+    BlockChunk b -> withInstructionConstraints $ do
+      isa <- St.gets asISA
+      let blockEnd = blockEndAddress isa b
+      let reversedInstructions = reverse (basicBlockInstructions b)
+      -- Assert that the overlays (i.e., blocks that overlay this current block
+      -- that we are assembling) are all completely contained in the first block.
+      --
+      -- NOTE: We don't generate any overlapping blocks as part of the rewriting
+      -- (if a block is to be redirected and its space is to be re-used, the
+      -- original block is turned into a one-instruction block that starts with
+      -- a redirecting jump).  Overlapping blocks should *only* come from the
+      -- original binary.
+      F.forM_ overlays $ \overlay -> do
+        case overlay of
+          RawChunk {} -> assertM False
+          BlockChunk overlayBlock -> do
+            let overlayEnd = blockEndAddress isa overlayBlock
+            assertM (basicBlockAddress overlayBlock > basicBlockAddress b)
+            assertM (overlayEnd == blockEnd)
+            assertM (reverse (basicBlockInstructions overlayBlock) `L.isPrefixOf` reversedInstructions)
+  bytes <- assembleBlock c
+  appendTextBytes bytes
 
 -- | Append bytes to the text section, updating the next available layout
 -- address
@@ -254,30 +283,30 @@ appendTextBytes bs = do
 -- be assembled.
 lookupOverlappingBlocks :: forall arch m
                          . (L.HasCallStack, C.MonadThrow m, InstructionConstraints arch)
-                        => ConcreteBlock arch
-                        -> Assembler arch m [ConcreteBlock arch]
+                        => Chunk arch
+                        -> Assembler arch m [Chunk arch]
 lookupOverlappingBlocks b = do
   isa <- St.gets asISA
-  let blockSize = concreteBlockSize isa b
-      blockEnd  = basicBlockAddress b `addressAddOffset` fromIntegral blockSize
+  let blockSize = chunkSize isa b
+      blockEnd  = chunkAddress b `addressAddOffset` fromIntegral blockSize
   go isa blockEnd
   where
     -- Look up the next block and see if it overlaps the current block @b@.
     -- Stop looking when we find a block that clearly does not overlap.
-    go :: ISA arch -> ConcreteAddress arch -> Assembler arch m [ConcreteBlock arch]
+    go :: ISA arch -> ConcreteAddress arch -> Assembler arch m [Chunk arch]
     go isa blockEnd = do
       mb' <- takeNextOrigBlock
       case mb' of
         Nothing -> return []
         Just b' -> do
-          let bsize = fromIntegral (concreteBlockSize isa b')
+          let bsize = fromIntegral (chunkSize isa b')
           case () of
-            _ | basicBlockAddress b' >= blockEnd -> do
+            _ | chunkAddress b' >= blockEnd -> do
                   -- If the next block comes after the current block, just put
                   -- it back and return
-                  asOrigBlocks L.%= (b':)
+                  asOrigChunks L.%= (b':)
                   return []
-              | (basicBlockAddress b' `addressAddOffset` bsize) > blockEnd ->
+              | (chunkAddress b' `addressAddOffset` bsize) > blockEnd ->
                 -- We want to assert that, if any blocks overlap, they all end
                 -- at the same instruction.  If that isn't the case, it kind of
                 -- indicates an inconsistent set of blocks coming from macaw or
@@ -293,7 +322,7 @@ lookupOverlappingBlocks b = do
 -- This covers cases where the previous block was followed by data (that was not
 -- recognized as instructions by the analysis).  We have to preserve such data.
 padToBlockStart :: (L.HasCallStack, Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
-                => ConcreteBlock arch
+                => Chunk arch
                 -> Assembler arch m ()
 padToBlockStart b = do
   nextAddr  <- St.gets asTextAddr
@@ -301,8 +330,8 @@ padToBlockStart b = do
   -- endAddr   <- St.gets asTextEnd
   -- Only do padding when the basic block is in the .text
   -- when (startAddr <= basicBlockAddress b && basicBlockAddress b <= endAddr) $ do
-  assertM (nextAddr <= basicBlockAddress b)
-  case nextAddr == basicBlockAddress b of
+  assertM (nextAddr <= chunkAddress b)
+  case nextAddr == chunkAddress b of
     True -> return ()
     False -> do
       -- traceM "generating padding"
@@ -312,7 +341,7 @@ padToBlockStart b = do
       -- traceM $ "endAddr   = " ++ show endAddr
       origTextBytes <- St.gets asOrigTextBytes
       textStart     <- St.gets asTextStart
-      let gapSize  = fromIntegral (basicBlockAddress b `addressDiff` nextAddr)
+      let gapSize  = fromIntegral (chunkAddress b `addressDiff` nextAddr)
           idx      = fromIntegral (nextAddr `addressDiff` textStart)
           gapBytes = B.take gapSize (B.drop idx origTextBytes)
       -- traceM $ "gapSize = " ++ show gapSize
@@ -323,15 +352,15 @@ padToBlockStart b = do
                            }
 
 padToBlockStartExtra :: (L.HasCallStack, Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
-                     => ConcreteBlock arch
+                     => Chunk arch
                      -> Assembler arch m ()
 padToBlockStartExtra b = do
   nextExtraAddr <- St.gets asExtraAddr
-  assertM (nextExtraAddr <= basicBlockAddress b)
-  case nextExtraAddr == basicBlockAddress b of
+  assertM (nextExtraAddr <= chunkAddress b)
+  case nextExtraAddr == chunkAddress b of
     True -> return ()
     False -> do
-      let gapSize  = fromIntegral (basicBlockAddress b `addressDiff` nextExtraAddr)
+      let gapSize  = fromIntegral (chunkAddress b `addressDiff` nextExtraAddr)
           gapBytes = B.replicate gapSize 0
       assertM (B.length gapBytes == gapSize)
       St.modify' $ \s -> s { asExtraAddr = asExtraAddr s `addressAddOffset` fromIntegral gapSize
@@ -358,18 +387,21 @@ padLastBlock = do
                             }
      else return ()
 
-assembleBlock :: (L.HasCallStack, C.MonadThrow m) => ConcreteBlock arch -> Assembler arch m (B.ByteString)
-assembleBlock b = do
-  assembler <- St.gets asAssemble
-  case mapM assembler (basicBlockInstructions b) of
-    Left err -> C.throwM (AssemblyError err)
-    Right strs -> return (mconcat strs)
+assembleBlock :: (L.HasCallStack, C.MonadThrow m) => Chunk arch -> Assembler arch m (B.ByteString)
+assembleBlock c =
+  case c of
+    BlockChunk b -> do
+      assembler <- St.gets asAssemble
+      case mapM assembler (basicBlockInstructions b) of
+        Left err -> C.throwM (AssemblyError err)
+        Right strs -> return (mconcat strs)
+    RawChunk _ b -> return b
 
 -- | Helper function for taking the next block.
-takeNextBlockWith :: (Monad m)
-                  => L.Lens' (AssembleState arch) [ConcreteBlock arch]
-                  -> Assembler arch m (Maybe (ConcreteBlock arch))
-takeNextBlockWith f = do
+takeNextChunkWith :: (Monad m)
+                  => L.Lens' (AssembleState arch) [Chunk arch]
+                  -> Assembler arch m (Maybe (Chunk arch))
+takeNextChunkWith f = do
   bs <- L.use f
   case bs of
     [] -> return Nothing
@@ -379,19 +411,19 @@ takeNextBlockWith f = do
 
 -- | Grabs the next block from the orginal block set (original in the sense that
 -- these blocks have addresses in the original address space).
-takeNextOrigBlock :: (Monad m) => Assembler arch m (Maybe (ConcreteBlock arch))
-takeNextOrigBlock = takeNextBlockWith asOrigBlocks
+takeNextOrigBlock :: (Monad m) => Assembler arch m (Maybe (Chunk arch))
+takeNextOrigBlock = takeNextChunkWith asOrigChunks
 
 -- | Grabs the next block from the allocated block set (allocated in the sense that
 -- these blocks DO NOT have addresses in the original address space).
-takeNextAllocatedBlock :: (Monad m) => Assembler arch m (Maybe (ConcreteBlock arch))
-takeNextAllocatedBlock = takeNextBlockWith asAllocatedBlocks
+takeNextAllocatedChunk :: (Monad m) => Assembler arch m (Maybe (Chunk arch))
+takeNextAllocatedChunk = takeNextChunkWith asAllocatedChunks
 
 -- | Checks if the the orginal block list is exhausted.
 -- Note: This will return true when the current block is from the allocated set.
 isLastOrigBlock :: (Monad m) => Assembler arch m Bool
 isLastOrigBlock = do
-  bs <- L.use asOrigBlocks
+  bs <- L.use asOrigChunks
   return $! null bs
 
 newtype Assembler arch m a = Assembler { unA :: St.StateT (AssembleState arch) m a }
@@ -400,6 +432,23 @@ newtype Assembler arch m a = Assembler { unA :: St.StateT (AssembleState arch) m
                                        Monad,
                                        C.MonadThrow,
                                        St.MonadState (AssembleState arch) )
+
+data Chunk arch = BlockChunk (ConcreteBlock arch)
+                | RawChunk (ConcreteAddress arch) B.ByteString
+
+deriving instance (InstructionConstraints arch) => Show (Chunk arch)
+
+chunkAddress :: Chunk arch -> ConcreteAddress arch
+chunkAddress c =
+  case c of
+    BlockChunk b -> basicBlockAddress b
+    RawChunk addr _ -> addr
+
+chunkSize :: ISA arch -> Chunk arch -> Word64
+chunkSize isa c =
+  case c of
+    BlockChunk b -> concreteBlockSize isa b
+    RawChunk _ b -> fromIntegral (B.length b)
 
 data AssembleState arch =
   AssembleState { asTextStart :: ConcreteAddress arch
@@ -422,11 +471,11 @@ data AssembleState arch =
                 -- expected to be contiguous.
                 , asAssemble :: Instruction arch () -> Either C.SomeException B.ByteString
                 -- ^ The assembler to turn instructions into bytes
-                , _asOrigBlocks :: [ConcreteBlock arch]
+                , _asOrigChunks :: [Chunk arch]
                 -- ^ The blocks remaining to process. These must be ordered by
                 -- address and will go into the original address space of the
                 -- binary.
-                , _asAllocatedBlocks :: [ConcreteBlock arch]
+                , _asAllocatedChunks :: [Chunk arch]
                 -- ^ The blocks remaining to process. These must be ordered by
                 -- address but their addresses are outside the range of the
                 -- original binary and must be allocated in a new part of the
@@ -440,11 +489,11 @@ data AssembleState arch =
                 , asInstructionConstraints :: forall a. (InstructionConstraints arch => a) -> a
                 }
 
-asOrigBlocks :: L.Lens' (AssembleState arch) [ConcreteBlock arch]
-asOrigBlocks = L.lens _asOrigBlocks (\as bs -> as { _asOrigBlocks = bs })
+asOrigChunks :: L.Lens' (AssembleState arch) [Chunk arch]
+asOrigChunks = L.lens _asOrigChunks (\as bs -> as { _asOrigChunks = bs })
 
-asAllocatedBlocks :: L.Lens' (AssembleState arch) [ConcreteBlock arch]
-asAllocatedBlocks = L.lens _asAllocatedBlocks (\as bs -> as { _asAllocatedBlocks = bs })
+asAllocatedChunks :: L.Lens' (AssembleState arch) [Chunk arch]
+asAllocatedChunks = L.lens _asAllocatedChunks (\as bs -> as { _asAllocatedChunks = bs })
 
 withInstructionConstraints :: Monad m => (InstructionConstraints arch => Assembler arch m a) -> Assembler arch m a
 withInstructionConstraints act = do

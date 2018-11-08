@@ -47,12 +47,11 @@ import           Renovate.Arch.X86_64.Internal ( Value, Instruction, TargetAddre
 --
 -- This configuration is actually specific to Linux due to the system
 -- call personality.
-config :: R.Analyze X86.X86_64 binFmt a
-       -- ^ An analysis that produces a summary result to be passed into the rewriter
-       -> R.Rewrite X86.X86_64 binFmt a
-       -- ^ A rewriting action
-       -> R.RenovateConfig X86.X86_64 binFmt a
-config analysis rewriter = R.RenovateConfig
+config :: callbacks X86.X86_64 binFmt a
+       -- ^ An analysis (or analysis + rewriter) to be invoked by renovate on a
+       -- binary.  It should be either 'R.AnalyzeOnly' or 'R.AnalyzeAndRewrite'.
+       -> R.RenovateConfig X86.X86_64 binFmt callbacks a
+config analysis = R.RenovateConfig
   { R.rcISA           = isa
   , R.rcABI           = abi
   , R.rcArchInfo      = const X86.x86_64_linux_info
@@ -61,7 +60,6 @@ config analysis rewriter = R.RenovateConfig
   , R.rcBlockCallback = Nothing
   , R.rcFunctionCallback = Nothing
   , R.rcAnalysis      = analysis
-  , R.rcRewriter      = rewriter
   , R.rcUpdateSymbolTable = True
   -- See Note [Layout Addresses]
   , R.rcCodeLayoutBase = 0x800000

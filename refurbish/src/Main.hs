@@ -110,10 +110,10 @@ main = O.execParser optParser >>= mainWithOptions
 mainWithOptions :: Options -> IO ()
 mainWithOptions o = do
   bytes <- BS.readFile (oInput o)
-  let configs :: [(R.Architecture, R.SomeConfig R.TrivialConfigConstraint (Const ()))]
-      configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analyze rewrite))
-                , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analyze rewrite))
-                , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analyze rewrite))
+  let configs :: [(R.Architecture, R.SomeConfig R.TrivialConfigConstraint R.AnalyzeAndRewrite (Const ()))]
+      configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analysis))
+                , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
+                , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))
                 ]
   hdlAlloc <- C.newHandleAllocator
   case E.parseElf bytes of
@@ -438,16 +438,12 @@ withHandleWhen mf k =
       | fn == "-" -> k IO.stdout
       | otherwise -> IO.withFile fn IO.WriteMode k
 
--- | Trivial no-op analysis
-analyze :: R.AnalyzeEnv arch -> MBL.LoadedBinary arch binFmt -> IO (Const () arch)
-analyze _ _ = return (Const ())
-
--- | Trivial rewriting that changes no instructions, but causes all eligible blocks to be relocated
-rewrite :: Const () arch
-        -> MBL.LoadedBinary arch binFmt
-        -> R.SymbolicBlock arch
-        -> R.RewriteM arch (Maybe [R.TaggedInstruction arch (R.InstructionAnnotation arch)])
-rewrite _ _ b = return (Just (R.basicBlockInstructions b))
+analysis :: R.AnalyzeAndRewrite arch binFmt (Const ())
+analysis =
+  R.AnalyzeAndRewrite { R.arAnalyze = \_ _ -> return (Const ())
+                      , R.arInitializeRewriter = \_ _ _ -> return (Const ())
+                      , R.arRewrite = \_ _ _ b -> return (Just (R.basicBlockInstructions b))
+                      }
 
 -- | Format a 'R.ConcreteBlock' to the given 'IO.Handle'
 printOutputBlock :: (Monad m, R.InstructionConstraints arch)
