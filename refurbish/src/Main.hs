@@ -110,7 +110,7 @@ main = O.execParser optParser >>= mainWithOptions
 mainWithOptions :: Options -> IO ()
 mainWithOptions o = do
   bytes <- BS.readFile (oInput o)
-  let configs :: [(R.Architecture, R.SomeConfig R.TrivialConfigConstraint R.AnalyzeAndRewrite (Const ()))]
+  let configs :: [(R.Architecture, R.SomeConfig R.AnalyzeAndRewrite (Const ()))]
       configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analysis))
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))

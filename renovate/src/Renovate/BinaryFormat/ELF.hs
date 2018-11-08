@@ -115,12 +115,11 @@ pageAlignment = 0x1000
 withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
               -- ^ The ELF file to analyze
-              -> [(Arch.Architecture, SomeConfig c callbacks b)]
+              -> [(Arch.Architecture, SomeConfig callbacks b)]
               -> (forall arch . (R.ArchBits arch,
                                   MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch)),
                                   E.ElfWidthConstraints (MM.ArchAddrWidth arch),
-                                  B.InstructionConstraints arch,
-                                  c arch b)
+                                  B.InstructionConstraints arch)
                                    => RenovateConfig arch (E.Elf (MM.ArchAddrWidth arch)) callbacks b
                                    -> E.Elf (MM.ArchAddrWidth arch)
                                    -> MBL.LoadedBinary arch (E.Elf (MM.ArchAddrWidth arch))

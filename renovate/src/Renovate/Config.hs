@@ -17,7 +17,6 @@ module Renovate.Config (
   AnalyzeAndRewrite(..),
   RenovateConfig(..),
   SomeConfig(..),
-  TrivialConfigConstraint,
   compose,
   identity,
   nop
@@ -47,24 +46,21 @@ import qualified Renovate.Rewrite as RW
 -- necessary class dictionaries. The 'SomeConfig' is parameterized by
 -- a constraint @c@ over the hidden 'RenovateConfig' params and a result type @b@.
 --
--- * The constraint @c@ supports exposing information about the hidden params, or
---   bundling up other functionality via a type class.
+-- * The @callbacks@ type is used to tell renovate whether it is running a code
+--   analysis ('AnalyzeOnly') or a combined analysis + rewriting pass
+--   ('AnalyzeAndRewrite').
 --
 -- * The result type @b@ is the type of results of the pre-rewriting analysis
 --   pass.  It is parameterized by the architecture of the analysis in such a
 --   way that there can be a list of 'SomeConfig' while still containing
 --   architecture-parameterized data (where the architecture is hidden by the
 --   existential).
-data SomeConfig c callbacks (b :: * -> *) = forall arch binFmt
+data SomeConfig callbacks (b :: * -> *) = forall arch binFmt
                   . (B.InstructionConstraints arch,
                      R.ArchBits arch,
-                     MBL.BinaryLoader arch binFmt,
-                     c arch b)
+                     MBL.BinaryLoader arch binFmt
+                    )
                   => SomeConfig (NR.NatRepr (MM.ArchAddrWidth arch)) (MBL.BinaryRepr binFmt) (RenovateConfig arch binFmt callbacks b)
-
--- | A trivial constraint for use with 'SomeConfig'.
-class TrivialConfigConstraint arch b
-instance TrivialConfigConstraint arch b
 
 data AnalysisEnv arch =
   AnalysisEnv { aeMemory :: MM.Memory (MM.ArchAddrWidth arch)

@@ -19,7 +19,6 @@ module Renovate
 ( -- * Configuration
   Arch.Architecture(..),
   C.SomeConfig(..),
-  C.TrivialConfigConstraint,
   LB.LayoutStrategy(..),
   LB.CompactOrdering(..),
   C.AnalyzeOnly(..),
