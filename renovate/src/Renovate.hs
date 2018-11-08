@@ -64,20 +64,16 @@ module Renovate
   A.addressAddOffset,
   A.addressDiff,
   -- * Analysis
-  C.Analyze,
-  C.AnalyzeEnv(..),
   -- ** Function Recovery
   FR.recoverFunctions,
   FR.Completion(..),
   FR.FunctionCFG(..),
   -- * Rewriting API
-  C.Rewrite,
   RW.RewriteM,
-  RW.RewriteEnv(..),
   RW.BlockCFGIndex,
   RW.mkRewriteEnv,
   RW.recordRewrite,
-  RW.lookupGlobalVar,
+  RW.injectFunction,
   RW.newGlobalVar,
   RW.lookupEntryAddress,
   RW.lookupBlockCFG,

@@ -12,13 +12,17 @@ module Renovate.Redirect.LayoutBlocks.Types (
   AddressAssignedPair(..),
   ConcretePair(..),
   Status(..),
+  Layout(..),
   RandomSeed
   ) where
 
+import qualified Data.ByteString as BS
 import qualified Data.Vector.Unboxed as V
 import           Data.Word ( Word32 )
-import           Renovate.BasicBlock
 import qualified Data.Text.Prettyprint.Doc as PD
+
+import           Renovate.Address ( ConcreteAddress )
+import           Renovate.BasicBlock
 
 -- | A type for selecting the strategy for laying out basic blocks in rewritten
 -- binaries.
@@ -44,6 +48,14 @@ data CompactOrdering
   = SortedOrder            -- ^ Sort by block size
   | RandomOrder RandomSeed -- ^ seed for the randomization
   deriving (Read, Show, Eq, Ord)
+
+
+data Layout pair arch =
+  Layout { programBlockLayout :: [pair arch]
+         , layoutPaddingBlocks :: [ConcreteBlock arch]
+         , injectedBlockLayout :: [(ConcreteAddress arch, BS.ByteString)]
+         }
+
 
 -- | A layout pair allows us to track original blocks and their (maybe)
 -- rewritten version. The status field tells us if the block was actually

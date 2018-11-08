@@ -99,8 +99,9 @@ assembleBlocks :: (L.HasCallStack, C.MonadThrow m, InstructionConstraints arch)
                -> (forall m' . (C.MonadThrow m') => Instruction arch () -> m' B.ByteString)
                -- ^ A function to assemble a single instruction to bytes
                -> [ConcreteBlock arch]
+               -> [(ConcreteAddress arch, B.ByteString)]
                -> m (B.ByteString, B.ByteString)
-assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble blocks = do
+assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble blocks injectedCode = do
   s1 <- St.execStateT (unA assembleDriver) s0
   return (fromBuilder (asTextSection s1), fromBuilder (asExtraText s1))
   where

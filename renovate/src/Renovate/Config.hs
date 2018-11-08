@@ -9,9 +9,12 @@
 {-# LANGUAGE RankNTypes #-}
 -- | Internal helpers for the ELF rewriting interface
 module Renovate.Config (
-  Analyze,
-  Rewrite,
-  AnalyzeEnv(..),
+  HasAnalysisEnv(..),
+  HasSymbolicBlockMap(..),
+  AnalysisEnv(..),
+  RewriterAnalysisEnv(..),
+  AnalyzeOnly(..),
+  AnalyzeAndRewrite(..),
   RenovateConfig(..),
   SomeConfig(..),
   TrivialConfigConstraint,
@@ -52,16 +55,62 @@ import qualified Renovate.Rewrite as RW
 --   way that there can be a list of 'SomeConfig' while still containing
 --   architecture-parameterized data (where the architecture is hidden by the
 --   existential).
-data SomeConfig c (b :: * -> *) = forall arch binFmt
+data SomeConfig c callbacks (b :: * -> *) = forall arch binFmt
                   . (B.InstructionConstraints arch,
                      R.ArchBits arch,
                      MBL.BinaryLoader arch binFmt,
                      c arch b)
-                  => SomeConfig (NR.NatRepr (MM.ArchAddrWidth arch)) (MBL.BinaryRepr binFmt) (RenovateConfig arch binFmt b)
+                  => SomeConfig (NR.NatRepr (MM.ArchAddrWidth arch)) (MBL.BinaryRepr binFmt) (RenovateConfig arch binFmt callbacks b)
 
 -- | A trivial constraint for use with 'SomeConfig'.
 class TrivialConfigConstraint arch b
 instance TrivialConfigConstraint arch b
+
+data AnalysisEnv arch =
+  AnalysisEnv { aeMemory :: MM.Memory (MM.ArchAddrWidth arch)
+              , aeBlockInfo :: R.BlockInfo arch
+              , aeISA :: ISA.ISA arch
+              , aeABI :: ABI.ABI arch
+              }
+
+data RewriterAnalysisEnv arch =
+  RewriterAnalysisEnv { raeEnv :: AnalysisEnv arch
+                      , raeSymBlockMap :: Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
+                      }
+
+instance HasAnalysisEnv AnalysisEnv where
+  analysisMemory = aeMemory
+  analysisBlockInfo = aeBlockInfo
+  analysisISA = aeISA
+  analysisABI = aeABI
+
+instance HasAnalysisEnv RewriterAnalysisEnv where
+  analysisMemory = aeMemory . raeEnv
+  analysisBlockInfo = aeBlockInfo . raeEnv
+  analysisISA = aeISA . raeEnv
+  analysisABI = aeABI . raeEnv
+
+instance HasSymbolicBlockMap RewriterAnalysisEnv where
+  getSymbolicBlockMap = raeSymBlockMap
+
+class HasAnalysisEnv env where
+  analysisMemory :: env arch -> MM.Memory (MM.ArchAddrWidth arch)
+  analysisBlockInfo :: env arch -> R.BlockInfo arch
+  analysisISA :: env arch -> ISA.ISA arch
+  analysisABI :: env arch -> ABI.ABI arch
+
+class HasSymbolicBlockMap env where
+  getSymbolicBlockMap :: env arch -> Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
+
+data AnalyzeOnly arch binFmt b =
+  AnalyzeOnly { aoAnalyze :: forall env . (HasAnalysisEnv env) => env arch -> MBL.LoadedBinary arch binFmt -> IO (b arch) }
+
+data AnalyzeAndRewrite arch binFmt b =
+  forall rewriterState .
+  AnalyzeAndRewrite { arAnalyze :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch -> MBL.LoadedBinary arch binFmt -> IO (b arch)
+                    , arInitializeRewriter :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch -> b arch -> MBL.LoadedBinary arch binFmt -> RW.RewriteM arch (rewriterState arch)
+                    , arRewrite :: b arch -> rewriterState arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+                    }
 
 -- | The configuration required for a run of the binary rewriter.
 --
@@ -77,8 +126,10 @@ instance TrivialConfigConstraint arch b
 -- The type parameters are as follows:
 --
 -- * @arch@ the architecture type tag for the architecture
+-- * @binFmt@ is the format of the binary loaded (e.g., ELF, Mach-O)
+-- * @callbacks@ is the type of the callback in the configuration (the analysis only frontend and the analysis+rewriter frontend have different callback types)
 -- * @b@ (which is applied to @arch@) the type of analysis results produced by the analysis and passed to the rewriter
-data RenovateConfig arch binFmt (b :: * -> *) = RenovateConfig
+data RenovateConfig arch binFmt callbacks (b :: * -> *) = RenovateConfig
   { rcISA           :: ISA.ISA arch
   , rcABI           :: ABI.ABI arch
   , rcArchInfo      :: MBL.LoadedBinary arch binFmt -> MM.ArchitectureInfo arch
@@ -94,10 +145,8 @@ data RenovateConfig arch binFmt (b :: * -> *) = RenovateConfig
   -- recovery info (a summary of the information returned by
   -- macaw).  The 'Int' is the number of iterations before
   -- calling the function callback.
-  , rcAnalysis      :: Analyze arch binFmt b
-  -- ^ An analysis to run over the code discovered by macaw, generating a summary of type @b@
-  , rcRewriter      :: Rewrite arch binFmt b
-  -- ^ A rewriting pass to run over each basic block
+  , rcAnalysis      :: callbacks arch binFmt b
+  -- ^ Caller-specified analysis (and possibly rewriter) to apply to the binary
   , rcCodeLayoutBase :: Word64
   -- ^ The base address to start laying out new code
   , rcDataLayoutBase :: Word64
@@ -114,23 +163,23 @@ data RenovateConfig arch binFmt (b :: * -> *) = RenovateConfig
 --
 -- The motivation for analysis being in IO is to allow SFE to call out
 -- to external tools, such as ILP solvers.
-type Analyze arch binFmt b = AnalyzeEnv arch -> MBL.LoadedBinary arch binFmt -> IO (b arch)
--- | The type of 'rcRewriter'.
-type Rewrite arch binFmt b = b arch
-                          -> MBL.LoadedBinary arch binFmt
-                          -> B.SymbolicBlock arch
-                          -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+-- type Analyze arch binFmt b = AnalyzeEnv arch -> MBL.LoadedBinary arch binFmt -> IO (b arch)
+-- -- | The type of 'rcRewriter'.
+-- type Rewrite arch binFmt b = b arch
+--                           -> MBL.LoadedBinary arch binFmt
+--                           -> B.SymbolicBlock arch
+--                           -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
 
 -- | Environment for 'rcAnalysis'.
-data AnalyzeEnv arch =
-  AnalyzeEnv { aeRewriteEnv :: RW.RewriteEnv arch
-             , aeSymbolicBlockMap :: Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
-               -- ^ Mapping from concrete addresses to corresponding
-               -- symbolic blocks.
-             , aeRunRewriteM :: forall a. RW.RewriteM arch a -> (a, RW.RewriteInfo arch)
-               -- ^ Runner for 'RW.RewriteM' computations, provided
-               -- for simulating transforms at analysis time.
-             }
+-- data AnalyzeEnv arch =
+--   AnalyzeEnv { aeRewriteEnv :: RW.RewriteEnv arch
+--              , aeSymbolicBlockMap :: Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
+--                -- ^ Mapping from concrete addresses to corresponding
+--                -- symbolic blocks.
+--              , aeRunRewriteM :: forall a. RW.RewriteM arch a -> (a, RW.RewriteInfo arch)
+--                -- ^ Runner for 'RW.RewriteM' computations, provided
+--                -- for simulating transforms at analysis time.
+--              }
 
 -- | Compose a list of instrumentation functions into a single
 -- function suitable for use as an argument to 'redirect'
@@ -152,10 +201,10 @@ compose funcs = go funcs
 
 -- | An identity rewriter (i.e., a rewriter that makes no changes, but forces
 -- everything to be redirected).
-identity :: Rewrite arch binFmt b
-identity _ _ sb = return $! Just (B.basicBlockInstructions sb)
+identity :: b arch -> rewriterState arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+identity _ _ _ sb = return $! Just (B.basicBlockInstructions sb)
 
 -- | A basic block rewriter that leaves a block untouched, preventing the
 -- rewriter from trying to relocate it.
-nop :: Rewrite arch binFmt b
-nop _ _ _ = return Nothing
+nop :: b arch -> rewriterState arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+nop _ _ _ _ = return Nothing
