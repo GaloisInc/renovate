@@ -62,26 +62,26 @@ data SomeConfig callbacks (b :: * -> *) = forall arch binFmt
                     )
                   => SomeConfig (NR.NatRepr (MM.ArchAddrWidth arch)) (MBL.BinaryRepr binFmt) (RenovateConfig arch binFmt callbacks b)
 
-data AnalysisEnv arch =
-  AnalysisEnv { aeMemory :: MM.Memory (MM.ArchAddrWidth arch)
+data AnalysisEnv arch binFmt =
+  AnalysisEnv { aeLoadedBinary :: MBL.LoadedBinary arch binFmt
               , aeBlockInfo :: R.BlockInfo arch
               , aeISA :: ISA.ISA arch
               , aeABI :: ABI.ABI arch
               }
 
-data RewriterAnalysisEnv arch =
-  RewriterAnalysisEnv { raeEnv :: AnalysisEnv arch
+data RewriterAnalysisEnv arch binFmt =
+  RewriterAnalysisEnv { raeEnv :: AnalysisEnv arch binFmt
                       , raeSymBlockMap :: Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
                       }
 
 instance HasAnalysisEnv AnalysisEnv where
-  analysisMemory = aeMemory
+  analysisLoadedBinary = aeLoadedBinary
   analysisBlockInfo = aeBlockInfo
   analysisISA = aeISA
   analysisABI = aeABI
 
 instance HasAnalysisEnv RewriterAnalysisEnv where
-  analysisMemory = aeMemory . raeEnv
+  analysisLoadedBinary = aeLoadedBinary . raeEnv
   analysisBlockInfo = aeBlockInfo . raeEnv
   analysisISA = aeISA . raeEnv
   analysisABI = aeABI . raeEnv
@@ -90,22 +90,22 @@ instance HasSymbolicBlockMap RewriterAnalysisEnv where
   getSymbolicBlockMap = raeSymBlockMap
 
 class HasAnalysisEnv env where
-  analysisMemory :: env arch -> MM.Memory (MM.ArchAddrWidth arch)
-  analysisBlockInfo :: env arch -> R.BlockInfo arch
-  analysisISA :: env arch -> ISA.ISA arch
-  analysisABI :: env arch -> ABI.ABI arch
+  analysisLoadedBinary :: env arch binFmt -> MBL.LoadedBinary arch binFmt
+  analysisBlockInfo :: env arch binFmt  -> R.BlockInfo arch
+  analysisISA :: env arch binFmt -> ISA.ISA arch
+  analysisABI :: env arch binFmt -> ABI.ABI arch
 
 class HasSymbolicBlockMap env where
-  getSymbolicBlockMap :: env arch -> Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
+  getSymbolicBlockMap :: env arch binFmt -> Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
 
 data AnalyzeOnly arch binFmt b =
-  AnalyzeOnly { aoAnalyze :: forall env . (HasAnalysisEnv env) => env arch -> MBL.LoadedBinary arch binFmt -> IO (b arch) }
+  AnalyzeOnly { aoAnalyze :: forall env . (HasAnalysisEnv env) => env arch binFmt -> IO (b arch) }
 
 data AnalyzeAndRewrite arch binFmt b =
   forall rewriterState .
-  AnalyzeAndRewrite { arAnalyze :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch -> MBL.LoadedBinary arch binFmt -> IO (b arch)
-                    , arInitializeRewriter :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch -> b arch -> MBL.LoadedBinary arch binFmt -> RW.RewriteM arch (rewriterState arch)
-                    , arRewrite :: b arch -> rewriterState arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+  AnalyzeAndRewrite { arAnalyze :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> IO (b arch)
+                    , arInitializeRewriter :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> b arch -> RW.RewriteM arch (rewriterState arch)
+                    , arRewrite :: b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
                     }
 
 -- | The configuration required for a run of the binary rewriter.
@@ -154,28 +154,6 @@ data RenovateConfig arch binFmt callbacks (b :: * -> *) = RenovateConfig
   -- do it there.  Long term, we want to figure out how to update
   -- PowerPC safely.
   }
-
--- | The type of 'rcAnalysis'.
---
--- The motivation for analysis being in IO is to allow SFE to call out
--- to external tools, such as ILP solvers.
--- type Analyze arch binFmt b = AnalyzeEnv arch -> MBL.LoadedBinary arch binFmt -> IO (b arch)
--- -- | The type of 'rcRewriter'.
--- type Rewrite arch binFmt b = b arch
---                           -> MBL.LoadedBinary arch binFmt
---                           -> B.SymbolicBlock arch
---                           -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
-
--- | Environment for 'rcAnalysis'.
--- data AnalyzeEnv arch =
---   AnalyzeEnv { aeRewriteEnv :: RW.RewriteEnv arch
---              , aeSymbolicBlockMap :: Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
---                -- ^ Mapping from concrete addresses to corresponding
---                -- symbolic blocks.
---              , aeRunRewriteM :: forall a. RW.RewriteM arch a -> (a, RW.RewriteInfo arch)
---                -- ^ Runner for 'RW.RewriteM' computations, provided
---                -- for simulating transforms at analysis time.
---              }
 
 -- | Compose a list of instrumentation functions into a single
 -- function suitable for use as an argument to 'redirect'

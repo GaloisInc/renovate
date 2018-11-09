@@ -440,9 +440,9 @@ withHandleWhen mf k =
 
 analysis :: R.AnalyzeAndRewrite arch binFmt (Const ())
 analysis =
-  R.AnalyzeAndRewrite { R.arAnalyze = \_ _ -> return (Const ())
-                      , R.arInitializeRewriter = \_ _ _ -> return (Const ())
-                      , R.arRewrite = \_ _ _ b -> return (Just (R.basicBlockInstructions b))
+  R.AnalyzeAndRewrite { R.arAnalyze = \_ -> return (Const ())
+                      , R.arInitializeRewriter = \_ _ -> return (Const ())
+                      , R.arRewrite = \_ _ b -> return (Just (R.basicBlockInstructions b))
                       }
 
 -- | Format a 'R.ConcreteBlock' to the given 'IO.Handle'

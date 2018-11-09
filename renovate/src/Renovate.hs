@@ -1,8 +1,10 @@
 -- | Renovate provides an interface for analyzing and rewriting binaries.
 --
--- Rewriting actions are specified through the 'C.Rewriter' record; callers must
--- provide a different rewriting backend for each architecture they need to
--- support.
+-- The library interface is primarily through up-front configurations that
+-- specify analysis and rewriting actions; renovate itself handles selecting the
+-- correct configuration for the binary it is given.  For many use cases, the
+-- same analysis can be used across multiple instruction set architectures
+-- (ISAs).  Rewriting passes are generally architecture-specific.
 --
 -- The current interface allows for rewriting binaries in ELF format.  In the
 -- future, other backends will be added, along with a binary format agnostic

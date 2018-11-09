@@ -205,7 +205,7 @@ analyzeElf cfg hdlAlloc e loadedBinary = do
     textSection <- withCurrentELF findTextSection
     let textRange = sectionAddressRange textSection
     withAnalysisEnv cfg hdlAlloc loadedBinary symmap textRange $ \env -> do
-      IO.liftIO (aoAnalyze (rcAnalysis cfg) env loadedBinary)
+      IO.liftIO (aoAnalyze (rcAnalysis cfg) env)
   return (b, ri ^. riBlockRecoveryDiagnostics)
 
 withElf :: E.SomeElf E.Elf -> (forall w . E.Elf w -> a) -> a
@@ -816,9 +816,9 @@ instrumentTextSection :: forall w arch binFmt b
                       -> ElfRewriter arch (b arch, B.ByteString, B.ByteString, Maybe B.ByteString, RE.NewSymbolsMap arch, [(RE.ConcreteAddress arch, RE.ConcreteAddress arch)])
 instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartAddr, textSectionEndAddr) textBytes strat layoutAddr newGlobalBase symmap = do
   withAnalysisEnv cfg hdlAlloc loadedBinary symmap textAddrRange $ \aenv -> do
-    let isa = aeISA aenv
-    let mem = aeMemory aenv
-    let blockInfo = aeBlockInfo aenv
+    let isa = analysisISA aenv
+    let mem = MBL.memoryImage (analysisLoadedBinary aenv)
+    let blockInfo = analysisBlockInfo aenv
     let blocks = L.sortBy (O.comparing RE.basicBlockAddress) (R.biBlocks blockInfo)
     let (symAlloc1, baseSymBlocks) = RS.symbolizeBasicBlocks isa mem RS.symbolicAddressAllocator blocks
     let symbolicBlockMap = Map.fromList [ (RE.basicBlockAddress cb, sb)
@@ -832,19 +832,19 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
         (entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
         let Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
         let cfgs = FR.recoverFunctions isa mem blockInfo
-        let internalRwEnv = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo isa (aeABI aenv) hdlAlloc
+        let internalRwEnv = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo isa (analysisABI aenv) hdlAlloc
         -- For the combined analysis and rewriter pass, we first run the
         -- analysis to produce a global analysis result.  We then pass that to
         -- an initialization function (provided by the caller) that can do some
         -- rewriter-specific initialization based on the analysis result (e.g.,
         -- allocating new global variable storage).  Finally, we pass both the
         -- analysis result and setup value to the actual rewriter.
-        analysisResult <- IO.liftIO (analyze rae loadedBinary)
+        analysisResult <- IO.liftIO (analyze rae)
         let ((eBlocks, r1), info) = RW.runRewriteM internalRwEnv newGlobalBase symAlloc1 $ do
-              setupVal <- initRewriter rae analysisResult loadedBinary
+              setupVal <- initRewriter rae analysisResult
               injectedFunctions <- RW.getInjectedFunctions
               RE.runRewriterT isa mem symmap $ do
-                RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewrite analysisResult setupVal loadedBinary) mem strat layoutAddr baseSymBlocks injectedFunctions
+                RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewrite analysisResult setupVal) mem strat layoutAddr baseSymBlocks injectedFunctions
         (allBlocks, injected) <- extractOrThrowRewriterResult eBlocks r1
         let s1 = RE.rrState r1
         let newSyms = RE.rwsNewSymbolsMap s1
@@ -885,7 +885,7 @@ withAnalysisEnv :: forall w arch binFmt callbacks b a
                    -- ^ The memory space
                    -> RE.SymbolMap arch
                    -> (RA.ConcreteAddress arch, RA.ConcreteAddress arch)
-                   -> (AnalysisEnv arch -> ElfRewriter arch a)
+                   -> (AnalysisEnv arch binFmt -> ElfRewriter arch a)
                    -> ElfRewriter arch a
 withAnalysisEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
   let mem = MBL.memoryImage loadedBinary
@@ -901,7 +901,7 @@ withAnalysisEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
                             , R.recoveryFuncCallback = fmap (second ($ loadedBinary)) (rcFunctionCallback cfg)
                             }
   blockInfo <- IO.liftIO (R.recoverBlocks recovery mem symmap elfEntryPoints textAddrRange)
-  let env = AnalysisEnv { aeMemory = MBL.memoryImage loadedBinary
+  let env = AnalysisEnv { aeLoadedBinary = loadedBinary
                         , aeBlockInfo = blockInfo
                         , aeISA = isa
                         , aeABI = abi
