@@ -10,6 +10,7 @@ module Renovate.Rewrite (
   BlockCFGIndex,
   mkRewriteEnv,
   runRewriteM,
+  rewriteIO,
   lookupBlockCFG,
   lookupEntryAddress,
   getInjectedFunctions,
@@ -20,6 +21,7 @@ module Renovate.Rewrite (
   recordRewrite
   ) where
 
+import qualified Control.Monad.Trans as MT
 import qualified Control.Monad.RWS.Strict as RWS
 import           Control.Monad.ST ( RealWorld )
 import qualified Data.ByteString as BS
@@ -91,12 +93,17 @@ data RewriteEnv arch = RewriteEnv
 type BlockCFGIndex arch = M.Map (A.ConcreteAddress arch) (S.Set (FR.FunctionCFG arch))
 
 -- | A monadic environment for binary rewriting
-newtype RewriteM arch a = RewriteM { unRewriteM :: RWS.RWS (RewriteEnv arch) () (RewriteInfo arch) a }
+newtype RewriteM arch a = RewriteM { unRewriteM :: RWS.RWST (RewriteEnv arch) () (RewriteInfo arch) IO a }
   deriving (Applicative,
             Functor,
             Monad,
             RWS.MonadReader (RewriteEnv arch),
             RWS.MonadState (RewriteInfo arch))
+
+-- | This is a separate function instead of a 'MonadIO' instance so that we can
+-- use it internally, but not export it to the user at all.
+rewriteIO :: IO a -> RewriteM arch a
+rewriteIO a = RewriteM (MT.lift a)
 
 -- | Make a mapping from block addresses to their CFGs.
 mkBlockCFGIndex :: [FR.FunctionCFG arch] -> BlockCFGIndex arch
@@ -137,10 +144,11 @@ runRewriteM :: RewriteEnv arch
             -- ^ A symbolic address allocator for injected functions
             -> RewriteM arch a
             -- ^ The rewriting action to run
-            -> (a, RewriteInfo arch)
-runRewriteM env newGlobalBase symAlloc i = (res, st)
+            -> IO (a, RewriteInfo arch)
+runRewriteM env newGlobalBase symAlloc i = do
+  (res, st, _) <- RWS.runRWST (unRewriteM i) env emptyInfo
+  return (res, st)
   where
-    (res, st, _) = RWS.runRWS (unRewriteM i) env emptyInfo
     emptyInfo = RewriteInfo { infoSites = []
                             , newGlobals = M.empty
                             , nextGlobalAddress = newGlobalBase

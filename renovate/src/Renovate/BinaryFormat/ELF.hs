@@ -828,7 +828,7 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
                                   , raeSymBlockMap = symbolicBlockMap
                                   }
     case rcAnalysis cfg of
-      AnalyzeAndRewrite { arAnalyze = analyze, arInitializeRewriter = initRewriter, arRewrite = rewrite } -> do
+      AnalyzeAndRewrite preAnalyze analyze preRewrite rewrite -> do
         (entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
         let Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
         let cfgs = FR.recoverFunctions isa mem blockInfo
@@ -839,13 +839,16 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
         -- rewriter-specific initialization based on the analysis result (e.g.,
         -- allocating new global variable storage).  Finally, we pass both the
         -- analysis result and setup value to the actual rewriter.
-        analysisResult <- IO.liftIO (analyze rae)
-        let ((eBlocks, r1), info) = RW.runRewriteM internalRwEnv newGlobalBase symAlloc1 $ do
-              setupVal <- initRewriter rae analysisResult
-              injectedFunctions <- RW.getInjectedFunctions
-              RE.runRewriterT isa mem symmap $ do
-                RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewrite rae analysisResult setupVal) mem strat layoutAddr baseSymBlocks injectedFunctions
-        (allBlocks, injected) <- extractOrThrowRewriterResult eBlocks r1
+        let runrw k = IO.liftIO (RW.runRewriteM internalRwEnv newGlobalBase symAlloc1 k)
+        ((eBlocks, r1), info) <- runrw $ do
+          preAnalysisResult <- preAnalyze rae
+          analysisResult <- RW.rewriteIO (analyze rae preAnalysisResult)
+          setupVal <- preRewrite rae analysisResult
+          injectedFunctions <- RW.getInjectedFunctions
+          RE.runRewriterT isa mem symmap $ do
+            r <- RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewrite rae analysisResult setupVal) mem strat layoutAddr baseSymBlocks injectedFunctions
+            return (analysisResult, r)
+        (analysisResult, (allBlocks, injected)) <- extractOrThrowRewriterResult eBlocks r1
         let s1 = RE.rrState r1
         let newSyms = RE.rwsNewSymbolsMap s1
         riRedirectionDiagnostics L..= F.toList (RD.diagnosticMessages $ RE.rrDiagnostics r1)

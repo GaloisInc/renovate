@@ -79,7 +79,8 @@ testRewriter hdlAlloc strat rc e loadedBinary = do
 
 analysis :: R.AnalyzeAndRewrite arch binFmt (Const ())
 analysis =
-  R.AnalyzeAndRewrite { R.arAnalyze = \_ -> return (Const ())
-                      , R.arInitializeRewriter = \_ _ -> return (Const ())
+  R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
+                      , R.arAnalyze = \_ _ -> return (Const ())
+                      , R.arPreRewrite = \_ _ -> return (Const ())
                       , R.arRewrite = \_ _ _ b -> return (Just (R.basicBlockInstructions b))
                       }
