@@ -105,7 +105,7 @@ data AnalyzeAndRewrite arch binFmt b =
   forall rewriterState .
   AnalyzeAndRewrite { arAnalyze :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> IO (b arch)
                     , arInitializeRewriter :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> b arch -> RW.RewriteM arch (rewriterState arch)
-                    , arRewrite :: b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+                    , arRewrite :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
                     }
 
 -- | The configuration required for a run of the binary rewriter.

@@ -844,7 +844,7 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
               setupVal <- initRewriter rae analysisResult
               injectedFunctions <- RW.getInjectedFunctions
               RE.runRewriterT isa mem symmap $ do
-                RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewrite analysisResult setupVal) mem strat layoutAddr baseSymBlocks injectedFunctions
+                RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewrite rae analysisResult setupVal) mem strat layoutAddr baseSymBlocks injectedFunctions
         (allBlocks, injected) <- extractOrThrowRewriterResult eBlocks r1
         let s1 = RE.rrState r1
         let newSyms = RE.rwsNewSymbolsMap s1
