@@ -322,7 +322,9 @@ x64SymbolizeAddresses :: MM.Memory 64
                       -> [R.TaggedInstruction X86.X86_64 TargetAddress]
 x64SymbolizeAddresses mem _lookup insnAddr mSymbolicTarget xi@(XI ii)
   | 'j' : _ <- D.iiOp ii = [R.tagInstruction mSymbolicTarget jmpInstr]
-  | 'c' : 'a' : 'l' : 'l' : _ <- D.iiOp ii = [R.tagInstruction mSymbolicTarget jmpInstr]
+  | 'c' : 'a' : 'l' : 'l' : _ <- D.iiOp ii
+  , [ AnnotatedOperand { aoOperand = (D.JumpOffset {}, _) } ] <- D.iiArgs ii
+  = [R.tagInstruction mSymbolicTarget jmpInstr]
   | otherwise = [R.tagInstruction mSymbolicTarget newInsn]
   where
     newInsn = XI (ii { D.iiArgs = fmap (saveAbsoluteRipAddresses mem insnAddr xi) (D.iiArgs ii) })
