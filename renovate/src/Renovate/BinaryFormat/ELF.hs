@@ -908,6 +908,7 @@ withAnalysisEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
                         , aeBlockInfo = blockInfo
                         , aeISA = isa
                         , aeABI = abi
+                        , aeHandleAllocator = hdlAlloc
                         }
   k env
 

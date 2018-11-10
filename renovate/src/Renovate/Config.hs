@@ -33,6 +33,7 @@ import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Architecture.Info as MM
 import qualified Data.Macaw.CFG as MM
+import qualified Lang.Crucible.FunctionHandle as C
 
 import qualified Renovate.Address as RA
 import qualified Renovate.BasicBlock as B
@@ -67,6 +68,7 @@ data AnalysisEnv arch binFmt =
               , aeBlockInfo :: R.BlockInfo arch
               , aeISA :: ISA.ISA arch
               , aeABI :: ABI.ABI arch
+              , aeHandleAllocator :: C.HandleAllocator RealWorld
               }
 
 data RewriterAnalysisEnv arch binFmt =
@@ -79,12 +81,14 @@ instance HasAnalysisEnv AnalysisEnv where
   analysisBlockInfo = aeBlockInfo
   analysisISA = aeISA
   analysisABI = aeABI
+  analysisHandleAllocator = aeHandleAllocator
 
 instance HasAnalysisEnv RewriterAnalysisEnv where
   analysisLoadedBinary = aeLoadedBinary . raeEnv
   analysisBlockInfo = aeBlockInfo . raeEnv
   analysisISA = aeISA . raeEnv
   analysisABI = aeABI . raeEnv
+  analysisHandleAllocator = aeHandleAllocator . raeEnv
 
 instance HasSymbolicBlockMap RewriterAnalysisEnv where
   getSymbolicBlockMap = raeSymBlockMap
@@ -94,6 +98,7 @@ class HasAnalysisEnv env where
   analysisBlockInfo :: env arch binFmt  -> R.BlockInfo arch
   analysisISA :: env arch binFmt -> ISA.ISA arch
   analysisABI :: env arch binFmt -> ABI.ABI arch
+  analysisHandleAllocator :: env arch binFmt -> C.HandleAllocator RealWorld
 
 class HasSymbolicBlockMap env where
   getSymbolicBlockMap :: env arch binFmt -> Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
