@@ -188,6 +188,7 @@ module Renovate
   RW.recordRewrite,
   RW.injectFunction,
   RW.newGlobalVar,
+  RW.getBlockIndex,
   RW.lookupEntryAddress,
   RW.lookupBlockCFG,
   RW.getABI,

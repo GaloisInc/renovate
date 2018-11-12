@@ -15,6 +15,7 @@ module Renovate.Rewrite (
   lookupEntryAddress,
   getInjectedFunctions,
   newGlobalVar,
+  getBlockIndex,
   getABI,
   getISA,
   injectFunction,
@@ -202,6 +203,10 @@ getABI = RWS.asks envABI
 -- | Get the ISA from environment.
 getISA :: RewriteM arch (ISA.ISA arch)
 getISA = RWS.asks envISA
+
+getBlockIndex :: RewriteM arch (BlockCFGIndex arch)
+getBlockIndex = RWS.asks envBlockCFGIndex
+
 
 -- | Look up the unique CFG for the function containing the given 'SymbolicBlock', if any.
 --
