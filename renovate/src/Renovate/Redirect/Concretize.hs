@@ -48,7 +48,7 @@ concretize :: (Monad m, T.Traversable t, InstructionConstraints arch)
            -- ^ The start address of the concretized (instrumented) blocks
            -> t (SymbolicPair arch)
            -> t (SymbolicAddress arch, BS.ByteString)
-           -> RewriterT arch m (Layout ConcretePair arch) -- ([ConcretePair arch], [ConcreteBlock arch])
+           -> RewriterT arch m (Layout ConcretePair arch)
 concretize strat startAddr blocks injectedCode = do
   -- First, build up a mapping of symbolic address to new concrete
   -- address

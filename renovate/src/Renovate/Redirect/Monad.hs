@@ -23,7 +23,6 @@ module Renovate.Redirect.Monad (
   RewriterResult(..),
   runRewriter,
   runRewriterT,
-  -- resumeRewriterT,
   throwError,
   logDiagnostic,
   askISA,
@@ -151,8 +150,6 @@ runRewriter isa mem symmap a =
 --
 -- It returns *all* diagnostics that occur before an exception is
 -- thrown.
---
--- FIXME: This needs the set of input additional blocks that are allocated symbolic addresses
 runRewriterT :: (Monad m)
              => ISA arch
              -> MM.Memory (MM.ArchAddrWidth arch)
@@ -163,20 +160,6 @@ runRewriterT isa mem symmap a = do
   let env = RewriterEnv isa mem symmap
   (r, s, w) <- RWS.runRWST (ET.runExceptT (unRewriterT a)) env initialState
   return (r, RewriterResult s w)
-
--- | Continue a 'RewriteT' computation using existing state and writer data.
--- resumeRewriterT  :: (Monad m)
---                  => ISA arch
---                  -> MM.Memory (MM.ArchAddrWidth arch)
---                  -> SymbolMap arch
---                  -> RewriterResult arch
---                  -> RewriterT arch m a
---                  -> m (Either E.SomeException a, RewriterResult arch)
--- resumeRewriterT isa mem symmap r0 a = do
---   let RewriterResult s0 w0 = r0
---   (a', s1, w1) <- RWS.runRWST (ET.runExceptT (unRewriterT a)) (RewriterEnv isa mem symmap) s0
---   let r1 = RewriterResult { rrState = s1, rrDiagnostics = w0 <> w1 }
---   return (a', r1)
 
 -- | Log a diagnostic in the 'RewriterT' monad
 logDiagnostic :: (Monad m) => Diagnostic -> RewriterT arch m ()

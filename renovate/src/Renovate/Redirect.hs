@@ -12,7 +12,6 @@ module Renovate.Redirect (
   -- * Rewriter Monad
   RM.runRewriter,
   RM.runRewriterT,
-  -- RM.resumeRewriterT,
   RM.Diagnostic(..),
   RM.RewriterResult(..),
   RM.RewriterState(..),
@@ -109,7 +108,6 @@ redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr baseS
          RM.recordIncompleteBlock
        return (SymbolicPair (LayoutPair cb sb Unmodified))
   layout <- concretize strat layoutAddr transformedBlocks injectedCode
-  -- (concretizedBlocks, paddingBlocks) <- concretize strat layoutAddr transformedBlocks
   let concretizedBlocks = programBlockLayout layout
   let paddingBlocks = layoutPaddingBlocks layout
   let injectedBlocks = injectedBlockLayout layout
