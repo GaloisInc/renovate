@@ -1,11 +1,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module Renovate.Redirect.LayoutBlocks.Compact (
+  Layout(..),
   compactLayout
   ) where
 
 import qualified GHC.Err.Located as L
 
+import qualified Data.ByteString as BS
 import           Data.Ord ( Down(..) )
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
@@ -46,8 +48,9 @@ compactLayout :: forall m t arch
               -- ^ Address to begin block layout of instrumented blocks
               -> LayoutStrategy
               -> t (SymbolicPair arch)
-              -> RewriterT arch m ([AddressAssignedPair arch], [ConcreteBlock arch])
-compactLayout startAddr strat blocks = do
+              -> t (SymbolicAddress arch, BS.ByteString)
+              -> RewriterT arch m (Layout AddressAssignedPair arch)
+compactLayout startAddr strat blocks injectedCode = do
   h0 <- if strat == Parallel -- the parallel strategy is now a special case of
                              -- compact. In particular, we avoid allocating
                              -- the heap and we avoid sorting the input
@@ -82,7 +85,7 @@ compactLayout startAddr strat blocks = do
 
   -- Allocate an address for each block (falling back to startAddr if the heap
   -- can't provide a large enough space).
-  (h1, symBlockAddrs) <- allocateSymbolicBlockAddresses startAddr h0 sortedBlocks
+  (h1, symBlockAddrs, injectedAddrs) <- allocateSymbolicBlockAddresses startAddr h0 sortedBlocks injectedCode
 
   -- Overwrite any leftover space with ISA-specific padding. This is not,
   -- strictly speaking, necessary; without it, the assembler will take bytes
@@ -109,7 +112,10 @@ compactLayout startAddr strat blocks = do
   -- That is critical.
   assignedPairs <- T.traverse (assignConcreteAddress symBlockAddrs) (F.toList blocks' ++ unmodifiedBlocks)
 
-  return (assignedPairs, paddingBlocks)
+  return Layout { programBlockLayout = assignedPairs
+                , layoutPaddingBlocks = paddingBlocks
+                , injectedBlockLayout = [ (caddr, bs) | (caddr, (_, bs)) <- M.elems injectedAddrs ]
+                }
   where
     bySize isa mem = Down . symbolicBlockSize isa mem startAddr
 
@@ -131,16 +137,23 @@ assignConcreteAddress assignedAddrs (SymbolicPair (LayoutPair cb sb Modified)) =
 assignConcreteAddress _ (SymbolicPair (LayoutPair cb sb Unmodified)) =
   return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock sb (basicBlockAddress cb)) Unmodified))
 
-allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
+allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch), F.Foldable t)
                                => ConcreteAddress arch
                                -> AddressHeap arch
                                -> [SymbolicBlock arch]
-                               -> RewriterT arch m (AddressHeap arch, M.Map (SymbolicInfo arch) (ConcreteAddress arch))
-allocateSymbolicBlockAddresses startAddr h0 blocksBySize = do
+                               -> t (SymbolicAddress arch, BS.ByteString)
+                               -> RewriterT arch m ( AddressHeap arch
+                                                   , M.Map (SymbolicInfo arch) (ConcreteAddress arch)
+                                                   , M.Map (SymbolicAddress arch) (ConcreteAddress arch, (SymbolicAddress arch, BS.ByteString))
+                                                   )
+allocateSymbolicBlockAddresses startAddr h0 blocksBySize injectedCode = do
   isa <- askISA
   mem <- askMem
-  (_, h1, m) <- F.foldlM (allocateBlockAddress isa mem) (startAddr, h0, M.empty) blocksBySize
-  return (h1, m)
+  let blockItemSize = symbolicBlockSize isa mem startAddr
+  let blockItemKey = basicBlockAddress
+  (nextStart, h1, m1) <- F.foldlM (allocateBlockAddress blockItemSize blockItemKey const) (startAddr, h0, M.empty) blocksBySize
+  (_, h2, m2) <- F.foldlM (allocateBlockAddress (fromIntegral . BS.length . snd) fst (,)) (nextStart, h1, M.empty) injectedCode
+  return (h2, m1, m2)
 
 -- | Allocate an address for the given symbolic block.
 --
@@ -152,13 +165,18 @@ allocateSymbolicBlockAddresses startAddr h0 blocksBySize = do
 -- Note that the 'SymbolicBlock' at this stage must have been augmented with its
 -- final unconditional jump to preserve fallthrough control flow (we rely on the
 -- size of the block to be correct).
-allocateBlockAddress :: (MM.MemWidth (MM.ArchAddrWidth arch), Monad m)
-                     => ISA arch
-                     -> MM.Memory (MM.ArchAddrWidth arch)
-                     -> (ConcreteAddress arch, AddressHeap arch, M.Map (SymbolicInfo arch) (ConcreteAddress arch))
-                     -> SymbolicBlock arch
-                     -> RewriterT arch m (ConcreteAddress arch, AddressHeap arch, M.Map (SymbolicInfo arch) (ConcreteAddress arch))
-allocateBlockAddress isa mem (newTextAddr, h, m) sb =
+--
+-- NOTE: This function is excessively parameterized so that we can assign
+-- addresses both to lists of concrete blocks and also injected code (which is
+-- just a bytestring instead of a basic block).
+allocateBlockAddress :: (MM.MemWidth (MM.ArchAddrWidth arch), Monad m, Ord key)
+                     => (item -> Word64)
+                     -> (item -> key)
+                     -> (ConcreteAddress arch -> item -> val)
+                     -> (ConcreteAddress arch, AddressHeap arch, M.Map key val)
+                     -> item
+                     -> RewriterT arch m (ConcreteAddress arch, AddressHeap arch, M.Map key val)
+allocateBlockAddress itemSize itemKey itemVal (newTextAddr, h, m) item =
   case H.viewMin h of
     Nothing -> return allocateNewTextAddr
     Just (H.Entry (Down size) addr, h')
@@ -169,21 +187,22 @@ allocateBlockAddress isa mem (newTextAddr, h, m) sb =
   where
     addOff = addressAddOffset
 
-    sbSize = symbolicBlockSize isa mem newTextAddr sb
+    sbSize = itemSize item
+    key = itemKey item
 
     allocateNewTextAddr =
       let nextBlockStart = newTextAddr `addOff` fromIntegral sbSize
-      in (nextBlockStart, h, M.insert (basicBlockAddress sb) newTextAddr m)
+      in (nextBlockStart, h, M.insert key (itemVal newTextAddr item) m)
 
     allocateFromHeap allocSize addr h' =
       assert (allocSize >= fromIntegral sbSize) $ do
         let addr'      = addr `addOff` fromIntegral sbSize
             allocSize' = allocSize - fromIntegral sbSize
         case allocSize' of
-          0 -> (newTextAddr, h', M.insert (basicBlockAddress sb) addr m)
+          0 -> (newTextAddr, h', M.insert key (itemVal addr item) m)
           _ ->
             let h'' = H.insert (H.Entry (Down allocSize') addr') h'
-            in (newTextAddr, h'', M.insert (basicBlockAddress sb) addr m)
+            in (newTextAddr, h'', M.insert key (itemVal addr item) m)
 
 
 -- | Make the fallthrough behavior of our symbolic blocks explicit.
