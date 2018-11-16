@@ -406,7 +406,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- will be yet. So we just pick the biggest chunk of address space that
   -- satisfies (1) and (2).
   let (lo, hi) = withinJumpRange cfg textSection
-  (newTextAddr, newTextSize) <- withCurrentELF (selectLayoutAddr lo hi (fromIntegral pageAlignment))
+  (newTextAddr, newTextSize) <- withCurrentELF (selectLayoutAddr lo hi (fromIntegral newTextAlign))
 --  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral nextSegmentAddress :: Word64)
   riSegmentVirtualAddress L..= Just (fromIntegral newTextAddr)
 
