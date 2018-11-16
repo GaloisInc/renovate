@@ -6,6 +6,7 @@
 -- blocks.
 module Renovate.Redirect.Concretize ( concretize ) where
 
+import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import qualified Data.Map as M
 import qualified Data.Traversable as T
@@ -15,7 +16,7 @@ import           Data.Maybe ( maybeToList )
 import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
-import           Renovate.Redirect.LayoutBlocks ( layoutBlocks )
+import           Renovate.Redirect.LayoutBlocks ( Layout(..), layoutBlocks )
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutPair(..)
                                                       , SymbolicPair(..)
                                                       , AddressAssignedPair(..)
@@ -46,13 +47,15 @@ concretize :: (Monad m, T.Traversable t, InstructionConstraints arch)
            -> ConcreteAddress arch
            -- ^ The start address of the concretized (instrumented) blocks
            -> t (SymbolicPair arch)
-           -> RewriterT arch m ([ConcretePair arch], [ConcreteBlock arch])
-concretize strat startAddr blocks = do
+           -> t (SymbolicAddress arch, BS.ByteString)
+           -> RewriterT arch m (Layout ConcretePair arch)
+concretize strat startAddr blocks injectedCode = do
   -- First, build up a mapping of symbolic address to new concrete
   -- address
   isa <- askISA
   symmap <- askSymbolMap
-  (concreteAddresses, paddingBlocks) <- layoutBlocks strat startAddr blocks
+  layout <- layoutBlocks strat startAddr blocks injectedCode
+  let concreteAddresses = programBlockLayout layout
   let concreteAddressMap = M.fromList [ (symbolicAddress (basicBlockAddress sb), ca)
                                       | AddressAssignedPair (LayoutPair _ (AddressAssignedBlock sb ca) _) <- F.toList concreteAddresses
                                       ]
@@ -67,7 +70,10 @@ concretize strat startAddr blocks = do
   -- Now go through and fix up all of the jumps to symbolic addresses
   -- (which happen to occur at the end of basic blocks).
   v <- T.traverse (concretizeJumps isa concreteAddressMap) concreteAddresses
-  return (v, paddingBlocks)
+  return Layout { programBlockLayout = v
+                , layoutPaddingBlocks = layoutPaddingBlocks layout
+                , injectedBlockLayout = injectedBlockLayout layout
+                }
 
 {-
 

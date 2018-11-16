@@ -65,8 +65,6 @@ import           Renovate.ISA
 import           Renovate.Redirect.Monad ( SymbolMap )
 import           Renovate.Recovery.Overlap
 
-import qualified Text.PrettyPrint.ANSI.Leijen as PP
-
 type ArchBits arch = (  MC.ArchConstraints arch,
                         MC.RegisterInfo (MC.ArchReg arch),
                         MC.HasRepr (MC.ArchReg arch) MC.TypeRepr,

@@ -7,9 +7,6 @@
 -- | Tests for the x64 ABI
 module X64 ( x64Tests ) where
 
-import           GHC.TypeLits ( KnownNat )
-import           Data.Typeable ( Typeable )
-
 import           Control.Monad.ST ( RealWorld )
 import qualified Data.ByteString as B
 import qualified Data.Map as M
@@ -75,34 +72,29 @@ data ExpectedResult = ExpectedResult { expectedBlocks :: [ExpectedBlock]
                                      }
                     deriving (Read, Show, Eq)
 
-class (KnownNat (MM.ArchAddrWidth arch)) => TestConstraint arch (b :: * -> *) where
-instance TestConstraint R64.X86_64 b
-
 mkTest :: C.HandleAllocator RealWorld -> FilePath -> T.TestTree
 mkTest hdlAlloc fp = T.testCase fp $ withELF elfFilename testRewrite
   where
     elfFilename = replaceExtension fp "exe"
     testRewrite elf = do
       Just expected <- readMaybe <$> readFile (fp <.> "expected")
-      let cfg :: [(R.Architecture, R.SomeConfig TestConstraint TestConfig)]
-          cfg = [(R.X86_64, R.SomeConfig NR.knownNat MBL.Elf64Repr (R64.config (analysis expected) R.identity))]
+      let cfg = [(R.X86_64, R.SomeConfig NR.knownNat MBL.Elf64Repr (R64.config (R.AnalyzeOnly (analysis expected))))]
       R.withElfConfig (E.Elf64 elf) cfg (testBlockRecovery hdlAlloc)
 
 
-analysis :: Monad m
-         => ExpectedResult -> R.AnalyzeEnv R64.X86_64 -> MBL.LoadedBinary R64.X86_64 binFmt
-         -> m (TestConfig R64.X86_64)
-analysis expected analyzeEnv _mem =
-  return $ foldr go (TestCfg True []) (R.biBlocks $ R.envBlockInfo env)
+analysis :: (Monad m, R.HasAnalysisEnv env, MM.MemWidth (MM.ArchAddrWidth arch))
+         => ExpectedResult
+         -> env arch binFmt
+         -> m (TestConfig arch)
+analysis expected env =
+  return $ foldr go (TestCfg True []) (R.biBlocks (R.analysisBlockInfo env))
   where
-    env = R.aeRewriteEnv analyzeEnv
-    go :: R.ConcreteBlock R64.X86_64 -> TestConfig R64.X86_64 -> TestConfig R64.X86_64
     go b inp@(TestCfg _bacc sacc) =
       let actual = ExpectedBlock { addr = fromIntegral (R.absoluteAddress (R.basicBlockAddress b))
-                                 , byteCount = R.concreteBlockSize R64.isa b
+                                 , byteCount = R.concreteBlockSize (R.analysisISA env) b
                                  , insnCount = length (R.basicBlockInstructions b)
                                  }
-          blockStr = unlines (map (R.isaPrettyInstruction R64.isa) (R.basicBlockInstructions b))
+          blockStr = unlines (map (R.isaPrettyInstruction (R.analysisISA env)) (R.basicBlockInstructions b))
       in case M.lookup (addr actual) expectedMap of
         Nothing
           | S.member (addr actual) ignoreSet -> inp
@@ -119,11 +111,10 @@ testBlockRecovery :: (w ~ MM.ArchAddrWidth arch,
                       R.InstructionConstraints arch,
                       MBL.BinaryLoader arch binFmt,
                       E.ElfWidthConstraints w,
-                      KnownNat w,
-                      Typeable w,
-                      R.ArchBits arch)
+                      R.ArchBits arch
+                     )
                   => C.HandleAllocator RealWorld
-                  -> R.RenovateConfig arch binFmt TestConfig
+                  -> R.RenovateConfig arch binFmt R.AnalyzeOnly TestConfig
                   -> E.Elf w
                   -> MBL.LoadedBinary arch binFmt
                   -> T.Assertion
@@ -141,13 +132,3 @@ withELF fp k = do
     E.Elf64Res [] e64 -> k e64
     E.Elf32Res errs _ -> error ("Errors while parsing ELF file: " ++ show errs)
     E.Elf64Res errs _ -> error ("Errors while parsing ELF file: " ++ show errs)
-
-{-
-trivialEntryPoints :: (MM.MemWidth w, Integral (E.ElfWordType w))
-                   => MM.Memory w
-                   -> E.Elf w
-                   -> (MM.MemSegmentOff w, [MM.MemSegmentOff w])
-trivialEntryPoints mem elf =
-  let Just entryPoint = MM.resolveAbsoluteAddr mem (fromIntegral (E.elfEntry elf))
-  in (entryPoint, [])
--}

@@ -49,6 +49,7 @@ module Renovate.BinaryFormat.ELF (
 import           Control.Applicative
 import           Control.Arrow ( second )
 import qualified Control.Lens as L
+import           Control.Lens ( (^.) )
 import           Control.Monad ( guard, when )
 import qualified Control.Monad.Catch as C
 import qualified Control.Monad.Catch.Pure as P
@@ -99,28 +100,29 @@ pageAlignment :: Word32
 pageAlignment = 0x1000
 
 
--- | Apply an instrumentation pass to the code in an ELF binary,
--- rewriting the binary.
+-- | For a given 'E.Elf' file, select the provided configuration that applies to it
 --
--- This will overwrite the original .text section with redirections to
--- a new segment named 'brittle'.
+-- This function examines the metadata of the given 'E.Elf' to determine which
+-- (if any) of the given configurations are applicable.  If there is an
+-- applicable configuration, the continuation is applied to the configuration
+-- and 'E.Elf' file.
 --
--- It applies the correct rewriter config for the architecture
--- specified by the ELF file, if there is an appropriate rewriter
--- configuration.  If not, an error is returned.  The architecture is
--- determined by examining metadata in the ELF file that lists the
--- machine architecture.  Supported architectures are listed in the
--- Renovate.Arch module hierarchy.
+-- Note that the continuation is also provided with an 'MBL.LoadedBinary'.  That
+-- type is only accessible in the callback, as it is indexed by the
+-- architecture (which is not known until a configuration is selected).
+--
+-- If no configurations apply, the continuation is not invoked and an
+-- 'UnsupportedArchitecture' exception is thrown.
+--
+-- Supported architectures are listed in the Renovate.Arch module hierarchy.
 withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
-              -- ^ The ELF file to analyze
-              -> [(Arch.Architecture, SomeConfig c b)]
+              -> [(Arch.Architecture, SomeConfig callbacks b)]
               -> (forall arch . (R.ArchBits arch,
                                   MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch)),
                                   E.ElfWidthConstraints (MM.ArchAddrWidth arch),
-                                  B.InstructionConstraints arch,
-                                  c arch b)
-                                   => RenovateConfig arch (E.Elf (MM.ArchAddrWidth arch)) b
+                                  B.InstructionConstraints arch)
+                                   => RenovateConfig arch (E.Elf (MM.ArchAddrWidth arch)) callbacks b
                                    -> E.Elf (MM.ArchAddrWidth arch)
                                    -> MBL.LoadedBinary arch (E.Elf (MM.ArchAddrWidth arch))
                                    -> m t)
@@ -166,9 +168,10 @@ rewriteElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                R.ArchBits arch)
-           => RenovateConfig arch binFmt b
+           => RenovateConfig arch binFmt AnalyzeAndRewrite b
            -- ^ The configuration for the rewriter
            -> C.HandleAllocator RealWorld
+           -- ^ A handle allocator for allocating crucible function handles (used for lifting macaw->crucible)
            -> E.Elf (MM.ArchAddrWidth arch)
            -- ^ The ELF file to rewrite
            -> MBL.LoadedBinary arch binFmt
@@ -185,12 +188,15 @@ rewriteElf cfg hdlAlloc e loadedBinary strat = do
       doRewrite cfg hdlAlloc loadedBinary symmap strat
     return (_riELF ri, analysisResult, ri)
 
--- | Run an analysis over an ELF file without performing any rewriting.
+-- | Run an analysis over an ELF file
+--
+-- Note that the configuration type is keyed by the 'AnalyzeOnly' tag, which
+-- restricts the type of the analysis compared to the rewriting variant.
 analyzeElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                R.ArchBits arch)
-           => RenovateConfig arch binFmt b
+           => RenovateConfig arch binFmt AnalyzeOnly b
            -- ^ The configuration for the analysis
            -> C.HandleAllocator RealWorld
            -> E.Elf (MM.ArchAddrWidth arch)
@@ -200,13 +206,13 @@ analyzeElf :: (B.InstructionConstraints arch,
            -- (including statically-allocated data)
            -> IO (b arch, [RE.Diagnostic])
 analyzeElf cfg hdlAlloc e loadedBinary = do
-    (b, ri) <- runElfRewriter e $ do
-      let mem = MBL.memoryImage loadedBinary
-      symmap <- withCurrentELF (buildSymbolMap mem)
-      textSection <- withCurrentELF findTextSection
-      let textRange = sectionAddressRange textSection
-      analyzeTextSection cfg hdlAlloc loadedBinary symmap textRange
-    return (b, _riBlockRecoveryDiagnostics ri)
+  (b, ri) <- runElfRewriter e $ do
+    symmap <- withCurrentELF (buildSymbolMap (MBL.memoryImage loadedBinary))
+    textSection <- withCurrentELF findTextSection
+    let textRange = sectionAddressRange textSection
+    withAnalysisEnv cfg hdlAlloc loadedBinary symmap textRange $ \env -> do
+      IO.liftIO (aoAnalyze (rcAnalysis cfg) env)
+  return (b, ri ^. riBlockRecoveryDiagnostics)
 
 withElf :: E.SomeElf E.Elf -> (forall w . E.Elf w -> a) -> a
 withElf e k =
@@ -310,7 +316,7 @@ availableAddrs lo hi alignment allocated = go lo (Map.toAscList allocated) where
 -- out code while still being able to jump to anywhere in the existing section.
 withinJumpRange ::
   (w ~ E.ElfWordType (MM.ArchAddrWidth arch), Num w, Ord w) =>
-  RenovateConfig arch binFmt b ->
+  RenovateConfig arch binFmt callbacks b ->
   E.ElfSection w ->
   (w, w)
 withinJumpRange cfg text =
@@ -376,7 +382,7 @@ doRewrite :: (B.InstructionConstraints arch,
               MBL.BinaryLoader arch binFmt,
               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
               R.ArchBits arch)
-          => RenovateConfig arch binFmt b
+          => RenovateConfig arch binFmt AnalyzeAndRewrite b
           -> C.HandleAllocator RealWorld
           -> MBL.LoadedBinary arch binFmt
           -> RE.SymbolMap arch
@@ -672,10 +678,8 @@ newFromEntry textSecIdx extraTextSecIdx layoutAddr e addr nm = e
 -- of the binary need to move.  We will re-create these sections at
 -- the end of the binary when we have finished rewriting it.
 --
--- NOTE: We are operating under the constraint that we must not add new segments
--- (which would change the size of the program header table), so we do not
--- remove that table.  Also, we believe that the program headers must reside in
--- the first loadable segment.
+-- NOTE: We are operating under the constraint that the program headers must
+-- reside in the first loadable segment.
 --
 -- NOTE: In elf-edit, the program header table (PHDR) is called
 -- 'E.ElfDataSegmentHeaders'
@@ -884,7 +888,7 @@ instrumentTextSection :: forall w arch binFmt b
                           B.InstructionConstraints arch,
                           Integral (E.ElfWordType w),
                           R.ArchBits arch)
-                      => RenovateConfig arch binFmt b
+                      => RenovateConfig arch binFmt AnalyzeAndRewrite b
                       -> C.HandleAllocator RealWorld
                       -> MBL.LoadedBinary arch binFmt
                       -- ^ The memory space
@@ -902,43 +906,54 @@ instrumentTextSection :: forall w arch binFmt b
                       -- ^ meta data?
                       -> ElfRewriter arch (b arch, B.ByteString, B.ByteString, Maybe B.ByteString, RE.NewSymbolsMap arch, [(RE.ConcreteAddress arch, RE.ConcreteAddress arch)])
 instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartAddr, textSectionEndAddr) textBytes strat layoutAddr newGlobalBase symmap = do
-  withRewriteEnv cfg hdlAlloc loadedBinary symmap textAddrRange $ \env -> do
-  let isa = rcISA cfg
-  let blockInfo = RW.envBlockInfo env
-  let blocks = R.biBlocks blockInfo
-  let mem = RW.envMemory env
-  case cfg of
-    -- This pattern match is only here to deal with the existential
-    -- quantification inside of RenovateConfig.
-    RenovateConfig { rcAnalysis = analysis, rcRewriter = rewriter } -> do
-      let (eBaseSymBlocks, r0) = RE.runRewriter isa mem symmap $ do
-            RS.symbolizeBasicBlocks (L.sortBy (O.comparing RE.basicBlockAddress) blocks)
-      baseSymBlocks <- extractOrThrowRewriterResult eBaseSymBlocks r0
-      let symbolicBlockMap = Map.fromList [ (RE.basicBlockAddress cb, sb)
-                                          | (cb, sb) <- baseSymBlocks ]
-      let analyzeEnv = AnalyzeEnv
-            { aeRewriteEnv = env
-            , aeSymbolicBlockMap = symbolicBlockMap
-            , aeRunRewriteM = RW.runRewriteM env newGlobalBase }
-      analysisResult <- IO.liftIO $ analysis analyzeEnv loadedBinary
-      let ((eBlocks, r1), info) = RW.runRewriteM env newGlobalBase . RE.resumeRewriterT isa mem symmap r0 $ do
-            RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewriter analysisResult loadedBinary) mem strat layoutAddr baseSymBlocks
-      allBlocks <- extractOrThrowRewriterResult eBlocks r1
-
-      let s1 = RE.rrState r1
-      let newSyms = RE.rwsNewSymbolsMap s1
-      riRedirectionDiagnostics L..= F.toList (RD.diagnosticMessages $ RE.rrDiagnostics r1)
-      riInstrumentationSites L..= RW.infoSites info
-      riReusedByteCount L..= RE.rwsReusedByteCount s1
-      riSmallBlockCount L..= RE.rwsSmallBlockCount s1
-      riUnrelocatableTerm L..= RE.rwsUnrelocatableTerm s1
-      riBlockMapping L..= RE.rwsBlockMapping s1
-      riOutputBlocks L..= Just (SomeBlocks isa allBlocks)
-      case cfg of
-        RenovateConfig { rcAssembler = asm } -> do
-          (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks
-          let newDataBytes = mkNewDataSection newGlobalBase info
-          return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms, RE.rwsBlockMapping s1)
+  withAnalysisEnv cfg hdlAlloc loadedBinary symmap textAddrRange $ \aenv -> do
+    let isa = analysisISA aenv
+    let mem = MBL.memoryImage (analysisLoadedBinary aenv)
+    let blockInfo = analysisBlockInfo aenv
+    let blocks = L.sortBy (O.comparing RE.basicBlockAddress) (R.biBlocks blockInfo)
+    let (symAlloc1, baseSymBlocks) = RS.symbolizeBasicBlocks isa mem RS.symbolicAddressAllocator blocks
+    let symbolicBlockMap = Map.fromList [ (RE.basicBlockAddress cb, sb)
+                                        | (cb, sb) <- baseSymBlocks
+                                        ]
+    let rae = RewriterAnalysisEnv { raeEnv = aenv
+                                  , raeSymBlockMap = symbolicBlockMap
+                                  }
+    case rcAnalysis cfg of
+      AnalyzeAndRewrite preAnalyze analyze preRewrite rewrite -> do
+        (entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
+        let Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
+        let cfgs = FR.recoverFunctions isa mem blockInfo
+        let internalRwEnv = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo isa (analysisABI aenv) hdlAlloc
+        -- For the combined analysis and rewriter pass, we first run the
+        -- analysis to produce a global analysis result.  We then pass that to
+        -- an initialization function (provided by the caller) that can do some
+        -- rewriter-specific initialization based on the analysis result (e.g.,
+        -- allocating new global variable storage).  Finally, we pass both the
+        -- analysis result and setup value to the actual rewriter.
+        let runrw k = IO.liftIO (RW.runRewriteM internalRwEnv newGlobalBase symAlloc1 k)
+        ((eBlocks, r1), info) <- runrw $ do
+          preAnalysisResult <- preAnalyze rae
+          analysisResult <- RW.rewriteIO (analyze rae preAnalysisResult)
+          setupVal <- preRewrite rae analysisResult
+          injectedFunctions <- RW.getInjectedFunctions
+          RE.runRewriterT isa mem symmap $ do
+            r <- RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewrite rae analysisResult setupVal) mem strat layoutAddr baseSymBlocks injectedFunctions
+            return (analysisResult, r)
+        (analysisResult, (allBlocks, injected)) <- extractOrThrowRewriterResult eBlocks r1
+        let s1 = RE.rrState r1
+        let newSyms = RE.rwsNewSymbolsMap s1
+        riRedirectionDiagnostics L..= F.toList (RD.diagnosticMessages $ RE.rrDiagnostics r1)
+        riInstrumentationSites L..= RW.infoSites info
+        riReusedByteCount L..= RE.rwsReusedByteCount s1
+        riSmallBlockCount L..= RE.rwsSmallBlockCount s1
+        riUnrelocatableTerm L..= RE.rwsUnrelocatableTerm s1
+        riBlockMapping L..= RE.rwsBlockMapping s1
+        riOutputBlocks L..= Just (SomeBlocks isa allBlocks)
+        case cfg of
+          RenovateConfig { rcAssembler = asm } -> do
+            (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks injected
+            let newDataBytes = mkNewDataSection newGlobalBase info
+            return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms, RE.rwsBlockMapping s1)
 
 -- | Helper for handling the error case of `RewriterT`.
 extractOrThrowRewriterResult :: Either P.SomeException a
@@ -952,57 +967,27 @@ extractOrThrowRewriterResult e r = do
       C.throwM (RewriterFailure exn diagnostics)
     Right x -> return x
 
--- | Initialize an 'AnalyzeEnv'.
---
--- This compute the symbolic blocks, which are recomputed in
--- 'instrumentTextSection'. If this is too wasteful we could try
--- caching and reusing.
-mkAnalyzeEnv :: B.InstructionConstraints arch
-             => RenovateConfig arch binFmt b
-             -> RW.RewriteEnv arch
-             -> RE.SymbolMap arch
-             -> RE.ConcreteAddress arch
-             -> ElfRewriter arch (AnalyzeEnv arch)
-mkAnalyzeEnv cfg env symmap newGlobalBase = do
-  let isa = rcISA cfg
-  let mem = RW.envMemory env
-  let blocks = R.biBlocks $ RW.envBlockInfo env
-
-  let (eBaseSymBlocks, r) = RE.runRewriter isa mem symmap $
-        -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress) (F.toList blocks)))))
-        RS.symbolizeBasicBlocks (L.sortBy (O.comparing RE.basicBlockAddress) blocks)
-  baseSymBlocks <- extractOrThrowRewriterResult eBaseSymBlocks r
-  let symbolicBlockMap = Map.fromList [ (RE.basicBlockAddress cb, sb)
-                                      | (cb, sb) <- baseSymBlocks ]
-  let analyzeEnv = AnalyzeEnv
-        { aeRewriteEnv = env
-        , aeSymbolicBlockMap = symbolicBlockMap
-        , aeRunRewriteM = RW.runRewriteM env newGlobalBase }
-  return analyzeEnv
-
--- | The common code between 'analyzeTextSection' and
--- 'instrumentTextSection' that sets up the 'RewriteEnv'.
-withRewriteEnv :: forall w arch binFmt b a
+withAnalysisEnv :: forall w arch binFmt callbacks b a
                     . (w ~ MM.ArchAddrWidth arch,
                        MBL.BinaryLoader arch binFmt,
                        B.InstructionConstraints arch,
                        Integral (E.ElfWordType w),
                        R.ArchBits arch)
-                   => RenovateConfig arch binFmt b
+                   => RenovateConfig arch binFmt callbacks b
                    -> C.HandleAllocator RealWorld
                    -> MBL.LoadedBinary arch binFmt
                    -- ^ The memory space
                    -> RE.SymbolMap arch
                    -> (RA.ConcreteAddress arch, RA.ConcreteAddress arch)
-                   -> (RW.RewriteEnv arch -> ElfRewriter arch a)
+                   -> (AnalysisEnv arch binFmt -> ElfRewriter arch a)
                    -> ElfRewriter arch a
-withRewriteEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
+withAnalysisEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
   let mem = MBL.memoryImage loadedBinary
-  elfEntryPoints@(entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
-  let isa      = rcISA cfg
-      abi      = rcABI cfg
-      archInfo = rcArchInfo cfg loadedBinary
-      recovery = R.Recovery { R.recoveryISA = isa
+  elfEntryPoints <- MBL.entryPoints loadedBinary
+  let isa = rcISA cfg
+  let abi = rcABI cfg
+  let archInfo = rcArchInfo cfg loadedBinary
+  let recovery = R.Recovery { R.recoveryISA = isa
                             , R.recoveryDis = rcDisassembler cfg
                             , R.recoveryArchInfo = archInfo
                             , R.recoveryHandleAllocator = hdlAlloc
@@ -1010,35 +995,13 @@ withRewriteEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
                             , R.recoveryFuncCallback = fmap (second ($ loadedBinary)) (rcFunctionCallback cfg)
                             }
   blockInfo <- IO.liftIO (R.recoverBlocks recovery mem symmap elfEntryPoints textAddrRange)
-  riBlockRecoveryDiagnostics L..= []
-  let blocks = R.biBlocks blockInfo
-  riRecoveredBlocks L..= Just (SomeBlocks isa blocks)
-  let cfgs = FR.recoverFunctions isa mem blockInfo
-      Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
-      env = RW.mkRewriteEnv cfgs concEntryPoint mem blockInfo isa abi hdlAlloc
+  let env = AnalysisEnv { aeLoadedBinary = loadedBinary
+                        , aeBlockInfo = blockInfo
+                        , aeISA = isa
+                        , aeABI = abi
+                        , aeHandleAllocator = hdlAlloc
+                        }
   k env
-
-analyzeTextSection :: forall w arch binFmt b
-                    . (w ~ MM.ArchAddrWidth arch,
-                       MBL.BinaryLoader arch binFmt,
-                       B.InstructionConstraints arch,
-                       Integral (E.ElfWordType w),
-                       R.ArchBits arch)
-                   => RenovateConfig arch binFmt b
-                   -> C.HandleAllocator RealWorld
-                   -> MBL.LoadedBinary arch binFmt
-                   -- ^ The memory space
-                   -> RE.SymbolMap arch
-                   -> (RA.ConcreteAddress arch, RA.ConcreteAddress arch)
-                   -> ElfRewriter arch (b arch)
-analyzeTextSection cfg hdlAlloc loadedBinary symmap textAddrRange = do
-  withRewriteEnv cfg hdlAlloc loadedBinary symmap textAddrRange $ \env -> do
-  -- See "FIXME" comment for 'dataAddr' in 'doRewrite': it says there
-  -- that this value is wrong, but I assume we should be wrong the
-  -- same way here.
-  let newGlobalBase = RA.concreteFromAbsolute (fromIntegral (rcDataLayoutBase cfg))
-  analyzeEnv <- mkAnalyzeEnv cfg env symmap newGlobalBase
-  IO.liftIO $ rcAnalysis cfg analyzeEnv loadedBinary
 
 mkNewDataSection :: (MM.MemWidth (MM.ArchAddrWidth arch)) => RA.ConcreteAddress arch -> RW.RewriteInfo arch -> Maybe B.ByteString
 mkNewDataSection baseAddr info = do

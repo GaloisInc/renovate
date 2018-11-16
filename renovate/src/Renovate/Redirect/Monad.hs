@@ -23,10 +23,8 @@ module Renovate.Redirect.Monad (
   RewriterResult(..),
   runRewriter,
   runRewriterT,
-  resumeRewriterT,
   throwError,
   logDiagnostic,
-  nextSymbolicAddress,
   askISA,
   askMem,
   askSymbolMap,
@@ -49,7 +47,6 @@ import qualified Data.ByteString as B
 import           Data.Map ( Map )
 import           Data.Monoid
 import qualified Data.Sequence as Seq
-import           Data.Word ( Word64 )
 
 import           Prelude
 
@@ -79,8 +76,7 @@ data RewriterEnv arch = RewriterEnv
 
 -- | State data for 'RewriterT'.
 data RewriterState arch = RewriterState
-  { rwsSymbolicAddressSource :: !Word64
-  , rwsNewSymbolsMap         :: !(NewSymbolsMap arch)
+  { rwsNewSymbolsMap         :: !(NewSymbolsMap arch)
   , rwsUnrelocatableTerm     :: !Int
   -- ^ Count of blocks unrelocatable due to ending in an IP-relative indirect jump
   , rwsSmallBlockCount       :: !Int
@@ -133,8 +129,7 @@ instance T.MonadTrans (RewriterT arch) where
 -- | The initial state of the 'Rewriter' 'Monad'
 initialState :: RewriterState arch
 initialState =  RewriterState
-  { rwsSymbolicAddressSource = 0
-  , rwsNewSymbolsMap         = mempty
+  { rwsNewSymbolsMap         = mempty
   , rwsUnrelocatableTerm     = 0
   , rwsSmallBlockCount       = 0
   , rwsReusedByteCount       = 0
@@ -148,12 +143,15 @@ runRewriter :: ISA arch
             -> SymbolMap arch
             -> Rewriter arch a
             -> (Either E.SomeException a, RewriterResult arch)
-runRewriter isa mem symmap a = I.runIdentity (runRewriterT isa mem symmap a)
+runRewriter isa mem symmap a =
+  I.runIdentity (runRewriterT isa mem symmap a)
 
 -- | Run a 'RewriterT' computation.
 --
 -- It returns *all* diagnostics that occur before an exception is
 -- thrown.
+--
+-- FIXME: This needs the set of input additional blocks that are allocated symbolic addresses
 runRewriterT :: (Monad m)
              => ISA arch
              -> MM.Memory (MM.ArchAddrWidth arch)
@@ -161,22 +159,9 @@ runRewriterT :: (Monad m)
              -> RewriterT arch m a
              -> m (Either E.SomeException a, RewriterResult arch)
 runRewriterT isa mem symmap a = do
-  (r, s, w) <- RWS.runRWST (ET.runExceptT (unRewriterT a)) (RewriterEnv isa mem symmap) initialState
+  let env = RewriterEnv isa mem symmap
+  (r, s, w) <- RWS.runRWST (ET.runExceptT (unRewriterT a)) env initialState
   return (r, RewriterResult s w)
-
--- | Continue a 'RewriteT' computation using existing state and writer data.
-resumeRewriterT  :: (Monad m)
-                 => ISA arch
-                 -> MM.Memory (MM.ArchAddrWidth arch)
-                 -> SymbolMap arch
-                 -> RewriterResult arch
-                 -> RewriterT arch m a
-                 -> m (Either E.SomeException a, RewriterResult arch)
-resumeRewriterT isa mem symmap r0 a = do
-  let RewriterResult s0 w0 = r0
-  (a', s1, w1) <- RWS.runRWST (ET.runExceptT (unRewriterT a)) (RewriterEnv isa mem symmap) s0
-  let r1 = RewriterResult { rrState = s1, rrDiagnostics = w0 <> w1 }
-  return (a', r1)
 
 -- | Log a diagnostic in the 'RewriterT' monad
 logDiagnostic :: (Monad m) => Diagnostic -> RewriterT arch m ()
@@ -185,13 +170,6 @@ logDiagnostic = RWS.tell . Diagnostics . Seq.singleton
 -- | Throw an error that halts the 'RewriterT' monad.
 throwError :: (E.Exception e, Monad m) => e -> RewriterT arch m a
 throwError = ET.throwError . E.SomeException
-
--- | Return the next 'SymbolicAddress' that is available.
-nextSymbolicAddress :: (Monad m) => RewriterT arch m (SymbolicAddress arch)
-nextSymbolicAddress = do
-  addr <- RWS.gets rwsSymbolicAddressSource
-  RWS.modify $ \s -> s { rwsSymbolicAddressSource = addr + 1 }
-  return $ SymbolicAddress addr
 
 -- | Read the 'ISA' from the 'RewriterT' environment
 askISA :: (Monad m) => RewriterT arch m (ISA arch)

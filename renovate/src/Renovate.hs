@@ -1,27 +1,34 @@
 -- | Renovate provides an interface for analyzing and rewriting binaries.
 --
--- Rewriting actions are specified through the 'C.Rewriter' record; callers must
--- provide a different rewriting backend for each architecture they need to
--- support.
+-- The core library renovate implements architecture-independent binary
+-- rewriting in terms of architecture-specific backends that provide
+-- configurations ('RenovateConfig').  Examples include renovate-ppc and
+-- renovate-x86.  The backends are separated out to reduce the dependencies of
+-- the core library, and to allow client code flexibility to only include
+-- support for the architectures that are actually required for a given use
+-- case.
+--
+-- The library interface is primarily through up-front configurations that
+-- specify analysis and rewriting actions; renovate itself handles selecting the
+-- correct configuration for the binary it is given.  For many use cases, the
+-- same analysis can be used across multiple instruction set architectures
+-- (ISAs).  Rewriting passes are generally architecture-specific.
 --
 -- The current interface allows for rewriting binaries in ELF format.  In the
 -- future, other backends will be added, along with a binary format agnostic
 -- entry point.
 --
--- A typical use currently looks like:
---
--- > import Renovate
--- > rewriteMyElf someElf myRewriter = do
--- >   withElfConfig someElf myRewriter $ \cfg e mem -> do
--- >     case rewriteElf cfg e mem Compact of
--- >       Right (newElf, rewriterInfo) -> writeElfAndInfo newElf rewriterInfo
+-- See Renovate.Tutorial for examples of using the library.
 module Renovate
 ( -- * Configuration
   Arch.Architecture(..),
   C.SomeConfig(..),
-  C.TrivialConfigConstraint,
   LB.LayoutStrategy(..),
   LB.CompactOrdering(..),
+  C.AnalyzeOnly(..),
+  C.AnalyzeAndRewrite(..),
+  C.HasAnalysisEnv(..),
+  C.HasSymbolicBlockMap(..),
   C.RenovateConfig(..),
   Recovery.ArchInfo(..),
   Recovery.ArchVals(..),
@@ -64,21 +71,18 @@ module Renovate
   A.addressAddOffset,
   A.addressDiff,
   -- * Analysis
-  C.Analyze,
-  C.AnalyzeEnv(..),
   -- ** Function Recovery
   FR.recoverFunctions,
   FR.Completion(..),
   FR.FunctionCFG(..),
   -- * Rewriting API
-  C.Rewrite,
   RW.RewriteM,
-  RW.RewriteEnv(..),
   RW.BlockCFGIndex,
   RW.mkRewriteEnv,
   RW.recordRewrite,
-  RW.lookupGlobalVar,
+  RW.injectFunction,
   RW.newGlobalVar,
+  RW.getBlockIndex,
   RW.lookupEntryAddress,
   RW.lookupBlockCFG,
   RW.getABI,

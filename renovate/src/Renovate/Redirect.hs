@@ -12,7 +12,6 @@ module Renovate.Redirect (
   -- * Rewriter Monad
   RM.runRewriter,
   RM.runRewriterT,
-  RM.resumeRewriterT,
   RM.Diagnostic(..),
   RM.RewriterResult(..),
   RM.RewriterState(..),
@@ -22,6 +21,7 @@ module Renovate.Redirect (
 
 import           Control.Monad ( when )
 import           Control.Monad.Trans ( lift )
+import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import qualified Data.List as L
 import           Data.Ord ( comparing )
@@ -39,6 +39,7 @@ import           Renovate.Recovery.Overlap ( disjoint )
 import           Renovate.Redirect.Concretize
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , Status(..)
+                                                      , Layout(..)
                                                       , ConcretePair(..)
                                                       , SymbolicPair(..)
                                                       , LayoutPair(..) )
@@ -76,8 +77,9 @@ redirect :: (Monad m, InstructionConstraints arch)
          -- ^ The start address for the copied blocks
          -> [(ConcreteBlock arch, SymbolicBlock arch)]
          -- ^ Symbolized basic blocks
-         -> RM.RewriterT arch m [ConcreteBlock arch]
-redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr baseSymBlocks = do
+         -> [(SymbolicAddress arch, BS.ByteString)]
+         -> RM.RewriterT arch m ([ConcreteBlock arch], [(ConcreteAddress arch, BS.ByteString)])
+redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr baseSymBlocks injectedCode = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
     -- We only want to instrument blocks that:
@@ -105,10 +107,14 @@ redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr baseS
        when (isIncompleteBlockAddress blockInfo (basicBlockAddress cb)) $ do
          RM.recordIncompleteBlock
        return (SymbolicPair (LayoutPair cb sb Unmodified))
-  (concretizedBlocks, paddingBlocks) <- concretize strat layoutAddr transformedBlocks
+  layout <- concretize strat layoutAddr transformedBlocks injectedCode
+  let concretizedBlocks = programBlockLayout layout
+  let paddingBlocks = layoutPaddingBlocks layout
+  let injectedBlocks = injectedBlockLayout layout
   RM.recordBlockMap (toBlockMapping concretizedBlocks)
   redirectedBlocks <- redirectOriginalBlocks concretizedBlocks
-  return $ L.sortBy (comparing basicBlockAddress) (paddingBlocks ++ concatMap unPair (F.toList redirectedBlocks))
+  let sortedBlocks = L.sortBy (comparing basicBlockAddress) (paddingBlocks ++ concatMap unPair (F.toList redirectedBlocks))
+  return (sortedBlocks, injectedBlocks)
   where
     unPair (ConcretePair (LayoutPair cb sb Modified))   = [cb, sb]
     unPair (ConcretePair (LayoutPair cb _  Unmodified)) = [cb]

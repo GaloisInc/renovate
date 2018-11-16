@@ -47,13 +47,11 @@ config32 :: ( MM.MemWidth w
             , MBL.BinaryLoader MP.PPC32 binFmt
             , BLP.HasTOC MP.PPC32 binFmt
             )
-         => R.Analyze MP.PPC32 binFmt a
-         -- ^ An analysis function that produces a summary result that will be
-         -- fed into the rewriter
-         -> R.Rewrite MP.PPC32 binFmt a
-         -- ^ A rewriting action
-         -> R.RenovateConfig MP.PPC32 binFmt a
-config32 analysis rewriter = R.RenovateConfig
+         => callbacks MP.PPC32 binFmt a
+         -- ^ An analysis (or analysis + rewriter) to be invoked by renovate on a
+         -- binary.  It should be either 'R.AnalyzeOnly' or 'R.AnalyzeAndRewrite'.
+         -> R.RenovateConfig MP.PPC32 binFmt callbacks a
+config32 analysis = R.RenovateConfig
   { R.rcISA = isa
   , R.rcABI = abi32
   , R.rcArchInfo = MP.ppc32_linux_info
@@ -62,7 +60,6 @@ config32 analysis rewriter = R.RenovateConfig
   , R.rcBlockCallback = Nothing
   , R.rcFunctionCallback = Nothing
   , R.rcAnalysis = analysis
-  , R.rcRewriter = rewriter
   , R.rcUpdateSymbolTable = False
   -- See Note [Jump Size]
   , R.rcMaxUnconditionalJumpSize = 2^25-1
@@ -77,13 +74,11 @@ config64 :: ( MM.MemWidth w
             , MBL.BinaryLoader MP.PPC64 binFmt
             , BLP.HasTOC MP.PPC64 binFmt
             )
-         => R.Analyze MP.PPC64 binFmt a
-         -- ^ An analysis function that produces a summary result that will be
-         -- fed into the rewriter
-         -> R.Rewrite MP.PPC64 binFmt a
-         -- ^ A rewriting action
-         -> R.RenovateConfig MP.PPC64 binFmt a
-config64 analysis rewriter = R.RenovateConfig
+         => callbacks MP.PPC64 binFmt a
+         -- ^ An analysis (or analysis + rewriter) to be invoked by renovate on a
+         -- binary.  It should be either 'R.AnalyzeOnly' or 'R.AnalyzeAndRewrite'.
+         -> R.RenovateConfig MP.PPC64 binFmt callbacks a
+config64 analysis = R.RenovateConfig
   { R.rcISA = isa
   , R.rcABI = abi64
   , R.rcArchInfo = MP.ppc64_linux_info
@@ -92,7 +87,6 @@ config64 analysis rewriter = R.RenovateConfig
   , R.rcBlockCallback = Nothing
   , R.rcFunctionCallback = Nothing
   , R.rcAnalysis = analysis
-  , R.rcRewriter = rewriter
   , R.rcUpdateSymbolTable = False
   -- See Note [Jump Size]
   , R.rcMaxUnconditionalJumpSize = 2^25-1

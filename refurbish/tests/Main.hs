@@ -42,10 +42,10 @@ toRewritingTest :: C.HandleAllocator RealWorld -> R.LayoutStrategy -> FilePath
                 -> T.TestTree
 toRewritingTest hdlAlloc strat exePath = T.testCase exePath $ do
   bytes <- BS.readFile exePath
-  let configs :: [(R.Architecture, R.SomeConfig R.TrivialConfigConstraint (Const ()))]
-      configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analyze rewrite))
-                , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analyze rewrite))
-                , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analyze rewrite))
+  let configs :: [(R.Architecture, R.SomeConfig R.AnalyzeAndRewrite (Const ()))]
+      configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analysis))
+                , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
+                , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))
                 ]
   case E.parseElf bytes of
     E.ElfHeaderError _ err -> T.assertFailure ("ELF header error: " ++ err)
@@ -68,7 +68,7 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 )
              => C.HandleAllocator RealWorld
              -> R.LayoutStrategy
-             -> R.RenovateConfig arch (E.Elf w) (Const ())
+             -> R.RenovateConfig arch (E.Elf w) R.AnalyzeAndRewrite (Const ())
              -> E.Elf w
              -> MBL.LoadedBinary arch (E.Elf w)
              -> IO ()
@@ -77,13 +77,10 @@ testRewriter hdlAlloc strat rc e loadedBinary = do
   let !bs = force (E.renderElf e')
   T.assertBool "Invalid ELF length" (LBS.length bs > 0)
 
-analyze :: R.AnalyzeEnv arch -> MBL.LoadedBinary arch binFmt -> IO (Const () arch)
-analyze _ _ = return (Const ())
-
-rewrite :: Const () arch
-        -> MBL.LoadedBinary arch binFmt
-        -> R.SymbolicBlock arch
-        -> R.RewriteM arch (Maybe [R.TaggedInstruction arch (R.InstructionAnnotation arch)])
-rewrite _ _ b = return (Just (R.basicBlockInstructions b))
-
-
+analysis :: R.AnalyzeAndRewrite arch binFmt (Const ())
+analysis =
+  R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
+                      , R.arAnalyze = \_ _ -> return (Const ())
+                      , R.arPreRewrite = \_ _ -> return (Const ())
+                      , R.arRewrite = \_ _ _ b -> return (Just (R.basicBlockInstructions b))
+                      }

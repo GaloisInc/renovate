@@ -16,6 +16,7 @@ module Renovate.Arch.X86_64.Internal (
   annotateInstr,
   noAddr,
   x64Size,
+  prettyPrintWithAnnotations,
   -- * Errors
   AssemblyFailure(..),
   DisassemblyFailure(..)
@@ -70,7 +71,26 @@ instance PD.Pretty (Instruction a) where
 -- We can't really get the address here, so we'll have to come up with
 -- something else longer term.
 prettyPrint :: Instruction a -> String
-prettyPrint i = PP.displayS (PP.renderCompact (D.ppInstruction (toFlexInst i))) ""
+prettyPrint = prettyPrint' (D.ppInstruction . toFlexInst)
+
+prettyPrint' :: (Instruction a -> PP.Doc) -> Instruction a -> String
+prettyPrint' pp i = PP.displayS (PP.renderCompact (pp i)) ""
+
+prettyPrintWithAnnotations :: R.TaggedInstruction X86.X86_64 TargetAddress
+                           -> String
+prettyPrintWithAnnotations insn =
+  prettyPrint' ppInsn (R.projectInstruction insn) ++ insnAnnStr
+  where
+    ppInsn = D.ppInstructionWith ppValue . unXI
+    ppValue ao = PP.hsep $ D.ppValue (fst $ aoOperand ao) : annDocs
+      where
+        annDocs = case aoAnnotation ao of
+          NoAddress -> []
+          AbsoluteAddress addr -> [PP.angles (PP.text $ show $ PD.pretty addr)]
+
+    insnAnnStr = case R.symbolicTarget insn of
+      Just tgt -> " <<" ++ show (PD.pretty tgt) ++ ">>"
+      Nothing -> ""
 
 -- | The types of failures that can occur during disassembly of x86_64
 -- instructions.
