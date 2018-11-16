@@ -17,6 +17,7 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Renovate
+                       Renovate.Tutorial
   other-modules:
                        Renovate.Arch
                        Renovate.BasicBlock.Assemble

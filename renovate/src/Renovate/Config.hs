@@ -63,6 +63,9 @@ data SomeConfig callbacks (b :: * -> *) = forall arch binFmt
                     )
                   => SomeConfig (NR.NatRepr (MM.ArchAddrWidth arch)) (MBL.BinaryRepr binFmt) (RenovateConfig arch binFmt callbacks b)
 
+-- | This is the data type instantiated for 'HasAnalysisEnv'.  The goal is to
+-- have this as a completely internal type that the user never sees.  Users
+-- should only access this data through the interface.
 data AnalysisEnv arch binFmt =
   AnalysisEnv { aeLoadedBinary :: MBL.LoadedBinary arch binFmt
               , aeBlockInfo :: R.BlockInfo arch
@@ -71,6 +74,7 @@ data AnalysisEnv arch binFmt =
               , aeHandleAllocator :: C.HandleAllocator RealWorld
               }
 
+-- | Likewise, this type is for implementing 'HasSymbolicBlockMap'
 data RewriterAnalysisEnv arch binFmt =
   RewriterAnalysisEnv { raeEnv :: AnalysisEnv arch binFmt
                       , raeSymBlockMap :: Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
@@ -93,6 +97,16 @@ instance HasAnalysisEnv RewriterAnalysisEnv where
 instance HasSymbolicBlockMap RewriterAnalysisEnv where
   getSymbolicBlockMap = raeSymBlockMap
 
+-- | This class exposes all of the user-facing functionality in the analysis environment.
+--
+-- Both the analysis and rewriter have access to this information.  It includes all of the
+-- basic blocks discovered by the binary analysis, as well as tools for working with them.
+--
+-- Note that the 'C.HandleAllocator' is included because the basic block
+-- recovery uses it to construct Crucible terms (useful for analysis), and some
+-- interactions with those terms later require using the same handle allocator
+-- used to create them.  Users could save that handle allocator, but it is
+-- exposed through this interface for convenience.
 class HasAnalysisEnv env where
   analysisLoadedBinary :: env arch binFmt -> MBL.LoadedBinary arch binFmt
   analysisBlockInfo :: env arch binFmt  -> R.BlockInfo arch
@@ -100,12 +114,27 @@ class HasAnalysisEnv env where
   analysisABI :: env arch binFmt -> ABI.ABI arch
   analysisHandleAllocator :: env arch binFmt -> C.HandleAllocator RealWorld
 
+-- | This additional environment is available to the rewriter.  It has
+-- information derived from the analysis environment that is useful for
+-- rewriting.  In particular, it contains a mapping from concrete addresses to
+-- the symbolic addresses that are used in the rewriter.
 class HasSymbolicBlockMap env where
   getSymbolicBlockMap :: env arch binFmt -> Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
 
+-- | The configuration for a binary analysis
+--
+-- This is specifically the configuration for an analysis-only pass with no
+-- rewriting.  Note that the analysis itself is in IO.
 data AnalyzeOnly arch binFmt b =
   AnalyzeOnly { aoAnalyze :: forall env . (HasAnalysisEnv env) => env arch binFmt -> IO (b arch) }
 
+-- | The configuration for a combined analysis and rewriting pass
+--
+-- This has additional callbacks that are run in 'RW.RewriteM' to enable setup
+-- before the analysis and rewriting phases.  Those setup phases are useful for
+-- allocating global variables and injecting code in the rewriting context.
+--
+-- Note that the analysis is still in IO.
 data AnalyzeAndRewrite arch binFmt b =
   forall preAnalyzeState rewriterState .
   AnalyzeAndRewrite { arPreAnalyze :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> RW.RewriteM arch (preAnalyzeState arch)
@@ -181,10 +210,10 @@ compose funcs = go funcs
 
 -- | An identity rewriter (i.e., a rewriter that makes no changes, but forces
 -- everything to be redirected).
-identity :: b arch -> rewriterState arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+identity :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
 identity _ _ _ sb = return $! Just (B.basicBlockInstructions sb)
 
 -- | A basic block rewriter that leaves a block untouched, preventing the
 -- rewriter from trying to relocate it.
-nop :: b arch -> rewriterState arch -> MBL.LoadedBinary arch binFmt -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+nop :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
 nop _ _ _ _ = return Nothing

@@ -100,21 +100,23 @@ pageAlignment :: Word32
 pageAlignment = 0x1000
 
 
--- | Apply an instrumentation pass to the code in an ELF binary,
--- rewriting the binary.
+-- | For a given 'E.Elf' file, select the provided configuration that applies to it
 --
--- This will overwrite the original .text section with redirections to
--- a new segment named 'brittle'.
+-- This function examines the metadata of the given 'E.Elf' to determine which
+-- (if any) of the given configurations are applicable.  If there is an
+-- applicable configuration, the continuation is applied to the configuration
+-- and 'E.Elf' file.
 --
--- It applies the correct rewriter config for the architecture
--- specified by the ELF file, if there is an appropriate rewriter
--- configuration.  If not, an error is returned.  The architecture is
--- determined by examining metadata in the ELF file that lists the
--- machine architecture.  Supported architectures are listed in the
--- Renovate.Arch module hierarchy.
+-- Note that the continuation is also provided with an 'MBL.LoadedBinary'.  That
+-- type is only accessible in the callback, as it is indexed by the
+-- architecture (which is not known until a configuration is selected).
+--
+-- If no configurations apply, the continuation is not invoked and an
+-- 'UnsupportedArchitecture' exception is thrown.
+--
+-- Supported architectures are listed in the Renovate.Arch module hierarchy.
 withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
-              -- ^ The ELF file to analyze
               -> [(Arch.Architecture, SomeConfig callbacks b)]
               -> (forall arch . (R.ArchBits arch,
                                   MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch)),
@@ -169,6 +171,7 @@ rewriteElf :: (B.InstructionConstraints arch,
            => RenovateConfig arch binFmt AnalyzeAndRewrite b
            -- ^ The configuration for the rewriter
            -> C.HandleAllocator RealWorld
+           -- ^ A handle allocator for allocating crucible function handles (used for lifting macaw->crucible)
            -> E.Elf (MM.ArchAddrWidth arch)
            -- ^ The ELF file to rewrite
            -> MBL.LoadedBinary arch binFmt
@@ -185,7 +188,10 @@ rewriteElf cfg hdlAlloc e loadedBinary strat = do
       doRewrite cfg hdlAlloc loadedBinary symmap strat
     return (_riELF ri, analysisResult, ri)
 
--- | Run an analysis over an ELF file without performing any rewriting.
+-- | Run an analysis over an ELF file
+--
+-- Note that the configuration type is keyed by the 'AnalyzeOnly' tag, which
+-- restricts the type of the analysis compared to the rewriting variant.
 analyzeElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),

@@ -22,8 +22,6 @@ import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
 
--- import Debug.Trace
-
 newtype SymbolicAddressAllocator arch = SymbolicAddressAllocator Word64
 
 symbolicAddressAllocator :: SymbolicAddressAllocator arch
