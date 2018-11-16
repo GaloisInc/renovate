@@ -4,7 +4,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Renovate.Rewrite (
   RewriteM,
-  -- RewriteEnv(..),
   RewriteInfo(..),
   RewriteSite(..),
   BlockCFGIndex,
