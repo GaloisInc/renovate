@@ -285,7 +285,7 @@ allocatedVAddrs e = F.foldl' (Map.unionWith max) Map.empty <$> traverse processR
 -- | @availableAddrs lo hi alignment allocated@ computes a list of @(addr, size)@ pairs where
 --
 -- * @lo <= addr@
--- * @addr <= hi@
+-- * @addr+size-1 <= hi@
 -- * @addr `mod` alignment == 0@
 -- * @size `mod` alignment == 0@
 -- * the addresses @addr@ through @addr+size-1@ are not already in the range
@@ -294,13 +294,13 @@ availableAddrs :: (Ord w, Integral w) => w -> w -> w -> Map.Map w w -> [(w, w)]
 availableAddrs lo hi alignment allocated = go lo (Map.toAscList allocated) where
   go addr [] = buildPair addr hi
   go addr ((_, 0):xs) = go addr xs
-  go addr ((addr', size'):xs) = buildPair addr (addr'-1) ++ go (addr'+size') xs
+  go addr ((addr', size'):xs) = buildPair addr (min hi (addr'-1)) ++ go (addr'+size') xs
 
   buildPair base_ end_
-    | base >= end = []
+    | base >= hi || end <= lo = []
     -- paranoia: what if end_ is 0, so end is maxBound? then the above check
     -- wouldn't fire, but we still don't want to return a successful answer
-    | base_ >= end_ = []
+    | end == -1 = []
     | otherwise = [(base, end-base+1)]
     where
     end = end_ - ((end_+1) `mod` alignment)
