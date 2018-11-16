@@ -440,8 +440,11 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
     , addrMap ) <- instrumentTextSection cfg hdlAlloc loadedBinary textSectionRange
                                        (E.elfSectionData textSection) strat layoutAddr dataAddr symmap
 
+  let instrumentedByteCount = B.length instrumentedBytes
+  when (fromIntegral instrumentedByteCount > newTextSize) . fail $
+    "The rewritten binary needs " ++ show instrumentedByteCount ++ " bytes in the extratext section, but only " ++ show newTextSize ++ " are available."
   riOriginalTextSize L..= fromIntegral (B.length overwrittenBytes)
-  riNewTextSize L..= fromIntegral (B.length instrumentedBytes)
+  riNewTextSize L..= instrumentedByteCount
 
   -- Since we know where we need to add new data and new text, we can just start
   -- with a fresh ELF file and start copying data over.  As soon as we find a
