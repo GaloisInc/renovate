@@ -18,7 +18,7 @@ import qualified GHC.Err.Located as L
 import           Control.Applicative
 import           Control.Exception ( assert )
 import qualified Control.Lens as L
-import           Control.Monad ( when, unless )
+import           Control.Monad ( unless )
 import qualified Control.Monad.Catch as C
 import qualified Control.Monad.State.Strict as St
 import qualified Data.ByteString as B
@@ -134,30 +134,40 @@ assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble 
 -- newly allocated.
 assembleDriver :: forall m arch . (C.MonadThrow m, InstructionConstraints arch) => Assembler arch m ()
 assembleDriver = do
-  mb <- takeNextOrigBlock
-  case mb of
-    Just b -> do
-      assembleAsTextOrExtra b
-      isLast <- isLastOrigBlock
-      -- If this is the last block in the original address space but does not
-      -- fill out the address space then we need to use the rest of the
-      -- original byte sequence to pad out the original address space.
-      when isLast padLastBlock
-      assembleDriver
-    Nothing -> do
-      mb' <- takeNextAllocatedBlock
-      case mb' of
-        Nothing -> return ()
-        Just b  -> do
-          assembleAsTextOrExtra b
-          assembleDriver
-  where
-  assembleAsTextOrExtra :: ConcreteBlock arch -> Assembler arch m ()
-  assembleAsTextOrExtra b = do
-    extraStart <- St.gets asExtraStart
-    case basicBlockAddress b < extraStart of
-      True  -> assembleAsText b
-      False -> assembleAsExtra b
+  textStart <- St.gets asTextStart
+  textEnd <- St.gets asTextEnd
+
+  let inText b = basicBlockAddress b >= textStart && basicBlockAddress b < textEnd
+
+      loopOrig = do
+        mb <- takeNextOrigBlock
+        case mb of
+          Just b -> do
+            assertM (inText b)
+            assembleAsText b
+            loopOrig
+          Nothing -> do
+            -- If this is the last block in the original address space but does not
+            -- fill out the address space then we need to use the rest of the
+            -- original byte sequence to pad out the original address space.
+            padLastBlock
+            loopAllocated
+
+      loopAllocated = do
+        mb <- takeNextAllocatedBlock
+        case mb of
+          Just b -> do
+            assertM (not (inText b))
+            assembleAsExtra b
+            loopAllocated
+          Nothing -> return ()
+
+  loopOrig
+
+  -- double check that nobody else put something on the "to-assemble" list
+  -- behind our backs
+  L.use asOrigBlocks      >>= assertM . null
+  L.use asAllocatedBlocks >>= assertM . null
 
 -- | Code in the extra section never overlaps, so we can just perform some basic
 -- consistency check sand then append it.
@@ -385,13 +395,6 @@ takeNextOrigBlock = takeNextBlockWith asOrigBlocks
 -- these blocks DO NOT have addresses in the original address space).
 takeNextAllocatedBlock :: (Monad m) => Assembler arch m (Maybe (ConcreteBlock arch))
 takeNextAllocatedBlock = takeNextBlockWith asAllocatedBlocks
-
--- | Checks if the the orginal block list is exhausted.
--- Note: This will return true when the current block is from the allocated set.
-isLastOrigBlock :: (Monad m) => Assembler arch m Bool
-isLastOrigBlock = do
-  bs <- L.use asOrigBlocks
-  return $! null bs
 
 newtype Assembler arch m a = Assembler { unA :: St.StateT (AssembleState arch) m a }
                             deriving ( Functor,
