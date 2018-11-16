@@ -63,8 +63,8 @@ config analysis rewriter = R.RenovateConfig
   , R.rcAnalysis      = analysis
   , R.rcRewriter      = rewriter
   , R.rcUpdateSymbolTable = True
+  , R.rcMaxUnconditionalJumpSize = 2^31-1
   -- See Note [Layout Addresses]
-  , R.rcCodeLayoutBase = 0x800000
   , R.rcDataLayoutBase = 0xa00000
   }
 

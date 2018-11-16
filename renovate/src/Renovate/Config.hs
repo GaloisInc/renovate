@@ -98,8 +98,11 @@ data RenovateConfig arch binFmt (b :: * -> *) = RenovateConfig
   -- ^ An analysis to run over the code discovered by macaw, generating a summary of type @b@
   , rcRewriter      :: Rewrite arch binFmt b
   -- ^ A rewriting pass to run over each basic block
-  , rcCodeLayoutBase :: Word64
-  -- ^ The base address to start laying out new code
+  , rcMaxUnconditionalJumpSize :: Word64
+  -- ^ How far can this architecture's unconditional relative jumps reach? New
+  -- code blocks will be laid out in virtual address space within this many
+  -- bytes of the original code blocks, so that the two can jump to each other
+  -- as necessary.
   , rcDataLayoutBase :: Word64
   -- ^ The base address to start laying out new data
   , rcUpdateSymbolTable :: Bool

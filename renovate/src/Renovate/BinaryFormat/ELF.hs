@@ -268,6 +268,80 @@ sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
     textSectionStartAddr = RA.concreteFromAbsolute (fromIntegral (E.elfSectionAddr sec))
     textSectionEndAddr = RA.addressAddOffset textSectionStartAddr (fromIntegral ((E.elfSectionSize sec)))
 
+-- | Extract all the segments' virtual addresses (keys) and their sizes
+-- (values). If we don't know the size of a segment yet because it is going to
+-- be computed later, return that segment as an error.
+allocatedVAddrs ::
+  E.ElfWidthConstraints w =>
+  E.Elf w ->
+  Either (E.ElfSegment w)
+         (Map.Map (E.ElfWordType w) (E.ElfWordType w))
+allocatedVAddrs e = F.foldl' (Map.unionWith max) Map.empty <$> traverse processRegion (E._elfFileData e) where
+  processRegion (E.ElfDataSegment seg) = case E.elfSegmentMemSize seg of
+    E.ElfRelativeSize{} -> Left seg
+    E.ElfAbsoluteSize size -> return (Map.singleton (E.elfSegmentVirtAddr seg) size)
+  processRegion _ = return Map.empty
+
+-- | @availableAddrs lo hi alignment allocated@ computes a list of @(addr, size)@ pairs where
+--
+-- * @lo <= addr@
+-- * @addr <= hi@
+-- * @addr `mod` alignment == 0@
+-- * @size `mod` alignment == 0@
+-- * the addresses @addr@ through @addr+size-1@ are not already in the range
+--   @k@ through @k+v-1@ for any key-value pair @(k, v)@ in @allocated@
+availableAddrs :: (Ord w, Integral w) => w -> w -> w -> Map.Map w w -> [(w, w)]
+availableAddrs lo hi alignment allocated = go lo (Map.toAscList allocated) where
+  go addr [] = buildPair addr hi
+  go addr ((_, 0):xs) = go addr xs
+  go addr ((addr', size'):xs) = buildPair addr (addr'-1) ++ go (addr'+size') xs
+
+  buildPair base_ end_
+    | base >= end = []
+    -- paranoia: what if end_ is 0, so end is maxBound? then the above check
+    -- wouldn't fire, but we still don't want to return a successful answer
+    | base_ >= end_ = []
+    | otherwise = [(base, end-base+1)]
+    where
+    end = end_ - ((end_+1) `mod` alignment)
+    base = base_ + ((alignment - base_ `mod` alignment) `mod` alignment)
+
+-- | Given an existing section, find the range of addresses where we could lay
+-- out code while still being able to jump to anywhere in the existing section.
+withinJumpRange ::
+  (w ~ E.ElfWordType (MM.ArchAddrWidth arch), Num w, Ord w) =>
+  RenovateConfig arch binFmt b ->
+  E.ElfSection w ->
+  (w, w)
+withinJumpRange cfg text =
+  -- max 1: we don't want to lay out code at address 0...
+  ( max 1 (end - min end range)
+  , start + range
+  )
+  where
+  start = E.elfSectionAddr text
+  end = start + E.elfSectionSize text - 1
+  range = fromIntegral (rcMaxUnconditionalJumpSize cfg)
+
+-- | Choose a virtual address for extratext (and report how many bytes are
+-- available at that address).
+selectLayoutAddr ::
+  (E.ElfWidthConstraints w, MM.ArchAddrWidth arch ~ w) =>
+  E.ElfWordType w ->
+  E.ElfWordType w ->
+  E.ElfWordType w ->
+  E.Elf w ->
+  ElfRewriter arch (E.ElfWordType w, E.ElfWordType w)
+selectLayoutAddr lo hi alignment e = do
+  allocated <- case allocatedVAddrs e of
+    Left seg -> fail
+      $  "Could not compute free virtual addresses: segment "
+      ++ show (E.elfSegmentIndex seg)
+      ++ " has relative size"
+    Right m -> return m
+  case availableAddrs lo hi alignment allocated of
+    [] -> fail "No unallocated virtual address space within jumping range of the text section is available for use as a new extratext section."
+    available -> return $ L.maximumBy (O.comparing snd) available
 
 -- | The rewriter driver
 --
@@ -322,9 +396,17 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
 
   -- We need to compute the address to start laying out new code.
   --
-  -- We place new code in its own segment, where the base address of the segment
-  -- is determined on a per-architecture basis.
-  let newTextAddr = alignValue (fromIntegral (rcCodeLayoutBase cfg)) (fromIntegral pageAlignment)
+  -- The new code's virtual address should satisfy a few constraints:
+  --
+  -- 1. Not overlaying any existing loadable segments.
+  -- 2. Within jumping range of the old text section to ease redirection of blocks.
+  -- 3. Enough empty space to hold the new code.
+  --
+  -- It's real tough to guarantee (3), since we don't know how much code there
+  -- will be yet. So we just pick the biggest chunk of address space that
+  -- satisfies (1) and (2).
+  let (lo, hi) = withinJumpRange cfg textSection
+  (newTextAddr, newTextSize) <- withCurrentELF (selectLayoutAddr lo hi (fromIntegral pageAlignment))
 --  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral nextSegmentAddress :: Word64)
   riSegmentVirtualAddress L..= Just (fromIntegral newTextAddr)
 
