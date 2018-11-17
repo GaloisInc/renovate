@@ -62,7 +62,7 @@ config32 analysis = R.RenovateConfig
   , R.rcAnalysis = analysis
   , R.rcUpdateSymbolTable = False
   -- See Note [Jump Size]
-  , R.rcMaxUnconditionalJumpSize = 2^25-1
+  , R.rcMaxUnconditionalJumpSize = 2^(25 :: Int)-1
   -- See Note [Layout Addresses]
   , R.rcDataLayoutBase = 0x20000000
   }
@@ -89,7 +89,7 @@ config64 analysis = R.RenovateConfig
   , R.rcAnalysis = analysis
   , R.rcUpdateSymbolTable = False
   -- See Note [Jump Size]
-  , R.rcMaxUnconditionalJumpSize = 2^25-1
+  , R.rcMaxUnconditionalJumpSize = 2^(25 :: Int) -1
   -- See Note [Layout Addresses]
   , R.rcDataLayoutBase = 0x20000000
   }
