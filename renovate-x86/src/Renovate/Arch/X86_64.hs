@@ -64,7 +64,7 @@ config analysis = R.RenovateConfig
   , R.rcFunctionCallback = Nothing
   , R.rcAnalysis      = analysis
   , R.rcUpdateSymbolTable = True
-  , R.rcMaxUnconditionalJumpSize = 2^31-1
+  , R.rcMaxUnconditionalJumpSize = 2^(31 :: Int)-1
   -- See Note [Layout Addresses]
   , R.rcDataLayoutBase = 0xa00000
   }
