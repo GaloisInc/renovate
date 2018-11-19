@@ -1,0 +1,30 @@
+* Overview
+
+This test suite tests the core functionality of renovate.  It is a separate package from the core renovate library because it depends on the architecture-specific backends.  The refurbish package pulls together all of the backends to provide a unified testing platform (as well as other useful services).
+
+The tests include both rewriting (it should be testing multiple layouts, too) and execution of the rewritten binaries.  Testing executables is a bit tricky for two main reasons:
+
+- We support multiple architectures (including architectures that the rewriter will not be running on)
+- If the rewriter is broken, it will produce binaries with unpredictable behavior (most errors lead to quick crashes, but dangerous behaviors are entirely possible)
+
+To make testing binaries for many different architectures both possible and safe, we use a combination of QEMU and Docker.  We use QEMU in /user mode/ to let us run non-native binaries (which we say are for the /target/ architecture) on the /host/ architecture (i.e., the architecture of a developer machine).  User mode emulation differs from the standard mode of QEMU in that it does not require a filesystem image or operating system kernel for the target architecture.  Instead, it uses the QEMU core to dynamically translate binaries of the target architecture to the host architecture.  We run the rewritten binaries (via QEMU) inside of a Docker container to provide isolation, in case the rewritten binary is broken and has unpredictable effects.
+
+This strategy has a number of important benefits:
+
+- It does not require a full target system filesystem image, which saves complexity in distributing the tests
+- It translates system calls to the host system, allowing the native kernel to service them; this saves OS emulation overhead, which is significant
+- It makes copying the test binaries into the emulation environment easier: we can use the [[https://docs.docker.com/engine/reference/commandline/run/#mount-volume--v---read-only][bind mount]] functionality of the ~docker run~ command
+- It makes capturing output from commands significantly easier than full QEMU (~docker run~ provides the output trivially, without having to set up SSH or do any complex output capturing in the image)
+
+Note that the executable tests are not run if Docker is not set up; this is not currently considered an error.
+
+* Filesystem Structure
+
+All of the test binaries are expected to be stored in =refurbish/tests/binaries=.  Each executable must have the =.exe= suffix.  By convention, the target architecture of the binary is included in the filename (e.g., =foo.ppc64.exe=), though it is not currently used for anything besides reporting.  For each test executable, the test harness supports an extra file that includes a list of argument lists to be passed to the executable when it is run.  For an executable =foo.arch.exe=, the argument list file is =foo.arch.exe.args=.  The argument list file is a list of Haskell lists of strings, and is read using the Haskell ~Text.Read.readMaybe~ function.  Parse errors are considered test failures.
+
+- If there is no argument list file for an executable, it is run with an empty list of arguments (equivalent to an args file with the contents ~[[]]~)
+- If the argument list file contains the empty list, the file will be rewritten (and checked for obvious errors), but will not be executed.
+
+* Docker Notes
+
+See the =Dockerfile= for details, but the image is very basic: Ubuntu 18.04 with the =qemu-user= package installed.  Note that the =qemu-user= package also installs a Linux binfmt handler that automatically invokes the correct =qemu-ARCH= binary on non-host binaries.
