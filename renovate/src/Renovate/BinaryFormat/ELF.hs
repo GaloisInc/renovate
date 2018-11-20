@@ -67,6 +67,7 @@ import           Data.Maybe ( catMaybes, maybeToList, listToMaybe, isJust )
 import           Data.Monoid
 import qualified Data.Ord as O
 import qualified Data.Sequence as Seq
+import qualified Data.Traversable as T
 import           Data.Typeable ( Typeable )
 import qualified Data.Vector as V
 import           Data.Word ( Word16, Word32, Word64 )
@@ -94,6 +95,8 @@ import qualified Renovate.Recovery as R
 import qualified Renovate.Redirect as RE
 import qualified Renovate.Redirect.Symbolize as RS
 import qualified Renovate.Rewrite as RW
+
+import Debug.Trace
 
 -- | The system page alignment (assuming 4k pages)
 pageAlignment :: Word32
@@ -480,6 +483,19 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
           modifyCurrentELF (appendDataRegion (E.ElfDataSymtab newSymtab) symbolTableAlignment)
       | otherwise -> return ()
     _ -> return ()
+
+  -- Convert BSS from NOBITS to PROGBITS
+  --
+  -- We may be adding segments after the data segment, which breaks the kernel
+  -- ELF loader handling of the BSS (i.e., it won't zero initialize or even
+  -- necessarily reserve all of the necessary space).  To work around this, we
+  -- just turn the BSS from NOBITS to PROGBITS, meaning we explicitly fill the
+  -- section with zeros.
+  nobitsSections <- modifyCurrentELF dropBSS
+  when (not (null nobitsSections)) $ do
+    modifyCurrentELF (reifyNobitsAsSegment nobitsSections)
+
+
   modifyCurrentELF appendHeaders
 
   -- Now overwrite the original code (in the .text segment) with the
@@ -514,6 +530,127 @@ programHeaderCount e = sum [ E.elfSegmentCount e
                            , length (E.elfGnuRelroRegions e)
                            ]
 
+-- | Convert the BSS (and any other NOBITS sections) into a PROGBITS section.
+--
+-- The underlying problem is that we are going to add loadable segments after
+-- the original data segment.  The kernel ELF loader only properly initializes
+-- BSS if it is in the segment with the highest loadable address.  Since we
+-- can't always fit everything at a lower address than data (especially when
+-- dealing with PIC binaries), that means that our BSS is not set up properly,
+-- leading to crashes.
+--
+-- Our solution is to modify things so that the kernel doesn't have to set up
+-- BSS for us.  We just change any NOBITS sections into PROGBITS.  This wastes
+-- some space, but avoids the problem.  We only change the NOBITS sections at
+-- the very end of the segment.
+--
+-- Returns the nobits sections so that they can be stuffed into a new segment
+dropBSS :: ( w ~ MM.ArchAddrWidth arch
+            , E.ElfWidthConstraints w
+            )
+         => E.Elf w
+         -> ElfRewriter arch ([E.ElfSection (E.ElfWordType w)], E.Elf w)
+dropBSS e0 = do
+  let (e1, nobitsSections) = S.runState (E.traverseElfSegments expandNobitsIfBSS e0) []
+  return (nobitsSections, e1)
+  where
+    expandNobitsIfBSS seg
+      | Just nobitsSections <- trailingNobitsSections seg = do
+          S.put nobitsSections
+          segContents' <- catMaybes <$> mapM (updateRegionSections (dropTrailingNobits nobitsSections)) (F.toList (E.elfSegmentData seg))
+          return seg { E.elfSegmentData = Seq.fromList segContents' }
+      | otherwise = return seg
+
+-- | Take a list of sections that were of type NOBITS and convert them into
+-- PROGBITS in their own segment
+reifyNobitsAsSegment :: ( w ~ MM.ArchAddrWidth arch
+                        , E.ElfWidthConstraints w
+                        )
+                     => [E.ElfSection (E.ElfWordType w)]
+                     -> E.Elf w
+                     -> ElfRewriter arch ((), E.Elf w)
+reifyNobitsAsSegment nobitsSections e0 = do
+  traceM ("nobits segment addr: " ++ show alignedAddr)
+  traceM ("nobits segment alignment: " ++ show alignment)
+  appendSegment seg e0
+  where
+    alignedAddr = minimum (map E.elfSectionAddr nobitsSections)
+    alignment = maximum (map E.elfSectionAddrAlign nobitsSections)
+    seg = E.ElfSegment { E.elfSegmentType = E.PT_LOAD
+                       , E.elfSegmentFlags = E.pf_r .|. E.pf_w
+                       , E.elfSegmentIndex = nextSegmentIndex e0
+                       , E.elfSegmentVirtAddr = alignedAddr
+                       , E.elfSegmentPhysAddr = alignedAddr
+                       , E.elfSegmentAlign = alignment
+                       , E.elfSegmentMemSize = E.ElfAbsoluteSize (sum (map E.elfSectionSize nobitsSections))
+                       , E.elfSegmentData = Seq.fromList (map (E.ElfDataSection . nobitsToProgbits) nobitsSections)
+                       }
+
+dropTrailingNobits :: (Monad f) => [E.ElfSection w] -> E.ElfSection w -> f (Maybe (E.ElfSection w))
+dropTrailingNobits nobitsSections sec
+  | E.elfSectionIndex sec `elem` fmap E.elfSectionIndex nobitsSections = return Nothing
+  | otherwise = return (Just sec)
+
+nobitsToProgbits :: (Integral w) => E.ElfSection w -> E.ElfSection w
+nobitsToProgbits sec =
+  sec { E.elfSectionType = E.SHT_PROGBITS
+      , E.elfSectionData = B.replicate (fromIntegral (E.elfSectionSize sec)) 0
+      }
+
+traverseRegionSections :: (Monad f)
+                       => (E.ElfSection (E.ElfWordType w) -> f (E.ElfSection (E.ElfWordType w)))
+                       -> E.ElfDataRegion w
+                       -> f (E.ElfDataRegion w)
+traverseRegionSections f edr =
+  case edr of
+    E.ElfDataSegment seg -> do
+      contents <- T.traverse (traverseRegionSections f) (E.elfSegmentData seg)
+      return (E.ElfDataSegment (seg { E.elfSegmentData = contents }))
+    E.ElfDataSection sec -> E.ElfDataSection <$> f sec
+    _ -> pure edr
+
+updateRegionSections :: (Monad f)
+                     => (E.ElfSection (E.ElfWordType w) -> f (Maybe (E.ElfSection (E.ElfWordType w))))
+                     -> E.ElfDataRegion w
+                     -> f (Maybe (E.ElfDataRegion w))
+updateRegionSections f edr =
+  case edr of
+    E.ElfDataSegment seg -> do
+      contents <- catMaybes <$> T.traverse (updateRegionSections f) (F.toList (E.elfSegmentData seg))
+      return (Just (E.ElfDataSegment (seg { E.elfSegmentData = Seq.fromList contents })))
+    E.ElfDataSection sec -> fmap E.ElfDataSection <$> f sec
+    _ -> pure (Just edr)
+
+-- | Return the list of section indexes that occur at the end of the segment.
+--
+-- Specifically, we are looking for all of the NOBITS sections at the end of a
+-- segment (where they are the last sections assigned addresses).  Additionally,
+-- we require at least one to be named .bss
+--
+-- NOTE: This is kind of a proxy test, but is probably good enough in practice.
+-- What we really want to test is if this is the last segment /and/ it ends in
+-- at least one section that is 1) of type NOBITS, and 2) has a virtual address.
+--
+-- Unfortunately, the full test is kind of difficult given the existing
+-- combinators.  In any realistic binary, we can identify this condition as just
+-- having the .bss section, as libc will trigger that condition.
+trailingNobitsSections :: (E.ElfWidthConstraints w) => E.ElfSegment w -> Maybe [E.ElfSection (E.ElfWordType w)]
+trailingNobitsSections seg =
+  let (foundBSS, ixs) = go (E.ElfDataSegment seg) (False, [])
+  in trace (show (foundBSS, ixs)) $ if foundBSS then Just ixs else Nothing
+  where
+    isBSS sec = E.elfSectionName sec == ".bss"
+    go r acc@(foundBSS, ixs) =
+      case r of
+        E.ElfDataSegment seg' -> F.foldr go acc (E.elfSegmentData seg')
+        E.ElfDataSection sec
+          | and [ E.elfSectionType sec == E.SHT_NOBITS
+                , E.elfSectionAddr sec /= 0
+                ] -> (foundBSS || isBSS sec, sec : ixs)
+          | E.elfSectionAddr sec /= 0 -> (foundBSS || isBSS sec, ixs)
+          | otherwise -> (foundBSS || isBSS sec, [])
+        _ -> acc
+
 -- | Append a segment to the current ELF binary
 --
 -- This function checks the alignment requirement of the segment and adds the
@@ -535,6 +672,7 @@ appendSegment seg e = do
   let align = E.elfSegmentAlign seg
   let desiredOffset = alignValue currentOffset align
   let paddingBytes = desiredOffset - currentOffset
+  traceM ("Adding " ++ show paddingBytes ++ " bytes of padding for segment " ++ show (E.elfSegmentIndex seg))
   let paddingRegion = E.ElfDataRaw (B.replicate (fromIntegral paddingBytes) 0)
   let newRegions = if paddingBytes > 0 then [ paddingRegion, E.ElfDataSegment seg ] else [ E.ElfDataSegment seg ]
   return ((), e L.& E.elfFileData L.%~ (`mappend` Seq.fromList newRegions))
