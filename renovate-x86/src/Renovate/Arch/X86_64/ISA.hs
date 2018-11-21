@@ -22,7 +22,6 @@ import           Data.Word ( Word8, Word64 )
 import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.X86 as X86
 import qualified Flexdis86 as D
-import qualified Flexdis86.Sizes as D
 
 import qualified Renovate as R
 import           Renovate.Arch.X86_64.Internal
@@ -58,7 +57,6 @@ isa = R.ISA
   , R.isaMakeRelativeJumpTo = x64MakeRelativeJumpTo
   , R.isaModifyJumpTarget = x64ModifyJumpTarget
   , R.isaMakePadding = x64MakePadding
-  , R.isaMakeTrapIf = x64MakeTrapIf
   , R.isaSymbolizeAddresses = x64SymbolizeAddresses
   , R.isaConcretizeAddresses = x64ConcretizeAddresses
   , R.isaMakeSymbolicJump = x64MakeSymbolicJump
@@ -256,24 +254,6 @@ x64ModifyJumpTarget (XI ii) srcAddr targetAddr
 x64MakePadding :: Word64 -> [Instruction ()]
 x64MakePadding nBytes =
   replicate (fromIntegral nBytes) (makeInstr "int3" [])
-
--- | Use jno and jnc to handle signed and unsigned overflow,
--- respectively.
---
--- Currently uses 'int3' as the halt instruction.  Other choices could
--- be reasonable.
-x64MakeTrapIf :: Instruction t -> R.TrapPredicate -> [Instruction TargetAddress]
-x64MakeTrapIf _ii tp =
-  case tp of
-    R.SignedOverflow -> [ annotateInstr (makeInstr "jno" [jmpOff]) NoAddress
-                        , annotateInstr trap NoAddress
-                        ]
-    R.UnsignedOverflow -> [ annotateInstr (makeInstr "jnc" [jmpOff]) NoAddress
-                          , annotateInstr trap NoAddress
-                          ]
-  where
-    trap = makeInstr "int3" []
-    jmpOff = D.JumpOffset D.JSize32 (D.FixedOffset (fromIntegral (x64Size trap)))
 
 addrRefToAddress :: (D.AddrRef -> TargetAddress) -> D.Value -> TargetAddress
 addrRefToAddress f v =

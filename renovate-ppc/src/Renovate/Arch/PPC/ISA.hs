@@ -93,7 +93,6 @@ isa =
         , R.isaMakeSymbolicJump = ppcMakeSymbolicJump
         , R.isaConcretizeAddresses = ppcConcretizeAddresses
         , R.isaSymbolizeAddresses = ppcSymbolizeAddresses
-        , R.isaMakeTrapIf = error "makeTrapIf is no implemented for PowerPC yet -- move this function out of ISA"
         }
 
 ppcPrettyInstruction :: Instruction a -> String
