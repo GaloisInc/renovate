@@ -1,9 +1,10 @@
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 -- | A simple function recovery pass
 --
 -- This module performs a simple forward reachability pass from the
@@ -25,6 +26,7 @@ import           Control.Applicative
 import qualified Control.Monad.RWS.Strict as RWS
 import qualified Data.Foldable as F
 import qualified Data.Map.Strict as M
+import           Data.Semigroup
 import qualified Data.Set as S
 
 import qualified Data.Macaw.CFG as MM
@@ -137,7 +139,9 @@ processWorklist = do
       RWS.modify' $ \s -> s { fsVisited = S.insert addr (fsVisited s)
                             , fsWorklist = rest
                             }
-      Just b <- M.lookup addr <$> RWS.asks envBlocks
+      b <- M.lookup addr <$> RWS.asks envBlocks >>= \case
+        Just b -> return b
+        Nothing -> L.error $ "Address " <> show addr <> " not found in blocks"
       isa <- RWS.asks envISA
       mem <- RWS.asks envMem
       let addOff = addressAddOffset
