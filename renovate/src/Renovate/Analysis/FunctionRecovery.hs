@@ -145,37 +145,27 @@ processWorklist = do
         [] -> L.error "Empty basic block"
         insns -> do
           let (lastInsn, insnAddr) = last insns
+              addSuccessor = nextBlockAddress b >>= addCFGEdge addr
+              addCond Unconditional = return ()
+              addCond Conditional = addSuccessor
           case isaJumpType isa lastInsn mem insnAddr of
             -- Fallthrough to the next block
-            NoJump -> do
-              successor <- nextBlockAddress b
-              addCFGEdge addr successor
-            Return -> addReturnBlock addr
-            RelativeJump Unconditional jaddr off -> do
+            NoJump -> addSuccessor
+            Return cond -> do
+              addReturnBlock addr
+              addCond cond
+            RelativeJump cond jaddr off -> do
               let target = jaddr `addOff` off
               addCFGEdge addr target
-            RelativeJump Conditional jaddr off -> do
-              let target = jaddr `addOff` off
-              successor <- nextBlockAddress b
-              addCFGEdge addr target
-              addCFGEdge addr successor
-            AbsoluteJump Unconditional dst -> do
+              addCond cond
+            AbsoluteJump cond dst -> do
               addCFGEdge addr dst
-            AbsoluteJump Conditional dst -> do
-              successor <- nextBlockAddress b
-              addCFGEdge addr dst
-              addCFGEdge addr successor
-            IndirectJump Conditional -> do
-              successor <- nextBlockAddress b
-              addCFGEdge addr successor
+              addCond cond
+            IndirectJump cond -> do
+              addCond cond
               markFunctionIncomplete
-            DirectCall {} -> do
-              successor <- nextBlockAddress b
-              addCFGEdge addr successor
-            IndirectCall -> do
-              successor <- nextBlockAddress b
-              addCFGEdge addr successor
-            IndirectJump Unconditional -> markFunctionIncomplete
+            DirectCall {} -> addSuccessor
+            IndirectCall -> addSuccessor
           processWorklist
 
 nextBlockAddress :: (MM.MemWidth (MM.ArchAddrWidth arch)) => ConcreteBlock arch -> M arch (ConcreteAddress arch)

@@ -127,9 +127,9 @@ x64JumpType xi@(XI ii) _mem addr =
   case (D.iiOp ii, map (fst . aoOperand) (D.iiArgs ii)) of
     ("jmp", [D.JumpOffset _ off]) -> R.RelativeJump R.Unconditional addr (fixJumpOffset sz off)
     ("jmp", _) -> R.IndirectJump R.Unconditional
-    ("ret", _) -> R.Return
+    ("ret", _) -> R.Return R.Unconditional
     ('i':'n':'t':_, _) -> R.IndirectCall
-    ('i':'r':'e':'t':_, _) -> R.Return
+    ('i':'r':'e':'t':_, _) -> R.Return R.Unconditional
     ('l':'o':'o':'p':_, [D.JumpOffset _ off]) -> R.RelativeJump R.Conditional addr (fixJumpOffset sz off)
     ('j':_, [D.JumpOffset _ off]) -> R.RelativeJump R.Conditional addr (fixJumpOffset sz off)
     -- We treat calls as conditional jumps for the purposes of basic

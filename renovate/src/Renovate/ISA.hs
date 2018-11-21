@@ -50,7 +50,7 @@ data JumpType arch = RelativeJump JumpCondition (ConcreteAddress arch) (MM.MemWo
                 -- would be better suited to finding this information)
                 | IndirectCall
                 -- ^ A call to an unknown location
-                | Return
+                | Return JumpCondition
                 | NoJump
                 -- ^ The instruction is not a jump
                 deriving (Eq)

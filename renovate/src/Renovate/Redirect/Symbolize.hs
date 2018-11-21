@@ -102,7 +102,7 @@ symbolizeJumps isa mem symAddrMap (cb, symAddr) =
           let symTarget = lookupSymbolicAddress (addr `addressAddOffset` offset)
           in isaSymbolizeAddresses isa mem lookupSymAddr addr (Just symTarget) i
         IndirectCall -> isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
-        Return -> isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
+        Return _ -> isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
         NoJump -> isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
 
     lookupSymbolicAddress target = fromMaybe (StableAddress target) (M.lookup target symAddrMap)
