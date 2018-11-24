@@ -9,7 +9,6 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE ViewPatterns #-}
 -- | An interface for manipulating ELF files
 --
 -- It provides a convenient interface for loading an ELF file,
