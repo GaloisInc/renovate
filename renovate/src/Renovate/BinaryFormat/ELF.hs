@@ -1,6 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NondecreasingIndentation #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -46,6 +47,8 @@ module Renovate.BinaryFormat.ELF (
   riBlockMapping,
   riOutputBlocks
   ) where
+
+import           GHC.Stack ( HasCallStack )
 
 import           Control.Applicative
 import           Control.Arrow ( second )
@@ -98,9 +101,6 @@ import qualified Renovate.Recovery as R
 import qualified Renovate.Redirect as RE
 import qualified Renovate.Redirect.Symbolize as RS
 import qualified Renovate.Rewrite as RW
-
-import Debug.Trace
-import GHC.Stack ( HasCallStack )
 
 -- | The system page alignment (assuming 4k pages)
 pageAlignment :: Word32
@@ -401,7 +401,6 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   textSection <- withCurrentELF findTextSection
   mBaseSymtab <- withCurrentELF getBaseSymbolTable
 
-  withCurrentELF checkLayoutIntegrity
   -- We need to compute the address to start laying out new code.
   --
   -- The new code's virtual address should satisfy a few constraints:
@@ -420,18 +419,13 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- generating segments with relative sizes.
   let (lo, hi) = withinJumpRange cfg textSection
   (newTextAddr, newTextSize) <- withCurrentELF (selectLayoutAddr lo hi (fromIntegral newTextAlign))
-  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral newTextAddr :: Word64)
   riSegmentVirtualAddress L..= Just (fromIntegral newTextAddr)
 
-  withCurrentELF checkLayoutIntegrity
   -- Remove (and pad out) the sections whose size could change if we
   -- modify the binary.  We'll re-add them later (see @appendHeaders@).
   --
   -- This modifies the underlying ELF file
   modifyCurrentELF padDynamicDataRegions
-
-  withCurrentELF checkLayoutIntegrity
-  withCurrentELF showSegmentSizes
 
   -- Convert BSS from NOBITS to PROGBITS
   --
@@ -460,11 +454,8 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- alignment that follows it (in the original binary).
   nobitsSections <- modifyCurrentELF dropBSS
   modifyCurrentELF (fixPostBSSSectionIds nobitsSections)
-  withCurrentELF checkLayoutIntegrity
   modifyCurrentELF (expandPreBSSDataSection nobitsSections)
 
-  withCurrentELF showSegmentSizes
-  -- withCurrentELF checkLayoutIntegrity
   -- Similarly, we need to find space to put new data.  Again, we can't just put
   -- new data directly after or before the actual .data section, as there are a
   -- number of things that come before and after it.  We can't put anything
@@ -516,7 +507,6 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- Wrap the new text section in a loadable segment
   newTextSegment <- withCurrentELF (newExecutableSegment newTextAddr (Seq.singleton (E.ElfDataSection newTextSec)))
   modifyCurrentELF (appendSegment newTextSegment)
-  withCurrentELF checkLayoutIntegrity
   -- Update the symbol table (if there is one)
   --
   -- FIXME: If we aren't updating the symbol table (but there is one), just
@@ -531,11 +521,9 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
     _ -> return ()
 
   modifyCurrentELF appendHeaders
-  withCurrentELF checkLayoutIntegrity
   -- Now overwrite the original code (in the .text segment) with the
   -- content computed by our transformation.
   modifyCurrentELF (overwriteTextSection overwrittenBytes)
-  withCurrentELF checkLayoutIntegrity
   -- Increment all of the segment indexes so that we can reserve the first
   -- segment index (0) for our fresh PHDR segment that we want at the beginning
   -- of the PHDR table (but not at the first offset)
@@ -544,10 +532,6 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- independently, as they are handled specially in elf-edit.
   modifyCurrentELF (\e -> ((),) <$> fixOtherSegmentNumbers e)
   modifyCurrentELF (appendSegment (phdrSegment (fromIntegral phdrSegmentAddress)))
-  withCurrentELF $ \e -> do
-    let layout = E.elfLayout e
-    let currentOffset = E.elfLayoutSize layout
-    traceM (printf "Final elf size is 0x%x" ((fromIntegral currentOffset) :: Int))
   return analysisResult
 
 -- | The (base) virtual address to lay out the PHDR table at
@@ -589,9 +573,6 @@ dropBSS :: ( w ~ MM.ArchAddrWidth arch
          => E.Elf w
          -> ElfRewriter arch ([E.ElfSection (E.ElfWordType w)], E.Elf w)
 dropBSS e0 = do
-  let layout = E.elfLayout e0
-  let currentOffset = E.elfLayoutSize layout
-  traceM (printf "Real offset before BSS expansion is 0x%x" ((fromIntegral currentOffset) :: Int))
   let (e1, nobitsSections) = S.runState (E.traverseElfSegments expandNobitsIfBSS e0) []
   return (nobitsSections, e1)
   where
@@ -628,14 +609,7 @@ expandPreBSSDataSection (L.sortOn E.elfSectionIndex -> nobitsSections) e0 = do
     [] -> return ((), e0)
     firstBss : _ -> do
       let prevSecId = E.elfSectionIndex firstBss - 1
-      e1 <- L.traverseOf E.elfSections (expandIfPrev maxPostBSSAlign prevSecId nobitsSections) e0
-      let layout = E.elfLayout e1
-      let currentOffset = E.elfLayoutSize layout
-      let bsOff = LBS.length (E.elfLayoutBytes layout)
-      traceM (printf "Real offset after BSS expansion (layoutSize) is 0x%x" ((fromIntegral currentOffset) :: Int))
-      traceM (printf "Real offset after BSS expansion (byteSize) is 0x%x" bsOff)
-
-      return ((), e1)
+      ((),) <$> L.traverseOf E.elfSections (expandIfPrev maxPostBSSAlign prevSecId nobitsSections) e0
   where
     (_, maxPostBSSAlign) = foldr maxAlignIfAfterBSS (False, 0) (L.toListOf E.elfSections e0)
     maxAlignIfAfterBSS sec (seenBSS, align)
@@ -663,14 +637,6 @@ expandIfPrev maxPostBSSAlign prevSecId nobitsSections sec
       let paddingBytes = realAlign - (extraBytes `mod` realAlign)
       let newData = B.replicate (fromIntegral (extraBytes + paddingBytes)) 0 -- bssEnd - dataEnd)) 0
       let secData = E.elfSectionData sec <> newData
-      traceM "expandIfPrev"
-      traceM (printf "  Data section ends at 0x%x" ((fromIntegral dataEnd) :: Int))
-      traceM (printf "  BSS ends at 0x%x" ((fromIntegral bssEnd) :: Int))
-      traceM (printf "    Max post alignment is %d" ((fromIntegral maxPostBSSAlign) :: Int))
-      traceM (printf "    Adding %d extra bytes covering data" ((fromIntegral extraBytes) :: Int))
-      traceM (printf "    Adding %d padding bytes to cover alignment" ((fromIntegral paddingBytes) :: Int))
-      -- traceM (printf "    Adding %d bytes of extra zeros" ((fromIntegral (bssEnd - dataEnd)) :: Int))
-      traceM (printf "    Total DS size = %d" (B.length secData))
       return sec { E.elfSectionData = secData
                  , E.elfSectionSize = fromIntegral (B.length secData)
                  }
@@ -719,58 +685,11 @@ fixPostBSSSectionIds nobitsSections e0
         E.ElfDataRaw {} -> return r
 
 
--- | Take a list of sections that were of type NOBITS and convert them into
--- PROGBITS in their own segment
--- reifyNobitsAsSegment :: ( w ~ MM.ArchAddrWidth arch
---                         , E.ElfWidthConstraints w
---                         )
---                      => [E.ElfSection (E.ElfWordType w)]
---                      -> E.Elf w
---                      -> ElfRewriter arch ((), E.Elf w)
--- reifyNobitsAsSegment nobitsSections e0 = do
---   traceM ("nobits segment addr: " ++ show alignedAddr)
---   traceM ("nobits segment alignment: " ++ show alignment)
---   appendSegment seg e0
---   where
---     alignedAddr = minimum (map E.elfSectionAddr nobitsSections)
---     alignment = maximum (map E.elfSectionAddrAlign nobitsSections)
---     seg = E.ElfSegment { E.elfSegmentType = E.PT_LOAD
---                        , E.elfSegmentFlags = E.pf_r .|. E.pf_w
---                        , E.elfSegmentIndex = nextSegmentIndex e0
---                        , E.elfSegmentVirtAddr = alignedAddr
---                        , E.elfSegmentPhysAddr = alignedAddr
---                        , E.elfSegmentAlign = alignment
---                        , E.elfSegmentMemSize = E.ElfAbsoluteSize (sum (map E.elfSectionSize nobitsSections))
---                        , E.elfSegmentData = Seq.fromList (map (E.ElfDataSection . nobitsToProgbits) nobitsSections)
---                        }
-
 dropTrailingNobits :: (Monad f) => [E.ElfSection w] -> E.ElfSection w -> f (Maybe (E.ElfSection w))
 dropTrailingNobits nobitsSections sec
   | E.elfSectionIndex sec `elem` fmap E.elfSectionIndex nobitsSections = return Nothing
   | otherwise = return (Just sec)
 
--- nobitsToProgbits :: (Integral w) => E.ElfSection w -> E.ElfSection w
--- nobitsToProgbits sec =
---   sec { E.elfSectionType = E.SHT_PROGBITS
---       , E.elfSectionData = B.replicate (fromIntegral (E.elfSectionSize sec)) 0
---       }
-
-showSegmentSizes :: (Monad m, Show (E.ElfWordType w)) => E.Elf w -> m ()
-showSegmentSizes e = do
-  F.forM_ (E.elfSegments e) $ \seg -> do
-    traceM ("Segment " ++ show (E.elfSegmentIndex seg) ++ " size = " ++ show (E.elfSegmentMemSize seg))
-
-traverseRegionSections :: (Monad f)
-                       => (E.ElfSection (E.ElfWordType w) -> f (E.ElfSection (E.ElfWordType w)))
-                       -> E.ElfDataRegion w
-                       -> f (E.ElfDataRegion w)
-traverseRegionSections f edr =
-  case edr of
-    E.ElfDataSegment seg -> do
-      contents <- T.traverse (traverseRegionSections f) (E.elfSegmentData seg)
-      return (E.ElfDataSegment (seg { E.elfSegmentData = contents }))
-    E.ElfDataSection sec -> E.ElfDataSection <$> f sec
-    _ -> pure edr
 
 updateRegionSections :: L.Traversal (E.ElfDataRegion w) (Maybe (E.ElfDataRegion w)) (E.ElfSection (E.ElfWordType w)) (Maybe (E.ElfSection (E.ElfWordType w)))
 updateRegionSections f edr =
@@ -796,27 +715,22 @@ updateRegionSections f edr =
 -- having the .bss section, as libc will trigger that condition.
 trailingNobitsSections :: (E.ElfWidthConstraints w) => E.ElfSegment w -> Maybe [E.ElfSection (E.ElfWordType w)]
 trailingNobitsSections seg =
-  let (foundBSS, ixs) = go (E.ElfDataSegment seg) (False, [])
-  in trace (show (foundBSS, ixs)) $ if foundBSS then Just ixs else Nothing
+  let (foundBSS, ixs) = go (False, []) (E.ElfDataSegment seg)
+  in if | null ixs && foundBSS -> error "Found a BSS, but the list of nobits sections is empty"
+        | foundBSS -> Just ixs
+        | otherwise -> Nothing
   where
     isBSS sec = E.elfSectionName sec == ".bss"
-    go r acc@(foundBSS, ixs) =
+    go acc@(foundBSS, ixs) r =
       case r of
-        E.ElfDataSegment seg' -> F.foldr go acc (E.elfSegmentData seg')
+        E.ElfDataSegment seg' -> F.foldl' go acc (E.elfSegmentData seg')
         E.ElfDataSection sec
           | and [ E.elfSectionType sec == E.SHT_NOBITS
                 , E.elfSectionAddr sec /= 0
                 ] -> (foundBSS || isBSS sec, sec : ixs)
-          | E.elfSectionAddr sec /= 0 -> (foundBSS || isBSS sec, ixs)
+          | E.elfSectionAddr sec == 0 -> (foundBSS || isBSS sec, ixs)
           | otherwise -> (foundBSS || isBSS sec, [])
         _ -> acc
-
-checkLayoutIntegrity :: (HasCallStack, Integral (E.ElfWordType w)) => E.Elf w -> ElfRewriter arch ()
-checkLayoutIntegrity e = do
-  let layout = E.elfLayout e
-  let sz = E.elfLayoutSize layout
-  let bytes = E.elfLayoutBytes layout
-  assertM (fromIntegral sz == LBS.length bytes)
 
 -- | Append a segment to the current ELF binary
 --
@@ -841,8 +755,6 @@ appendSegment seg e = do
   let align = E.elfSegmentAlign seg
   let desiredOffset = alignValue currentOffset align
   let paddingBytes = desiredOffset - currentOffset
-  traceM ("Adding " ++ show paddingBytes ++ " bytes of padding for segment " ++ show (E.elfSegmentIndex seg))
-  traceM ("  (align, desiredOffset, currentOffset) = " ++ show (align, desiredOffset, currentOffset))
   let paddingRegion = E.ElfDataRaw (B.replicate (fromIntegral paddingBytes) 0)
   let newRegions = if paddingBytes > 0 then [ paddingRegion, E.ElfDataSegment seg ] else [ E.ElfDataSegment seg ]
   return ((), e L.& E.elfFileData L.%~ (`mappend` Seq.fromList newRegions))
@@ -1015,7 +927,6 @@ appendDataRegion :: (w ~ MM.ArchAddrWidth arch, Ord (E.ElfWordType w), Integral 
 appendDataRegion r align e = do
   let layout = E.elfLayout e
   let currentOffset = E.elfLayoutSize layout
-  -- let currentOffset = LBS.length (E.elfLayoutBytes layout)
   let alignedOffset = alignValue currentOffset (fromIntegral align)
   let paddingBytes = alignedOffset - currentOffset
   let paddingRegion = E.ElfDataRaw (B.replicate (fromIntegral paddingBytes) 0)
