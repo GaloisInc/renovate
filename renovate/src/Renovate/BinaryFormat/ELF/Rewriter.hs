@@ -10,6 +10,7 @@ module Renovate.BinaryFormat.ELF.Rewriter (
   RewriterInfo(..),
   emptyRewriterInfo,
   SomeBlocks(..),
+  assertM,
   -- * Lenses
   riInitialBytes,
   riSmallBlockCount,
@@ -32,8 +33,10 @@ module Renovate.BinaryFormat.ELF.Rewriter (
   ) where
 
 import           GHC.Generics ( Generic )
+import           GHC.Stack ( HasCallStack )
 
 import           Control.Applicative
+import qualified Control.Exception as X
 import qualified Control.Lens as L
 import qualified Control.Monad.Catch.Pure as P
 import qualified Control.Monad.IO.Class as IO
@@ -52,6 +55,9 @@ import qualified Renovate.BasicBlock as B
 import qualified Renovate.Diagnostic as RD
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Rewrite as RW
+
+assertM :: (Monad m, HasCallStack) => Bool -> m ()
+assertM b = X.assert b (return ())
 
 -- | Statistics gathered and diagnostics generated during the
 -- rewriting phase.
