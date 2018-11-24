@@ -1,7 +1,6 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE NondecreasingIndentation #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -48,11 +47,8 @@ module Renovate.BinaryFormat.ELF (
   riOutputBlocks
   ) where
 
-import           GHC.Stack ( HasCallStack )
-
 import           Control.Applicative
 import           Control.Arrow ( second )
-import qualified Control.Exception as X
 import qualified Control.Lens as L
 import           Control.Lens ( (^.) )
 import           Control.Monad ( guard, when )
@@ -73,7 +69,6 @@ import           Data.Maybe ( catMaybes, maybeToList, listToMaybe, isJust )
 import           Data.Monoid
 import qualified Data.Ord as O
 import qualified Data.Sequence as Seq
-import qualified Data.Traversable as T
 import           Data.Typeable ( Typeable )
 import qualified Data.Vector as V
 import           Data.Word ( Word16, Word32, Word64 )
@@ -94,6 +89,7 @@ import qualified Renovate.Analysis.FunctionRecovery as FR
 import qualified Renovate.Arch as Arch
 import qualified Renovate.BasicBlock as B
 import qualified Renovate.BasicBlock.Assemble as BA
+import           Renovate.BinaryFormat.ELF.BSS ( expandBSS )
 import           Renovate.BinaryFormat.ELF.Rewriter
 import           Renovate.Config
 import qualified Renovate.Diagnostic as RD
@@ -427,34 +423,15 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- This modifies the underlying ELF file
   modifyCurrentELF padDynamicDataRegions
 
-  -- Convert BSS from NOBITS to PROGBITS
+  -- The .bss is a special section in a binary that comes after the data
+  -- section.  It holds zero-initialized data, and is not explicitly represented
+  -- in the binary (aside from the entry in the section table).  The Linux
+  -- kernel refuses to properly initialize .bss if there is a segment loaded
+  -- before the .bss, but with a higher address.
   --
-  -- We may be adding segments after the data segment, which breaks the kernel
-  -- ELF loader handling of the BSS (i.e., it won't zero initialize or even
-  -- necessarily reserve all of the necessary space).  To work around this, we
-  -- just turn the BSS from NOBITS to PROGBITS, meaning we explicitly fill the
-  -- section with zeros.
-  --
-  -- We should be able to do this after selecting the layout addresses, as we
-  -- aren't actually changing the address range covered by the data section
-  -- (just the physical range of bytes in the file)
-  --
-  -- FIXME: This is almost right, except it ends up throwing off the alignment
-  -- of the section that comes after the former BSS.  Actually, it is the
-  -- section after the next section, which has a stricter alignment requirement.
-  -- We can fix this by doing a lookahead on all of the rest of the sections
-  -- that come after this one to actually extend the (extended) data section
-  -- even further to maintain future alignment.
-  --
-  -- We don't know where the data section (which we are expanding) starts in
-  -- terms of offset, but we do know what the offset is congruent to.  We are
-  -- adding an amount of data that is not congruent to the alignment of all
-  -- sections after it (i.e., 716 is not evenly divisible by 8).  We just need
-  -- to round up the amount of data we add to be a multiple of the highest
-  -- alignment that follows it (in the original binary).
-  nobitsSections <- modifyCurrentELF dropBSS
-  modifyCurrentELF (fixPostBSSSectionIds nobitsSections)
-  modifyCurrentELF (expandPreBSSDataSection nobitsSections)
+  -- To work around this, we expand the data section to cover the .bss region
+  -- and explicitly initialize that data with zeros.
+  modifyCurrentELF expandBSS
 
   -- Similarly, we need to find space to put new data.  Again, we can't just put
   -- new data directly after or before the actual .data section, as there are a
@@ -551,186 +528,6 @@ programHeaderCount e = sum [ E.elfSegmentCount e
                            , if isJust (E.elfGnuStackSegment e) then 1 else 0
                            , length (E.elfGnuRelroRegions e)
                            ]
-
--- | Convert the BSS (and any other NOBITS sections) into a PROGBITS section.
---
--- The underlying problem is that we are going to add loadable segments after
--- the original data segment.  The kernel ELF loader only properly initializes
--- BSS if it is in the segment with the highest loadable address.  Since we
--- can't always fit everything at a lower address than data (especially when
--- dealing with PIC binaries), that means that our BSS is not set up properly,
--- leading to crashes.
---
--- Our solution is to modify things so that the kernel doesn't have to set up
--- BSS for us.  We just change any NOBITS sections into PROGBITS.  This wastes
--- some space, but avoids the problem.  We only change the NOBITS sections at
--- the very end of the segment.
---
--- Returns the nobits sections so that they can be stuffed into a new segment
-dropBSS :: ( w ~ MM.ArchAddrWidth arch
-            , E.ElfWidthConstraints w
-            )
-         => E.Elf w
-         -> ElfRewriter arch ([E.ElfSection (E.ElfWordType w)], E.Elf w)
-dropBSS e0 = do
-  let (e1, nobitsSections) = S.runState (E.traverseElfSegments expandNobitsIfBSS e0) []
-  return (nobitsSections, e1)
-  where
-    expandNobitsIfBSS seg
-      | Just nobitsSections <- trailingNobitsSections seg = do
-          S.put nobitsSections
-          segContents' <- catMaybes <$> mapM (updateRegionSections (dropTrailingNobits nobitsSections)) (F.toList (E.elfSegmentData seg))
-          return seg { E.elfSegmentData = Seq.fromList segContents'
-                     , E.elfSegmentMemSize = E.ElfRelativeSize 0
-                     }
-      | otherwise = return seg
-
-assertM :: (Monad m, HasCallStack) => Bool -> m ()
-assertM b = X.assert b (return ())
-
-sequential :: (Num a, Eq a) => [a] -> Bool
-sequential [] = True
-sequential [_] = True
-sequential (a : rest@(b : _)) = a + 1 == b && sequential rest
-
--- | Expands the data section immediately before the BSS to cover the address
--- range of all of the BSS sections.  The data is explicitly zero-initialized.
---
--- NOTE: This currently works based on section numbers rather than addresses
-expandPreBSSDataSection :: ( w ~ MM.ArchAddrWidth arch
-                           , E.ElfWidthConstraints w
-                           )
-                        => [E.ElfSection (E.ElfWordType w)]
-                        -> E.Elf w
-                        -> ElfRewriter arch ((), E.Elf w)
-expandPreBSSDataSection (L.sortOn E.elfSectionIndex -> nobitsSections) e0 = do
-  assertM (sequential (map E.elfSectionIndex nobitsSections))
-  case nobitsSections of
-    [] -> return ((), e0)
-    firstBss : _ -> do
-      let prevSecId = E.elfSectionIndex firstBss - 1
-      ((),) <$> L.traverseOf E.elfSections (expandIfPrev maxPostBSSAlign prevSecId nobitsSections) e0
-  where
-    (_, maxPostBSSAlign) = foldr maxAlignIfAfterBSS (False, 0) (L.toListOf E.elfSections e0)
-    maxAlignIfAfterBSS sec (seenBSS, align)
-      | seenBSS && E.elfSectionIndex sec `notElem` map E.elfSectionIndex nobitsSections =
-        (True, max align (E.elfSectionAddrAlign sec))
-      | otherwise = (seenBSS || E.elfSectionIndex sec `elem` map E.elfSectionIndex nobitsSections, align)
-
-expandIfPrev :: (Monad m, Integral w)
-             => w
-             -> Word16
-             -> [E.ElfSection w]
-             -> E.ElfSection w
-             -> m (E.ElfSection w)
-expandIfPrev maxPostBSSAlign prevSecId nobitsSections sec
-  | E.elfSectionIndex sec /= prevSecId = return sec
-  | otherwise = do
-      let dataEnd = sectionEnd sec
-      let bssEnd = maximum (map sectionEnd nobitsSections)
-      -- extraBytes is the number of bytes from the end of the data section to cover the entire bss
-      let extraBytes = bssEnd - dataEnd
-      -- paddingBytes come after the bss to properly align the rest of the
-      -- sections that come after data (which formerly had been aligned to the
-      -- end of data).  We do the max with 1 to ensure we don't divide by zero.
-      let realAlign = max 1 maxPostBSSAlign
-      let paddingBytes = realAlign - (extraBytes `mod` realAlign)
-      let newData = B.replicate (fromIntegral (extraBytes + paddingBytes)) 0 -- bssEnd - dataEnd)) 0
-      let secData = E.elfSectionData sec <> newData
-      return sec { E.elfSectionData = secData
-                 , E.elfSectionSize = fromIntegral (B.length secData)
-                 }
-  where
-    sectionEnd s = E.elfSectionAddr s + E.elfSectionSize s
-
-fixPostBSSSectionIds :: [E.ElfSection (E.ElfWordType w)]
-                     -> E.Elf w
-                     -> ElfRewriter arch ((), E.Elf w)
-fixPostBSSSectionIds nobitsSections e0
-  | null nobitsSections = return ((), e0)
-  | otherwise = do
-      e1 <- L.traverseOf E.elfSections secFixIfPostBSS e0
-      ((),) <$> L.traverseOf E.traverseElfDataRegions regionFixIfPostBSS e1
-  where
-    lastBSSSectionId = maximum (map E.elfSectionIndex nobitsSections)
-    numBSS = fromIntegral (length nobitsSections)
-    secFixIfPostBSS sec
-      | E.elfSectionIndex sec > lastBSSSectionId =
-        return sec { E.elfSectionIndex = E.elfSectionIndex sec - numBSS }
-      | otherwise = return sec
-    regionFixIfPostBSS r =
-      case r of
-        E.ElfDataSectionNameTable ix
-          | ix > lastBSSSectionId -> return (E.ElfDataSectionNameTable (ix - numBSS))
-          | otherwise -> return r
-        E.ElfDataStrtab ix
-          | ix > lastBSSSectionId -> return (E.ElfDataStrtab (ix - numBSS))
-          | otherwise -> return r
-        E.ElfDataGOT got
-          | E.elfGotIndex got > lastBSSSectionId -> do
-            let got' = got { E.elfGotIndex = E.elfGotIndex got - numBSS }
-            return (E.ElfDataGOT got')
-          | otherwise -> return r
-        E.ElfDataSymtab st
-          | E.elfSymbolTableIndex st > lastBSSSectionId -> do
-            let st' = st { E.elfSymbolTableIndex = E.elfSymbolTableIndex st - numBSS }
-            return (E.ElfDataSymtab st')
-          | otherwise -> return r
-        E.ElfDataSegmentHeaders {} -> return r
-        E.ElfDataSegment {} -> return r
-        E.ElfDataSectionHeaders {} -> return r
-        E.ElfDataElfHeader {} -> return r
-        -- Sections are taken care of in the step before this
-        E.ElfDataSection {} -> return r
-        E.ElfDataRaw {} -> return r
-
-
-dropTrailingNobits :: (Monad f) => [E.ElfSection w] -> E.ElfSection w -> f (Maybe (E.ElfSection w))
-dropTrailingNobits nobitsSections sec
-  | E.elfSectionIndex sec `elem` fmap E.elfSectionIndex nobitsSections = return Nothing
-  | otherwise = return (Just sec)
-
-
-updateRegionSections :: L.Traversal (E.ElfDataRegion w) (Maybe (E.ElfDataRegion w)) (E.ElfSection (E.ElfWordType w)) (Maybe (E.ElfSection (E.ElfWordType w)))
-updateRegionSections f edr =
-  case edr of
-    E.ElfDataSegment seg ->
-      let toRegion c = E.ElfDataSegment (seg { E.elfSegmentData = Seq.fromList c })
-      in Just <$> toRegion <$> catMaybes <$> T.traverse (updateRegionSections f) (F.toList (E.elfSegmentData seg))
-    E.ElfDataSection sec -> fmap E.ElfDataSection <$> f sec
-    _ -> pure (Just edr)
-
--- | Return the list of section indexes that occur at the end of the segment.
---
--- Specifically, we are looking for all of the NOBITS sections at the end of a
--- segment (where they are the last sections assigned addresses).  Additionally,
--- we require at least one to be named .bss
---
--- NOTE: This is kind of a proxy test, but is probably good enough in practice.
--- What we really want to test is if this is the last segment /and/ it ends in
--- at least one section that is 1) of type NOBITS, and 2) has a virtual address.
---
--- Unfortunately, the full test is kind of difficult given the existing
--- combinators.  In any realistic binary, we can identify this condition as just
--- having the .bss section, as libc will trigger that condition.
-trailingNobitsSections :: (E.ElfWidthConstraints w) => E.ElfSegment w -> Maybe [E.ElfSection (E.ElfWordType w)]
-trailingNobitsSections seg =
-  let (foundBSS, ixs) = go (False, []) (E.ElfDataSegment seg)
-  in if | null ixs && foundBSS -> error "Found a BSS, but the list of nobits sections is empty"
-        | foundBSS -> Just ixs
-        | otherwise -> Nothing
-  where
-    isBSS sec = E.elfSectionName sec == ".bss"
-    go acc@(foundBSS, ixs) r =
-      case r of
-        E.ElfDataSegment seg' -> F.foldl' go acc (E.elfSegmentData seg')
-        E.ElfDataSection sec
-          | and [ E.elfSectionType sec == E.SHT_NOBITS
-                , E.elfSectionAddr sec /= 0
-                ] -> (foundBSS || isBSS sec, sec : ixs)
-          | E.elfSectionAddr sec == 0 -> (foundBSS || isBSS sec, ixs)
-          | otherwise -> (foundBSS || isBSS sec, [])
-        _ -> acc
 
 -- | Append a segment to the current ELF binary
 --
