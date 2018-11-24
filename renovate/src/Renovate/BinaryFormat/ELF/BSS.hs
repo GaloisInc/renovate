@@ -112,7 +112,7 @@ expandIfPrev maxPostBSSAlign prevSecId nobitsSections sec
       -- end of data).  We do the max with 1 to ensure we don't divide by zero.
       let realAlign = max 1 maxPostBSSAlign
       let paddingBytes = realAlign - (extraBytes `mod` realAlign)
-      let newData = B.replicate (fromIntegral (extraBytes + paddingBytes)) 0 -- bssEnd - dataEnd)) 0
+      let newData = B.replicate (fromIntegral (extraBytes + paddingBytes)) 0
       let secData = E.elfSectionData sec <> newData
       return sec { E.elfSectionData = secData
                  , E.elfSectionSize = fromIntegral (B.length secData)
