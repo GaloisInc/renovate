@@ -35,6 +35,7 @@ module Renovate.Arch.X86_64 (
   DisassemblyFailure(..)
   ) where
 
+import           Control.Monad.IO.Class ( liftIO )
 import qualified Data.Macaw.X86 as X86
 import qualified Data.Macaw.X86.Symbolic as SX86
 
@@ -74,7 +75,7 @@ config analysis = R.RenovateConfig
 instance R.ArchInfo X86.X86_64 where
   archVals _ = Just (R.ArchVals { R.archFunctions = SX86.x86_64MacawSymbolicFns
                                 , R.withArchEval = \sym k -> do
-                                    sfns <- SX86.newSymFuns sym
+                                    sfns <- liftIO $ SX86.newSymFuns sym
                                     k (SX86.x86_64MacawEvalFn sfns)
                                 , R.withArchConstraints = \x -> x
                                 })

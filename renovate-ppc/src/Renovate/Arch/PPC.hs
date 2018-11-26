@@ -25,6 +25,7 @@ module Renovate.Arch.PPC (
   InstructionDisassemblyFailure(..)
   ) where
 
+import           Control.Monad.IO.Class ( liftIO )
 import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.CFG.Core as MC
 import qualified Data.Macaw.Memory as MM
@@ -97,7 +98,7 @@ config64 analysis = R.RenovateConfig
 instance R.ArchInfo MP.PPC64 where
   archVals _ = Just (R.ArchVals { R.archFunctions = MPS.ppc64MacawSymbolicFns
                                 , R.withArchEval = \sym k -> do
-                                    sfns <- MPS.newSymFuns sym
+                                    sfns <- liftIO $ MPS.newSymFuns sym
                                     k (MPS.ppc64MacawEvalFn sfns)
                                 , R.withArchConstraints = \x -> x
                                 })
@@ -105,7 +106,7 @@ instance R.ArchInfo MP.PPC64 where
 instance R.ArchInfo MP.PPC32 where
   archVals _ = Just (R.ArchVals { R.archFunctions = MPS.ppc32MacawSymbolicFns
                                 , R.withArchEval = \sym k -> do
-                                    sfns <- MPS.newSymFuns sym
+                                    sfns <- liftIO $ MPS.newSymFuns sym
                                     k (MPS.ppc32MacawEvalFn sfns)
                                 , R.withArchConstraints = \x -> x
                                 })

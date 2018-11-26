@@ -26,15 +26,15 @@ module Renovate.Recovery (
   Diagnostic(..)
   ) where
 
-import qualified GHC.Err.Located as L
 import qualified Control.Lens as L
-import qualified Control.Monad.Catch as C
 import           Control.Monad ( guard )
+import qualified Control.Monad.Catch as C
+import           Control.Monad.IO.Class ( MonadIO )
 import           Control.Monad.ST ( stToIO, ST, RealWorld )
 import qualified Data.ByteString as B
-import qualified Data.List.NonEmpty as NEL
 import qualified Data.Foldable as F
 import qualified Data.IORef as IO
+import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as M
 import           Data.Maybe ( catMaybes, fromMaybe, mapMaybe )
 import           Data.Proxy ( Proxy(..) )
@@ -42,6 +42,7 @@ import qualified Data.Set as S
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Encoding.Error as T
 import qualified Data.Traversable as T
+import qualified GHC.Err.Located as L
 
 import qualified Data.Macaw.Architecture.Info as MC
 import qualified Data.Macaw.CFG as MC
@@ -160,7 +161,7 @@ analyzeDiscoveredFunctions recovery mem textAddrRange info !iterations =
 
 data ArchVals arch =
   ArchVals { archFunctions :: MS.MacawSymbolicArchFunctions arch
-           , withArchEval :: forall a sym . (C.IsSymInterface sym) =>  sym  -> (MS.MacawArchEvalFn sym arch -> IO a) -> IO a
+           , withArchEval :: forall a sym m . (C.IsSymInterface sym, MonadIO m) =>  sym -> (MS.MacawArchEvalFn sym arch -> m a) -> m a
            , withArchConstraints :: forall a . ((C.IsSyntaxExtension (MS.MacawExt arch), MC.MemWidth (MC.ArchAddrWidth arch), MC.PrettyF (MC.ArchReg arch)) => a) -> a
            }
 
