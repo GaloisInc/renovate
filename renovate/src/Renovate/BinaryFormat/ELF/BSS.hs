@@ -13,6 +13,7 @@ import qualified Control.Lens as L
 import qualified Control.Monad.State.Strict as S
 import qualified Data.ByteString as B
 import qualified Data.ElfEdit as E
+import           Data.Semigroup
 import qualified Data.Foldable as F
 import qualified Data.List as L
 import qualified Data.Macaw.CFG as MM
@@ -22,6 +23,9 @@ import qualified Data.Traversable as T
 import           Data.Word ( Word16 )
 
 import           Renovate.BinaryFormat.ELF.Rewriter
+
+import           Prelude
+
 
 -- | The .bss is a special data section that contains zero-initialized data.
 -- Since the data is known, it doesn't need to be explicitly present in the
