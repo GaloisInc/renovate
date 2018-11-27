@@ -46,7 +46,7 @@ executable refurbish
 test-suite refurbish-tests
   default-language: Haskell2010
   type: exitcode-stdio-1.0
-  ghc-options: -Wall
+  ghc-options: -Wall -rtsopts -threaded
   hs-source-dirs: tests
   main-is: Main.hs
   build-depends: base,
