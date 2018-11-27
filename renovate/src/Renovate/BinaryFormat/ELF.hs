@@ -951,16 +951,8 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
           preAnalysisResult <- preAnalyze rae
           analysisResult <- RW.rewriteIO (analyze rae preAnalysisResult)
           setupVal <- preRewrite rae analysisResult
-          injectedFunctions <- RW.getInjectedFunctions
           RE.runRewriterT isa mem symmap $ do
-            -- FIXME: The handling of injected code is wrong here.  We need to
-            -- actually force redirect (and runRewriterT) to have a base monad
-            -- with access to the rewriter state, as the rewriter action can
-            -- actually inject functions, too.
-            --
-            -- The current code forgets any functions injected during rewriting,
-            -- which is wrong.
-            r <- RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewrite rae analysisResult setupVal) mem strat layoutAddr baseSymBlocks injectedFunctions
+            r <- RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewrite rae analysisResult setupVal) mem strat layoutAddr baseSymBlocks
             return (analysisResult, r)
         (analysisResult, (allBlocks, injected)) <- extractOrThrowRewriterResult eBlocks r1
         let s1 = RE.rrState r1

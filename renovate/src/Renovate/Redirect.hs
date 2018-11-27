@@ -10,7 +10,6 @@ module Renovate.Redirect (
   SymbolicAddress,
   TaggedInstruction,
   -- * Rewriter Monad
-  RM.runRewriter,
   RM.runRewriterT,
   RM.Diagnostic(..),
   RM.RewriterResult(..),
@@ -45,6 +44,7 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , LayoutPair(..) )
 import           Renovate.Redirect.Internal
 import qualified Renovate.Redirect.Monad as RM
+import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions )
 
 -- | Given a list of basic blocks with instructions of type @i@ with
 -- annotation @a@ (which is fixed by the 'ISA' choice), rewrite the
@@ -59,7 +59,7 @@ import qualified Renovate.Redirect.Monad as RM
 -- The function runs in an arbitrary 'Monad' to allow instrumentors to
 -- carry around their own state.
 --
-redirect :: (Monad m, InstructionConstraints arch)
+redirect :: (Monad m, InstructionConstraints arch, HasInjectedFunctions m arch)
          => ISA arch
          -- ^ Information about the ISA in use
          -> BlockInfo arch
@@ -77,9 +77,8 @@ redirect :: (Monad m, InstructionConstraints arch)
          -- ^ The start address for the copied blocks
          -> [(ConcreteBlock arch, SymbolicBlock arch)]
          -- ^ Symbolized basic blocks
-         -> [(SymbolicAddress arch, BS.ByteString)]
          -> RM.RewriterT arch m ([ConcreteBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)])
-redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr baseSymBlocks injectedCode = do
+redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr baseSymBlocks = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
     -- We only want to instrument blocks that:
@@ -107,6 +106,7 @@ redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr baseS
        when (isIncompleteBlockAddress blockInfo (basicBlockAddress cb)) $ do
          RM.recordIncompleteBlock
        return (SymbolicPair (LayoutPair cb sb Unmodified))
+  injectedCode <- lift getInjectedFunctions
   layout <- concretize strat layoutAddr transformedBlocks injectedCode
   let concretizedBlocks = programBlockLayout layout
   let paddingBlocks = layoutPaddingBlocks layout
