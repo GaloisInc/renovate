@@ -29,6 +29,9 @@ import           Text.Read ( readMaybe )
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.BinaryLoader as MBL
 import           Data.Macaw.BinaryLoader.X86 ()
+import qualified Data.Macaw.Symbolic as MS
+import           Data.Macaw.PPC.Symbolic ()
+import           Data.Macaw.X86.Symbolic ()
 import qualified Data.Parameterized.NatRepr as NR
 import qualified Lang.Crucible.FunctionHandle as C
 
@@ -115,7 +118,7 @@ toRewritingTest mRunner hdlAlloc strat exePath = T.testCase exePath $ do
 
 testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , E.ElfWidthConstraints w
-                , R.ArchBits arch
+                , MS.ArchBits arch
                 , R.InstructionConstraints arch
                 , MBL.BinaryLoader arch (E.Elf w)
                 )
@@ -175,7 +178,7 @@ readTestArguments exePath = do
 
 withELF :: FilePath
         -> [(R.Architecture, R.SomeConfig R.AnalyzeAndRewrite a)]
-        -> (forall arch . (R.ArchBits arch,
+        -> (forall arch . (MS.ArchBits arch,
                                   MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch)),
                                   E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                                   R.InstructionConstraints arch)
