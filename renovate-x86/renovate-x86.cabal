@@ -48,6 +48,7 @@ test-suite renovate-x86-tests
   build-depends: base,
                  parameterized-utils,
                  macaw-base,
+                 macaw-symbolic,
                  macaw-x86,
                  macaw-x86-symbolic,
                  bytestring,

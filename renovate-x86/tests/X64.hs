@@ -22,6 +22,7 @@ import qualified Data.Macaw.BinaryLoader as MBL
 import           Data.Macaw.BinaryLoader.X86 ()
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.Symbolic as MS
+import           Data.Macaw.X86.Symbolic ()
 
 import qualified Lang.Crucible.FunctionHandle as C
 

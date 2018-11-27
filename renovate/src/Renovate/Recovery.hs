@@ -26,7 +26,6 @@ module Renovate.Recovery (
 import qualified Control.Lens as L
 import           Control.Monad ( guard )
 import qualified Control.Monad.Catch as C
-import           Control.Monad.IO.Class ( MonadIO )
 import           Control.Monad.ST ( stToIO, ST, RealWorld )
 import qualified Data.ByteString as B
 import qualified Data.Foldable as F
