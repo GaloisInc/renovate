@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 module Main ( main ) where
@@ -21,7 +22,6 @@ import           System.FilePath.Glob ( namesMatching )
 import qualified System.IO as IO
 import qualified System.IO.Temp as TMP
 import qualified System.Posix.Files as SPF
-import qualified System.Process as P
 import qualified Test.Tasty as T
 import qualified Test.Tasty.HUnit as T
 import           Text.Read ( readMaybe )
@@ -36,9 +36,14 @@ import qualified Renovate as R
 import qualified Renovate.Arch.PPC as RP
 import qualified Renovate.Arch.X86_64 as RX
 
+import qualified Refurbish.Docker as RD
+
+import qualified Identity as RTId
+import qualified Inject as RTIn
+
 main :: IO ()
 main = do
-  eqemu <- initializeQemuRunner
+  eqemu <- RD.initializeQemuRunner
   mRunner <- case eqemu of
     Left (ec, out, err) -> do
       IO.hPutStrLn IO.stderr ("Failed to initialize qemu-runner container: " ++ show ec)
@@ -48,15 +53,45 @@ main = do
     Right runner -> return (Just runner)
   exes <- namesMatching "tests/binaries/*.exe"
   hdlAlloc <- C.newHandleAllocator
+  let injection = [ ("tests/injection-base/injection-base.ppc64.exe", "tests/injection-base/ppc64-exit.bin")]
   T.defaultMain $ T.testGroup "RefurbishTests" [
-    rewritingTests mRunner hdlAlloc R.Parallel exes
+    rewritingTests mRunner hdlAlloc R.Parallel exes,
+    rewritingTests mRunner hdlAlloc (R.Compact R.SortedOrder) exes,
+    codeInjectionTests mRunner hdlAlloc R.Parallel injection,
+    codeInjectionTests mRunner hdlAlloc (R.Compact R.SortedOrder) injection
     ]
+
+-- | Generate a set of tests for the code injection API
+--
+-- Right now, the one test is pretty simple: take a binary that just exits with
+-- a non-zero exit code and use the code injection API to insert a call to a
+-- function that instead makes it exit with 0.
+codeInjectionTests :: Maybe RD.Runner
+                   -> C.HandleAllocator RealWorld
+                   -> R.LayoutStrategy
+                   -> [(FilePath, FilePath)]
+                   -> T.TestTree
+codeInjectionTests mRunner hdlAlloc strat exes =
+  T.testGroup ("Injecting " ++ show strat) (map (toCodeInjectionTest mRunner hdlAlloc strat) exes)
+
+toCodeInjectionTest :: Maybe RD.Runner
+                    -> C.HandleAllocator RealWorld
+                    -> R.LayoutStrategy
+                    -> (FilePath, FilePath)
+                    -> T.TestTree
+toCodeInjectionTest mRunner hdlAlloc strat (exePath, injectCodePath) = T.testCase exePath $ do
+  ic <- BS.readFile injectCodePath
+  let injAnalysis = RP.config64 (RTIn.injectionAnalysis ic RTIn.ppc64Inject)
+  let configs = [ (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr injAnalysis)
+                ]
+  withELF exePath configs (testRewriter mRunner hdlAlloc strat exePath RTIn.injectionEquality)
+
 
 -- | Generate a set of rewriting tests
 --
 -- If the runner is not 'Nothing', each test will use the runner to validate
 -- that the executable still runs correctly
-rewritingTests :: Maybe Runner
+rewritingTests :: Maybe RD.Runner
                -> C.HandleAllocator RealWorld
                -> R.LayoutStrategy
                -> [FilePath]
@@ -65,30 +100,18 @@ rewritingTests mRunner hdlAlloc strat exes =
   T.testGroup ("Rewriting" ++ show strat)
               (map (toRewritingTest mRunner hdlAlloc strat) exes)
 
-toRewritingTest :: Maybe Runner
+toRewritingTest :: Maybe RD.Runner
                 -> C.HandleAllocator RealWorld
                 -> R.LayoutStrategy
                 -> FilePath
                 -> T.TestTree
 toRewritingTest mRunner hdlAlloc strat exePath = T.testCase exePath $ do
-  bytes <- BS.readFile exePath
-  let configs :: [(R.Architecture, R.SomeConfig R.AnalyzeAndRewrite (Const ()))]
-      configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analysis))
-                , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
-                , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))
+  let configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 RTId.analysis))
+                , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 RTId.analysis))
+                , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config RTId.analysis))
                 ]
-  case E.parseElf bytes of
-    E.ElfHeaderError _ err -> T.assertFailure ("ELF header error: " ++ err)
-    E.Elf32Res errs e32 -> do
-      case errs of
-        [] -> return ()
-        _ -> T.assertFailure ("ELF32 errors: " ++ show errs)
-      R.withElfConfig (E.Elf32 e32) configs (testRewriter mRunner hdlAlloc strat exePath)
-    E.Elf64Res errs e64 -> do
-      case errs of
-        [] -> return ()
-        _ -> T.assertFailure ("ELF64 errors: " ++ show errs)
-      R.withElfConfig (E.Elf64 e64) configs (testRewriter mRunner hdlAlloc strat exePath)
+
+  withELF exePath configs (testRewriter mRunner hdlAlloc strat exePath RTId.allOutputEqual)
 
 testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , E.ElfWidthConstraints w
@@ -96,15 +119,16 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , R.InstructionConstraints arch
                 , MBL.BinaryLoader arch (E.Elf w)
                 )
-             => Maybe Runner
+             => Maybe RD.Runner
              -> C.HandleAllocator RealWorld
              -> R.LayoutStrategy
              -> FilePath
+             -> ((E.ExitCode, E.ExitCode) -> (String, String) -> (String, String) -> IO ())
              -> R.RenovateConfig arch (E.Elf w) R.AnalyzeAndRewrite (Const ())
              -> E.Elf w
              -> MBL.LoadedBinary arch (E.Elf w)
              -> IO ()
-testRewriter mRunner hdlAlloc strat exePath rc e loadedBinary = do
+testRewriter mRunner hdlAlloc strat exePath assertions rc e loadedBinary = do
   (e', _, _) <- R.rewriteElf rc hdlAlloc e loadedBinary strat
   let !bs = force (E.renderElf e')
   T.assertBool "Invalid ELF length" (LBS.length bs > 0)
@@ -114,7 +138,7 @@ testRewriter mRunner hdlAlloc strat exePath rc e loadedBinary = do
   -- specified).
   case mRunner of
     Nothing -> return ()
-    Just (Runner runner) -> do
+    Just runner -> do
       TMP.withSystemTempFile "refurbish.exe" $ \texe thdl -> do
         LBS.hPut thdl bs
         -- We have to close the handle so that it can be executed inside of the container
@@ -125,11 +149,9 @@ testRewriter mRunner hdlAlloc strat exePath rc e loadedBinary = do
         -- The name of the executable mapped into the container
         let targetName = "/tmp/refurbish.exe"
         F.forM_ argLists $ \argList -> do
-          (origRC, origOut, origErr) <- runner [(pwd </> exePath, targetName)] (targetName : argList)
-          (modRC, modOut, modErr) <- runner [(texe, targetName)] (targetName : argList)
-          T.assertEqual "Stdout" origOut modOut
-          T.assertEqual "Stderr" origErr modErr
-          T.assertEqual "Exit code" origRC modRC
+          (origRC, origOut, origErr) <- RD.runInContainer runner [(pwd </> exePath, targetName)] (targetName : argList)
+          (modRC, modOut, modErr) <- RD.runInContainer runner [(texe, targetName)] (targetName : argList)
+          assertions (origRC, modRC) (origOut, modOut) (origErr, modErr)
 
 -- | Given a test executable, read the list of argument lists for a test executable
 --
@@ -148,35 +170,31 @@ readTestArguments exePath = do
         Just cs -> return cs
         Nothing -> T.assertFailure ("Unparsable argument contents: " ++ contents)
 
-analysis :: R.AnalyzeAndRewrite arch binFmt (Const ())
-analysis =
-  R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
-                      , R.arAnalyze = \_ _ -> return (Const ())
-                      , R.arPreRewrite = \_ _ -> return (Const ())
-                      , R.arRewrite = \_ _ _ b -> return (Just (R.basicBlockInstructions b))
-                      }
 
-qemuRunnerName :: String
-qemuRunnerName = "refurbish-qemu-runner"
+-- ELF handling
 
-initializeQemuRunner :: IO (Either (Int, String, String) Runner)
-initializeQemuRunner = do
-  (ec, out, err) <- P.readProcessWithExitCode "docker" ["build", "-t", qemuRunnerName, "."] ""
-  case ec of
-    E.ExitSuccess -> do return (Right (Runner runInContainer))
-    E.ExitFailure rv -> return (Left (rv, out, err))
-
--- | * A mapping of local filenames to in-container filenames - all must be absolute
---   * Command line to run
-newtype Runner = Runner ([(FilePath, FilePath)] -> [String] -> IO (E.ExitCode, String, String))
-
-runInContainer :: [(FilePath, FilePath)] -> [String] -> IO (E.ExitCode, String, String)
-runInContainer mapping args =
-  P.readProcessWithExitCode "docker" dargs ""
-  where
-    argMap = [["-v", src ++ ":" ++ dst] | (src, dst) <- mapping]
-    dargs = concat [ ["run"]
-                   , concat argMap
-                   , [qemuRunnerName]
-                   , args
-                   ]
+withELF :: FilePath
+        -> [(R.Architecture, R.SomeConfig R.AnalyzeAndRewrite a)]
+        -> (forall arch . (R.ArchBits arch,
+                                  MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch)),
+                                  E.ElfWidthConstraints (MM.ArchAddrWidth arch),
+                                  R.InstructionConstraints arch)
+                                   => R.RenovateConfig arch (E.Elf (MM.ArchAddrWidth arch)) R.AnalyzeAndRewrite a
+                                   -> E.Elf (MM.ArchAddrWidth arch)
+                                   -> MBL.LoadedBinary arch (E.Elf (MM.ArchAddrWidth arch))
+                                   -> IO ())
+        -> T.Assertion
+withELF exePath configs k = do
+  bytes <- BS.readFile exePath
+  case E.parseElf bytes of
+    E.ElfHeaderError _ err -> T.assertFailure ("ELF header error: " ++ err)
+    E.Elf32Res errs e32 -> do
+      case errs of
+        [] -> return ()
+        _ -> T.assertFailure ("ELF32 errors: " ++ show errs)
+      R.withElfConfig (E.Elf32 e32) configs k
+    E.Elf64Res errs e64 -> do
+      case errs of
+        [] -> return ()
+        _ -> T.assertFailure ("ELF64 errors: " ++ show errs)
+      R.withElfConfig (E.Elf64 e64) configs k

@@ -1,9 +1,10 @@
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 -- | A simple function recovery pass
 --
 -- This module performs a simple forward reachability pass from the
@@ -25,6 +26,7 @@ import           Control.Applicative
 import qualified Control.Monad.RWS.Strict as RWS
 import qualified Data.Foldable as F
 import qualified Data.Map.Strict as M
+import           Data.Semigroup
 import qualified Data.Set as S
 
 import qualified Data.Macaw.CFG as MM
@@ -137,7 +139,9 @@ processWorklist = do
       RWS.modify' $ \s -> s { fsVisited = S.insert addr (fsVisited s)
                             , fsWorklist = rest
                             }
-      Just b <- M.lookup addr <$> RWS.asks envBlocks
+      b <- M.lookup addr <$> RWS.asks envBlocks >>= \case
+        Just b -> return b
+        Nothing -> L.error $ "Address " <> show addr <> " not found in blocks"
       isa <- RWS.asks envISA
       mem <- RWS.asks envMem
       let addOff = addressAddOffset
@@ -145,37 +149,27 @@ processWorklist = do
         [] -> L.error "Empty basic block"
         insns -> do
           let (lastInsn, insnAddr) = last insns
+              addSuccessor = nextBlockAddress b >>= addCFGEdge addr
+              addCond Unconditional = return ()
+              addCond Conditional = addSuccessor
           case isaJumpType isa lastInsn mem insnAddr of
             -- Fallthrough to the next block
-            NoJump -> do
-              successor <- nextBlockAddress b
-              addCFGEdge addr successor
-            Return -> addReturnBlock addr
-            RelativeJump Unconditional jaddr off -> do
+            NoJump -> addSuccessor
+            Return cond -> do
+              addReturnBlock addr
+              addCond cond
+            RelativeJump cond jaddr off -> do
               let target = jaddr `addOff` off
               addCFGEdge addr target
-            RelativeJump Conditional jaddr off -> do
-              let target = jaddr `addOff` off
-              successor <- nextBlockAddress b
-              addCFGEdge addr target
-              addCFGEdge addr successor
-            AbsoluteJump Unconditional dst -> do
+              addCond cond
+            AbsoluteJump cond dst -> do
               addCFGEdge addr dst
-            AbsoluteJump Conditional dst -> do
-              successor <- nextBlockAddress b
-              addCFGEdge addr dst
-              addCFGEdge addr successor
-            IndirectJump Conditional -> do
-              successor <- nextBlockAddress b
-              addCFGEdge addr successor
+              addCond cond
+            IndirectJump cond -> do
+              addCond cond
               markFunctionIncomplete
-            DirectCall {} -> do
-              successor <- nextBlockAddress b
-              addCFGEdge addr successor
-            IndirectCall -> do
-              successor <- nextBlockAddress b
-              addCFGEdge addr successor
-            IndirectJump Unconditional -> markFunctionIncomplete
+            DirectCall {} -> addSuccessor
+            IndirectCall -> addSuccessor
           processWorklist
 
 nextBlockAddress :: (MM.MemWidth (MM.ArchAddrWidth arch)) => ConcreteBlock arch -> M arch (ConcreteAddress arch)

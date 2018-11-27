@@ -2,13 +2,13 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NondecreasingIndentation #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE OverloadedStrings #-}
 -- | An interface for manipulating ELF files
 --
 -- It provides a convenient interface for loading an ELF file,
@@ -59,6 +59,7 @@ import qualified Control.Monad.State.Strict as S
 import           Data.Bits ( Bits, (.|.) )
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C8
+import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Foldable as F
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NEL
@@ -88,6 +89,7 @@ import qualified Renovate.Analysis.FunctionRecovery as FR
 import qualified Renovate.Arch as Arch
 import qualified Renovate.BasicBlock as B
 import qualified Renovate.BasicBlock.Assemble as BA
+import           Renovate.BinaryFormat.ELF.BSS ( expandBSS )
 import           Renovate.BinaryFormat.ELF.Rewriter
 import           Renovate.Config
 import qualified Renovate.Diagnostic as RD
@@ -395,12 +397,6 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   textSection <- withCurrentELF findTextSection
   mBaseSymtab <- withCurrentELF getBaseSymbolTable
 
-  -- Remove (and pad out) the sections whose size could change if we
-  -- modify the binary.  We'll re-add them later (see @appendHeaders@).
-  --
-  -- This modifies the underlying ELF file
-  modifyCurrentELF padDynamicDataRegions
-
   -- We need to compute the address to start laying out new code.
   --
   -- The new code's virtual address should satisfy a few constraints:
@@ -412,10 +408,30 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- It's real tough to guarantee (3), since we don't know how much code there
   -- will be yet. So we just pick the biggest chunk of address space that
   -- satisfies (1) and (2).
+  --
+  -- NOTE: This code MUST be run BEFORE we change any segments.  It relies on
+  -- every segment having an absolute memsize, which is true for segments coming
+  -- from elf-edit.  Once we start modifying segments, however, we start
+  -- generating segments with relative sizes.
   let (lo, hi) = withinJumpRange cfg textSection
   (newTextAddr, newTextSize) <- withCurrentELF (selectLayoutAddr lo hi (fromIntegral newTextAlign))
---  traceM $ printf "Extra text section layout address is 0x%x" (fromIntegral nextSegmentAddress :: Word64)
   riSegmentVirtualAddress L..= Just (fromIntegral newTextAddr)
+
+  -- Remove (and pad out) the sections whose size could change if we
+  -- modify the binary.  We'll re-add them later (see @appendHeaders@).
+  --
+  -- This modifies the underlying ELF file
+  modifyCurrentELF padDynamicDataRegions
+
+  -- The .bss is a special section in a binary that comes after the data
+  -- section.  It holds zero-initialized data, and is not explicitly represented
+  -- in the binary (aside from the entry in the section table).  The Linux
+  -- kernel refuses to properly initialize .bss if there is a segment loaded
+  -- before the .bss, but with a higher address.
+  --
+  -- To work around this, we expand the data section to cover the .bss region
+  -- and explicitly initialize that data with zeros.
+  modifyCurrentELF expandBSS
 
   -- Similarly, we need to find space to put new data.  Again, we can't just put
   -- new data directly after or before the actual .data section, as there are a
@@ -468,7 +484,6 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- Wrap the new text section in a loadable segment
   newTextSegment <- withCurrentELF (newExecutableSegment newTextAddr (Seq.singleton (E.ElfDataSection newTextSec)))
   modifyCurrentELF (appendSegment newTextSegment)
-
   -- Update the symbol table (if there is one)
   --
   -- FIXME: If we aren't updating the symbol table (but there is one), just
@@ -481,12 +496,11 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
           modifyCurrentELF (appendDataRegion (E.ElfDataSymtab newSymtab) symbolTableAlignment)
       | otherwise -> return ()
     _ -> return ()
-  modifyCurrentELF appendHeaders
 
+  modifyCurrentELF appendHeaders
   -- Now overwrite the original code (in the .text segment) with the
   -- content computed by our transformation.
   modifyCurrentELF (overwriteTextSection overwrittenBytes)
-
   -- Increment all of the segment indexes so that we can reserve the first
   -- segment index (0) for our fresh PHDR segment that we want at the beginning
   -- of the PHDR table (but not at the first offset)
@@ -528,6 +542,8 @@ appendSegment :: ( w ~ MM.ArchAddrWidth arch
 appendSegment seg e = do
   let layout = E.elfLayout e
   let currentOffset = E.elfLayoutSize layout
+  let bytes = E.elfLayoutBytes layout
+  assertM (LBS.length bytes == fromIntegral currentOffset)
   -- The sz is the current offset (if we were to append the segment right here)
   --
   -- We need to make sure that the actual offset and the virtual address of the
@@ -936,9 +952,8 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
           preAnalysisResult <- preAnalyze rae
           analysisResult <- RW.rewriteIO (analyze rae preAnalysisResult)
           setupVal <- preRewrite rae analysisResult
-          injectedFunctions <- RW.getInjectedFunctions
           RE.runRewriterT isa mem symmap $ do
-            r <- RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewrite rae analysisResult setupVal) mem strat layoutAddr baseSymBlocks injectedFunctions
+            r <- RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewrite rae analysisResult setupVal) mem strat layoutAddr baseSymBlocks
             return (analysisResult, r)
         (analysisResult, (allBlocks, injected)) <- extractOrThrowRewriterResult eBlocks r1
         let s1 = RE.rrState r1

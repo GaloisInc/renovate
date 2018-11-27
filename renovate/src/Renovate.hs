@@ -93,7 +93,6 @@ module Renovate
   ISA.ISA(..),
   ISA.JumpType(..),
   ISA.JumpCondition(..),
-  ISA.TrapPredicate(..),
   ISA.StackAddress(..),
   -- * Results
   RW.RewriteInfo(..),

@@ -114,7 +114,7 @@ compactLayout startAddr strat blocks injectedCode = do
 
   return Layout { programBlockLayout = assignedPairs
                 , layoutPaddingBlocks = paddingBlocks
-                , injectedBlockLayout = [ (caddr, bs) | (caddr, (_, bs)) <- M.elems injectedAddrs ]
+                , injectedBlockLayout = [ (symAddr, caddr, bs) | (caddr, (symAddr, bs)) <- M.elems injectedAddrs ]
                 }
   where
     bySize isa mem = Down . symbolicBlockSize isa mem startAddr
@@ -247,22 +247,23 @@ addExplicitFallthrough mem symSucIdx pair@(SymbolicPair (LayoutPair cb sb Modifi
   -- Otherwise, append an absolute jump to the correct location.
   let newPair = SymbolicPair (LayoutPair cb (appendUnconditionalJump isa symSucIdx cb sb) Modified)
   case isaJumpType isa lastInsn mem fakeAddress of
-    br | isUnconditional br -> return pair
-       | otherwise          -> return newPair
+    br | isUnconditionalJT br -> return pair
+       | otherwise            -> return newPair
   where
     -- We explicitly match on all constructor patterns so that if/when new ones
     -- are added this will break instead of having some default case that does
     -- (potentially) the wrong thing on the new cases.
-    isUnconditional (Return                        ) = True
-    isUnconditional (IndirectJump Unconditional    ) = True
-    isUnconditional (AbsoluteJump Unconditional _  ) = True
-    isUnconditional (RelativeJump Unconditional _ _) = True
-    isUnconditional (IndirectCall                  ) = False
-    isUnconditional (DirectCall {}                 ) = False
-    isUnconditional (NoJump                        ) = False
-    isUnconditional (IndirectJump Conditional      ) = False
-    isUnconditional (AbsoluteJump Conditional _    ) = False
-    isUnconditional (RelativeJump Conditional _ _  ) = False
+    isUnconditionalJT (Return       cond    ) = isUnconditionalCond cond
+    isUnconditionalJT (IndirectJump cond    ) = isUnconditionalCond cond
+    isUnconditionalJT (AbsoluteJump cond _  ) = isUnconditionalCond cond
+    isUnconditionalJT (RelativeJump cond _ _) = isUnconditionalCond cond
+    isUnconditionalJT (IndirectCall         ) = False
+    isUnconditionalJT (DirectCall {}        ) = False
+    isUnconditionalJT (NoJump               ) = False
+
+    isUnconditionalCond Unconditional = True
+    isUnconditionalCond Conditional   = False
+
     fakeAddress = concreteFromAbsolute 0
     lastInsn
       | null (basicBlockInstructions sb) = L.error (printf "Empty block for symbolic block %s (derived from block %s)"

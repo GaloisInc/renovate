@@ -15,6 +15,33 @@ build-type:          Simple
 extra-source-files:  ChangeLog.md
 cabal-version:       >=1.10
 
+library
+  exposed-modules:     Refurbish.Docker
+  build-depends: base,
+                 crucible,
+                 deepseq,
+                 bytestring,
+                 process,
+                 directory,
+                 temporary,
+                 tasty,
+                 tasty-hunit,
+                 filemanip,
+                 filepath,
+                 unix,
+                 elf-edit,
+                 parameterized-utils,
+                 dismantle-ppc,
+                 macaw-base,
+                 macaw-loader,
+                 macaw-loader-x86,
+                 renovate,
+                 renovate-ppc,
+                 renovate-x86
+  hs-source-dirs: src
+  default-language: Haskell2010
+  ghc-options: -Wall
+                  
 executable refurbish
   main-is:             Main.hs
   -- other-modules:
@@ -39,21 +66,22 @@ executable refurbish
                        renovate,
                        renovate-ppc,
                        renovate-x86
-  hs-source-dirs:      src
+  hs-source-dirs:      tools/refurbish
   default-language:    Haskell2010
   ghc-options: -Wall
 
 test-suite refurbish-tests
   default-language: Haskell2010
   type: exitcode-stdio-1.0
-  ghc-options: -Wall
+  ghc-options: -Wall -rtsopts -threaded
   hs-source-dirs: tests
   main-is: Main.hs
+  other-modules: Inject
+                 Identity
   build-depends: base,
                  crucible,
                  deepseq,
                  bytestring,
-                 process,
                  directory,
                  temporary,
                  tasty,
@@ -63,9 +91,11 @@ test-suite refurbish-tests
                  unix,
                  elf-edit,
                  parameterized-utils,
+                 dismantle-ppc,
                  macaw-base,
                  macaw-loader,
                  macaw-loader-x86,
                  renovate,
                  renovate-ppc,
-                 renovate-x86
+                 renovate-x86,
+                 refurbish

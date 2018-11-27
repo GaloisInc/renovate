@@ -37,16 +37,18 @@ library
                        Renovate.Analysis.FunctionRecovery
                        Renovate.BasicBlock
                        Renovate.BinaryFormat.ELF
+                       Renovate.BinaryFormat.ELF.BSS
                        Renovate.BinaryFormat.ELF.Rewriter
                        Renovate.ISA
                        Renovate.Recovery
                        Renovate.Recovery.Overlap
+                       Renovate.Recovery.SymbolMap
                        Renovate.Redirect
   -- other-extensions:    
   build-depends:       base >=4.10 && <5,
                        bytestring,
                        text,
-                       containers >= 0.5 && < 0.6,
+                       containers >= 0.5 && < 0.7,
                        heaps >= 0.3 && < 0.4,
                        IntervalMap >= 0.6 && < 0.7,
                        mtl >= 2.2 && < 2.3,

@@ -11,7 +11,6 @@ module Renovate.ISA
   ( ISA(..)
   , JumpType(..)
   , JumpCondition(..)
-  , TrapPredicate(..)
   , StackAddress(..)
   ) where
 
@@ -50,7 +49,7 @@ data JumpType arch = RelativeJump JumpCondition (ConcreteAddress arch) (MM.MemWo
                 -- would be better suited to finding this information)
                 | IndirectCall
                 -- ^ A call to an unknown location
-                | Return
+                | Return JumpCondition
                 | NoJump
                 -- ^ The instruction is not a jump
                 deriving (Eq)
@@ -59,13 +58,13 @@ deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (JumpType arch)
 
 -- | Information about an ISA.
 --
--- The @i@ type parameter is the underlying instruction type, which
--- accepts an annotation parameter.
+-- The @Instruction arch@ type family is the underlying instruction
+-- type, which accepts an annotation parameter.
 --
--- The @a@ type parameter is the type of the annotations of /symbolic/
--- instructions, and contains information to link control flow
--- transfer instructions to their symbolic targets.  The information
--- required can vary by ISA, so this is a parameter.
+-- The @InstructionAnnotation arch@ type family is the type of the
+-- annotations of /symbolic/ instructions, and contains information to
+-- link control flow transfer instructions to their symbolic targets.
+-- The information required can vary by ISA, so this is a parameter.
 --
 -- Concrete instructions have @()@ as their annotation.
 --
@@ -124,11 +123,6 @@ data ISA arch = ISA
     -- ^ Make the given number of bytes of padding instructions.
     -- The semantics of the instruction stream should either be
     -- no-ops or halts (i.e., not meant to be executed).
-  , isaMakeTrapIf :: forall t. Instruction arch t -> TrapPredicate -> [Instruction arch (InstructionAnnotation arch)]
-    -- ^ Create an instruction sequence that halts if the given
-    -- instruction meets the given predicate.  For example, it
-    -- could create a conditional halt if the instruction created
-    -- a signed overflow.
   , isaMakeSymbolicJump
       :: SymbolicAddress arch
       -> [TaggedInstruction arch (InstructionAnnotation arch)]
@@ -174,10 +168,6 @@ deriving instance Eq (RegisterType arch) => Eq (StackAddress arch)
 deriving instance Ord (RegisterType arch) => Ord (StackAddress arch)
 deriving instance Show (RegisterType arch) => Show (StackAddress arch)
 
--- | Predicates supported for 'isaMakeTrapIf'
-data TrapPredicate = SignedOverflow
-                   | UnsignedOverflow
-                   deriving (Eq, Ord, Show)
 {-
 
 With the jump type test, we probably want to make a distinction

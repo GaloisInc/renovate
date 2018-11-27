@@ -93,7 +93,6 @@ isa =
         , R.isaMakeSymbolicJump = ppcMakeSymbolicJump
         , R.isaConcretizeAddresses = ppcConcretizeAddresses
         , R.isaSymbolizeAddresses = ppcSymbolizeAddresses
-        , R.isaMakeTrapIf = error "makeTrapIf is no implemented for PowerPC yet -- move this function out of ISA"
         }
 
 ppcPrettyInstruction :: Instruction a -> String
@@ -257,8 +256,8 @@ ppcJumpType i _mem insnAddr =
             D.BDZLRm -> R.IndirectCall
             D.BDZLRp -> R.IndirectCall
             -- Normal return (branch to link register)
-            D.BLR -> R.Return
-            D.BLRL -> R.Return
+            D.BLR -> R.Return R.Unconditional
+            D.BLRL -> R.Return R.Unconditional
             _ -> R.NoJump
         (_ D.:< _) ->
           -- In this case, we handle all of the branches that don't need to inspect
@@ -281,8 +280,8 @@ ppcJumpType i _mem insnAddr =
             D.TD -> R.IndirectCall
             D.TDI -> R.IndirectCall
             -- Returns with extra operands
-            D.GBCLR -> R.Return
-            D.GBCLRL -> R.Return
+            D.GBCLR -> R.Return R.Conditional
+            D.GBCLRL -> R.Return R.Conditional
             _ -> R.NoJump
 
 -- | Given a jump instruction and a new target address, update the jump

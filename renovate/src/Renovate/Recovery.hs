@@ -23,15 +23,15 @@ module Renovate.Recovery (
   Diagnostic(..)
   ) where
 
-import qualified GHC.Err.Located as L
 import qualified Control.Lens as L
-import qualified Control.Monad.Catch as C
 import           Control.Monad ( guard )
+import qualified Control.Monad.Catch as C
+import           Control.Monad.IO.Class ( MonadIO )
 import           Control.Monad.ST ( stToIO, ST, RealWorld )
 import qualified Data.ByteString as B
-import qualified Data.List.NonEmpty as NEL
 import qualified Data.Foldable as F
 import qualified Data.IORef as IO
+import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as M
 import           Data.Maybe ( catMaybes, fromMaybe, mapMaybe )
 import           Data.Proxy ( Proxy(..) )
@@ -39,6 +39,7 @@ import qualified Data.Set as S
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Encoding.Error as T
 import qualified Data.Traversable as T
+import qualified GHC.Err.Located as L
 
 import qualified Data.Macaw.Architecture.Info as MC
 import qualified Data.Macaw.CFG as MC
@@ -56,8 +57,8 @@ import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.Diagnostic
 import           Renovate.ISA
-import           Renovate.Redirect.Monad ( SymbolMap )
 import           Renovate.Recovery.Overlap
+import           Renovate.Recovery.SymbolMap ( SymbolMap, toMacawSymbolMap )
 
 data Cached a = Cached (IO.IORef (Maybe a)) (IO a)
 type SCFG f arch = f (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch)
@@ -312,15 +313,6 @@ recoverBlocks recovery mem symmap entries textAddrRange = do
   sam <- toMacawSymbolMap mem symmap
   di <- cfgFromAddrsWith recovery mem textAddrRange sam (F.toList entries) []
   blockInfo recovery mem textAddrRange di
-
-toMacawSymbolMap :: (MC.MemWidth (MC.ArchAddrWidth arch)) => MC.Memory (MC.ArchAddrWidth arch) -> SymbolMap arch -> IO (MC.AddrSymMap (MC.ArchAddrWidth arch))
-toMacawSymbolMap mem sm = return (M.mapKeys toSegOff sm)
-  where
-    toSegOff concAddr =
-      case concreteAsSegmentOff mem concAddr of
-        Nothing -> error ("Invalid concrete address: " ++ show concAddr)
-        Just so -> so
-
 
 -- | Build our representation of a basic block from a provided block
 -- start address

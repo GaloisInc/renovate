@@ -21,7 +21,6 @@ module Renovate.Redirect.Monad (
   RewriterState(..),
   Diagnostics,
   RewriterResult(..),
-  runRewriter,
   runRewriterT,
   throwError,
   logDiagnostic,
@@ -43,8 +42,6 @@ import qualified Control.Monad.Except as ET
 import qualified Control.Monad.RWS.Strict as RWS
 import qualified Control.Monad.Trans as T
 import qualified Data.Functor.Identity as I
-import qualified Data.ByteString as B
-import           Data.Map ( Map )
 import           Data.Monoid
 import qualified Data.Sequence as Seq
 
@@ -55,6 +52,8 @@ import qualified Data.Macaw.CFG as MM
 import           Renovate.Address
 import           Renovate.ISA
 import           Renovate.Diagnostic
+import           Renovate.Rewrite ( HasInjectedFunctions )
+import           Renovate.Recovery.SymbolMap ( SymbolMap, NewSymbolsMap )
 
 data SomeAddr a = Addr32 (a 32)
                 | Addr64 (a 64)
@@ -62,10 +61,6 @@ data SomeAddr a = Addr32 (a 32)
 deriving instance (Eq (a 32), Eq (a 64)) => Eq (SomeAddr a)
 deriving instance (Ord (a 32), Ord (a 64)) => Ord (SomeAddr a)
 deriving instance (Show (a 32), Show (a 64)) => Show (SomeAddr a)
-
-
-type SymbolMap     arch = Map (ConcreteAddress arch) B.ByteString
-type NewSymbolsMap arch = Map (ConcreteAddress arch) (ConcreteAddress arch, B.ByteString)
 
 -- | Reader data for 'RewriterT'.
 data RewriterEnv arch = RewriterEnv
@@ -137,22 +132,13 @@ initialState =  RewriterState
   , rwsBlockMapping          = []
   }
 
--- | A wrapper around 'runRewriterT' with 'I.Identity' as the base 'Monad'
-runRewriter :: ISA arch
-            -> MM.Memory (MM.ArchAddrWidth arch)
-            -> SymbolMap arch
-            -> Rewriter arch a
-            -> (Either E.SomeException a, RewriterResult arch)
-runRewriter isa mem symmap a =
-  I.runIdentity (runRewriterT isa mem symmap a)
-
 -- | Run a 'RewriterT' computation.
 --
 -- It returns *all* diagnostics that occur before an exception is
 -- thrown.
 --
 -- FIXME: This needs the set of input additional blocks that are allocated symbolic addresses
-runRewriterT :: (Monad m)
+runRewriterT :: (Monad m, HasInjectedFunctions m arch)
              => ISA arch
              -> MM.Memory (MM.ArchAddrWidth arch)
              -> SymbolMap arch

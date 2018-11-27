@@ -21,7 +21,7 @@ import qualified Data.Vector.Unboxed as V
 import           Data.Word ( Word32 )
 import qualified Data.Text.Prettyprint.Doc as PD
 
-import           Renovate.Address ( ConcreteAddress )
+import           Renovate.Address ( ConcreteAddress, SymbolicAddress )
 import           Renovate.BasicBlock
 
 -- | A type for selecting the strategy for laying out basic blocks in rewritten
@@ -53,7 +53,7 @@ data CompactOrdering
 data Layout pair arch =
   Layout { programBlockLayout :: [pair arch]
          , layoutPaddingBlocks :: [ConcreteBlock arch]
-         , injectedBlockLayout :: [(ConcreteAddress arch, BS.ByteString)]
+         , injectedBlockLayout :: [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)]
          }
 
 
