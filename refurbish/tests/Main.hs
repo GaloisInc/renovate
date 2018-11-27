@@ -54,6 +54,7 @@ main = do
   let injection = [ ("tests/injection-base/injection-base.ppc64.exe", "tests/injection-base/ppc64-exit.bin")]
   T.defaultMain $ T.testGroup "RefurbishTests" [
     rewritingTests mRunner hdlAlloc R.Parallel exes,
+    rewritingTests mRunner hdlAlloc (R.Compact R.SortedOrder) exes,
     codeInjectionTests mRunner hdlAlloc R.Parallel injection,
     codeInjectionTests mRunner hdlAlloc (R.Compact R.SortedOrder) injection
     ]
