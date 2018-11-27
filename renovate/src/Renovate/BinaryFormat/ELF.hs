@@ -953,7 +953,8 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
           analysisResult <- RW.rewriteIO (analyze rae preAnalysisResult)
           setupVal <- preRewrite rae analysisResult
           RE.runRewriterT isa mem symmap $ do
-            r <- RE.redirect isa blockInfo textSectionStartAddr textSectionEndAddr (rewrite rae analysisResult setupVal) mem strat layoutAddr baseSymBlocks
+            let rewriter = rewrite rae analysisResult setupVal
+            r <- RE.redirect isa blockInfo textAddrRange rewriter mem strat layoutAddr baseSymBlocks
             return (analysisResult, r)
         (analysisResult, (allBlocks, injected)) <- extractOrThrowRewriterResult eBlocks r1
         let s1 = RE.rrState r1

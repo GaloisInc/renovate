@@ -64,10 +64,8 @@ redirect :: (Monad m, InstructionConstraints arch, HasInjectedFunctions m arch)
          -- ^ Information about the ISA in use
          -> BlockInfo arch
          -- ^ Information about all recovered blocks
-         -> ConcreteAddress arch
-         -- ^ start of text section
-         -> ConcreteAddress arch
-         -- ^ end of text section
+         -> (ConcreteAddress arch, ConcreteAddress arch)
+         -- ^ start of text section, end of the text section
          -> (SymbolicBlock arch -> m (Maybe [TaggedInstruction arch (InstructionAnnotation arch)]))
          -- ^ Instrumentor
          -> MM.Memory (MM.ArchAddrWidth arch)
@@ -78,7 +76,7 @@ redirect :: (Monad m, InstructionConstraints arch, HasInjectedFunctions m arch)
          -> [(ConcreteBlock arch, SymbolicBlock arch)]
          -- ^ Symbolized basic blocks
          -> RM.RewriterT arch m ([ConcreteBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)])
-redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr baseSymBlocks = do
+redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr baseSymBlocks = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
     -- We only want to instrument blocks that:
