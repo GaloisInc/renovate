@@ -1,5 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 module Renovate.Rewrite (
@@ -12,7 +14,7 @@ module Renovate.Rewrite (
   rewriteIO,
   lookupBlockCFG,
   lookupEntryAddress,
-  getInjectedFunctions,
+  HasInjectedFunctions(..),
   newGlobalVar,
   getBlockIndex,
   getABI,
@@ -69,6 +71,16 @@ data RewriteInfo arch =
               -- ^ Functions injected (most likely during the setup phase, but not necessarily)
               }
 
+class HasInjectedFunctions m arch where
+  -- | Get all of the functions that the caller has injected into the binary
+  --
+  -- We need this accessor so that the redirection engine has the extra blocks
+  -- available to put them into the final block layout.
+  --
+  -- NOTE: This is mostly not user-facing, but it is used internally.  Users can
+  -- maintain the mapping if they really want it
+  getInjectedFunctions :: m [(A.SymbolicAddress arch, BS.ByteString)]
+
 data RewriteEnv arch = RewriteEnv
   { envBlockCFGIndex :: BlockCFGIndex arch
   -- ^ A map of block addresses to the set of CFGs that
@@ -99,6 +111,14 @@ newtype RewriteM arch a = RewriteM { unRewriteM :: RWS.RWST (RewriteEnv arch) ()
             Monad,
             RWS.MonadReader (RewriteEnv arch),
             RWS.MonadState (RewriteInfo arch))
+
+instance HasInjectedFunctions (RewriteM arch) arch where
+  getInjectedFunctions = getInj
+
+getInj :: RewriteM arch [(A.SymbolicAddress arch, BS.ByteString)]
+getInj = do
+  m <- RWS.gets injectedFunctions
+  return [ (a, bs) | (a, (_, bs)) <- M.toList m ]
 
 -- | This is a separate function instead of a 'MonadIO' instance so that we can
 -- use it internally, but not export it to the user at all.
@@ -171,19 +191,6 @@ injectFunction funcName bytes = do
                         , injectedFunctions = M.insert addr (funcName, bytes) (injectedFunctions s)
                         }
   return addr
-
--- | Get all of the functions that the caller has injected into the binary
---
--- We need this accessor so that the redirection engine has the extra blocks
--- available to put them into the final block layout.
---
--- NOTE: This is not exposed to the user; if users want the mapping, they should
--- maintain it themselves in the analysis initialization phase.  At least, that
--- is the design for now.  It could change with a good reason.
-getInjectedFunctions :: RewriteM arch [(A.SymbolicAddress arch, BS.ByteString)]
-getInjectedFunctions = do
-  fs <- RWS.gets injectedFunctions
-  return [ (addr, bs) | (addr, (_, bs)) <- M.toList fs ]
 
 -- | A function for instrumentors to call when they add
 -- instrumentation to a binary.

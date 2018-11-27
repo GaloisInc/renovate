@@ -63,8 +63,8 @@ import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.Diagnostic
 import           Renovate.ISA
-import           Renovate.Redirect.Monad ( SymbolMap )
 import           Renovate.Recovery.Overlap
+import           Renovate.Recovery.SymbolMap ( SymbolMap, toMacawSymbolMap )
 
 type ArchBits arch = (  MC.ArchConstraints arch,
                         MC.RegisterInfo (MC.ArchReg arch),
@@ -341,15 +341,6 @@ recoverBlocks recovery mem symmap entries textAddrRange = do
   sam <- toMacawSymbolMap mem symmap
   di <- cfgFromAddrsWith recovery mem textAddrRange sam (F.toList entries) []
   blockInfo recovery mem textAddrRange di
-
-toMacawSymbolMap :: (MC.MemWidth (MC.ArchAddrWidth arch)) => MC.Memory (MC.ArchAddrWidth arch) -> SymbolMap arch -> IO (MC.AddrSymMap (MC.ArchAddrWidth arch))
-toMacawSymbolMap mem sm = return (M.mapKeys toSegOff sm)
-  where
-    toSegOff concAddr =
-      case concreteAsSegmentOff mem concAddr of
-        Nothing -> error ("Invalid concrete address: " ++ show concAddr)
-        Just so -> so
-
 
 -- | Build our representation of a basic block from a provided block
 -- start address

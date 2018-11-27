@@ -114,7 +114,7 @@ compactLayout startAddr strat blocks injectedCode = do
 
   return Layout { programBlockLayout = assignedPairs
                 , layoutPaddingBlocks = paddingBlocks
-                , injectedBlockLayout = [ (caddr, bs) | (caddr, (_, bs)) <- M.elems injectedAddrs ]
+                , injectedBlockLayout = [ (symAddr, caddr, bs) | (caddr, (symAddr, bs)) <- M.elems injectedAddrs ]
                 }
   where
     bySize isa mem = Down . symbolicBlockSize isa mem startAddr

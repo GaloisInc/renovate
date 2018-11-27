@@ -42,6 +42,7 @@ library
                        Renovate.ISA
                        Renovate.Recovery
                        Renovate.Recovery.Overlap
+                       Renovate.Recovery.SymbolMap
                        Renovate.Redirect
   -- other-extensions:    
   build-depends:       base >=4.10 && <5,

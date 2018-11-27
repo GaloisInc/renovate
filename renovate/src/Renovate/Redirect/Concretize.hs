@@ -56,20 +56,26 @@ concretize strat startAddr blocks injectedCode = do
   symmap <- askSymbolMap
   layout <- layoutBlocks strat startAddr blocks injectedCode
   let concreteAddresses = programBlockLayout layout
+  let injectedAddresses = injectedBlockLayout layout
   let concreteAddressMap = M.fromList [ (symbolicAddress (basicBlockAddress sb), ca)
                                       | AddressAssignedPair (LayoutPair _ (AddressAssignedBlock sb ca) _) <- F.toList concreteAddresses
                                       ]
+  let injectedAddressMap = M.fromList [ (symAddr, concAddr)
+                                      | (symAddr, concAddr, _) <- injectedAddresses
+                                      ]
+  let concToSymAddrMap = concreteAddressMap <> injectedAddressMap
       -- Make note of symbolic names for each embrittled function. We can
       -- use this to make new symtab entries for them.
-      brittleMap = M.fromList [ (ca, (basicBlockAddress oa, nm))
+  let brittleMap = M.fromList [ (ca, (basicBlockAddress oa, nm))
                               | AddressAssignedPair (LayoutPair oa (AddressAssignedBlock _sb ca) _) <- F.toList concreteAddresses
                               , nm <- maybeToList $ Map.lookup (basicBlockAddress oa) symmap
                               ]
   -- TODO: JED: Should this be a put or an append?
   putNewSymbolsMap brittleMap
-  -- Now go through and fix up all of the jumps to symbolic addresses
-  -- (which happen to occur at the end of basic blocks).
-  v <- T.traverse (concretizeJumps isa concreteAddressMap) concreteAddresses
+  -- Now go through and fix up all of the jumps to symbolic addresses (which
+  -- happen to occur at the end of basic blocks).  Note that we only traverse
+  -- the concrete blocks here, not the injected blocks.
+  v <- T.traverse (concretizeJumps isa concToSymAddrMap) concreteAddresses
   return Layout { programBlockLayout = v
                 , layoutPaddingBlocks = layoutPaddingBlocks layout
                 , injectedBlockLayout = injectedBlockLayout layout
@@ -158,7 +164,7 @@ mapJumpAddress concreteAddressMap (tagged, insnAddr) = do
           Just insn -> return insn
       | otherwise -> do
           let err :: Diagnostic
-              err = NoConcreteAddressForSymbolicTarget symAddr "concretizeJumps"
+              err = NoConcreteAddressForSymbolicTarget insnAddr symAddr "concretizeJumps"
           logDiagnostic err
           throwError err
     Nothing -> return (isaConcretizeAddresses isa mem insnAddr i)
