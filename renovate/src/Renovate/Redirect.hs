@@ -78,7 +78,7 @@ redirect :: (Monad m, InstructionConstraints arch)
          -> [(ConcreteBlock arch, SymbolicBlock arch)]
          -- ^ Symbolized basic blocks
          -> [(SymbolicAddress arch, BS.ByteString)]
-         -> RM.RewriterT arch m ([ConcreteBlock arch], [(ConcreteAddress arch, BS.ByteString)])
+         -> RM.RewriterT arch m ([ConcreteBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)])
 redirect isa blockInfo textStart textEnd instrumentor mem strat layoutAddr baseSymBlocks injectedCode = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do

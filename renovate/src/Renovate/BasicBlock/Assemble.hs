@@ -104,7 +104,7 @@ assembleBlocks :: (L.HasCallStack, C.MonadThrow m, InstructionConstraints arch)
                -> (forall m' . (C.MonadThrow m') => Instruction arch () -> m' B.ByteString)
                -- ^ A function to assemble a single instruction to bytes
                -> [ConcreteBlock arch]
-               -> [(ConcreteAddress arch, B.ByteString)]
+               -> [(SymbolicAddress arch, ConcreteAddress arch, B.ByteString)]
                -> m (B.ByteString, B.ByteString)
 assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble blocks injectedCode = do
   s1 <- St.execStateT (unA assembleDriver) s0
@@ -132,7 +132,7 @@ assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble 
     -- below.  Most of the code here doesn't really need to know anything
     -- besides the address and size of each chunk (and how to turn a chunk into
     -- a bytestring).
-    allCode = map BlockChunk blocks ++ [ RawChunk addr bytes | (addr, bytes) <- injectedCode ]
+    allCode = map BlockChunk blocks ++ [ RawChunk addr bytes | (_, addr, bytes) <- injectedCode ]
     (origBlocks, allocatedBlocks) = foldr go ([],[]) allCode
     filteredBlocks = filter inText origBlocks
     inText c = absoluteAddress absStartAddr <= absoluteAddress (chunkAddress c) &&

@@ -63,6 +63,7 @@ test-suite refurbish-tests
                  unix,
                  elf-edit,
                  parameterized-utils,
+                 dismantle-ppc,
                  macaw-base,
                  macaw-loader,
                  macaw-loader-x86,
