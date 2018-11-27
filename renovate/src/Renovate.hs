@@ -30,8 +30,6 @@ module Renovate
   C.HasAnalysisEnv(..),
   C.HasSymbolicBlockMap(..),
   C.RenovateConfig(..),
-  Recovery.ArchInfo(..),
-  Recovery.ArchVals(..),
   -- * ELF entry point
   E.withElfConfig,
   E.rewriteElf,
@@ -123,7 +121,6 @@ module Renovate
   D.Diagnostic(..),
   D.Diagnostics(..),
   -- * Constraints
-  Recovery.ArchBits,
   B.InstructionConstraints,
   -- * Exceptions
   A.BlockAssemblyException(..)

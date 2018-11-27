@@ -2,8 +2,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeSynonymInstances #-}
-{-# OPTIONS_GHC -fno-warn-orphans #-}
 module Renovate.Arch.PPC (
   -- * Configuration
   config32,
@@ -28,6 +26,7 @@ module Renovate.Arch.PPC (
 import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.CFG.Core as MC
 import qualified Data.Macaw.Memory as MM
+import qualified Data.Macaw.Symbolic as MS
 
 import qualified Data.Macaw.PPC as MP
 import qualified Data.Macaw.BinaryLoader.PPC as BLP
@@ -93,23 +92,6 @@ config64 analysis = R.RenovateConfig
   -- See Note [Layout Addresses]
   , R.rcDataLayoutBase = 0x20000000
   }
-
-instance R.ArchInfo MP.PPC64 where
-  archVals _ = Just (R.ArchVals { R.archFunctions = MPS.ppc64MacawSymbolicFns
-                                , R.withArchEval = \sym k -> do
-                                    sfns <- MPS.newSymFuns sym
-                                    k (MPS.ppc64MacawEvalFn sfns)
-                                , R.withArchConstraints = \x -> x
-                                })
-
-instance R.ArchInfo MP.PPC32 where
-  archVals _ = Just (R.ArchVals { R.archFunctions = MPS.ppc32MacawSymbolicFns
-                                , R.withArchEval = \sym k -> do
-                                    sfns <- MPS.newSymFuns sym
-                                    k (MPS.ppc32MacawEvalFn sfns)
-                                , R.withArchConstraints = \x -> x
-                                })
-
 
 {- Note [Layout Addresses]
 

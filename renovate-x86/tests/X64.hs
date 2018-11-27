@@ -21,6 +21,7 @@ import qualified Data.Parameterized.NatRepr as NR
 import qualified Data.Macaw.BinaryLoader as MBL
 import           Data.Macaw.BinaryLoader.X86 ()
 import qualified Data.Macaw.CFG as MM
+import qualified Data.Macaw.Symbolic as MS
 
 import qualified Lang.Crucible.FunctionHandle as C
 
@@ -111,7 +112,7 @@ testBlockRecovery :: (w ~ MM.ArchAddrWidth arch,
                       R.InstructionConstraints arch,
                       MBL.BinaryLoader arch binFmt,
                       E.ElfWidthConstraints w,
-                      R.ArchBits arch
+                      MS.ArchBits arch
                      )
                   => C.HandleAllocator RealWorld
                   -> R.RenovateConfig arch binFmt R.AnalyzeOnly TestConfig

@@ -33,6 +33,7 @@ import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Architecture.Info as MM
 import qualified Data.Macaw.CFG as MM
+import qualified Data.Macaw.Symbolic as MS
 import qualified Lang.Crucible.FunctionHandle as C
 
 import qualified Renovate.Address as RA
@@ -58,7 +59,7 @@ import qualified Renovate.Rewrite as RW
 --   existential).
 data SomeConfig callbacks (b :: * -> *) = forall arch binFmt
                   . (B.InstructionConstraints arch,
-                     R.ArchBits arch,
+                     MS.ArchBits arch,
                      MBL.BinaryLoader arch binFmt
                     )
                   => SomeConfig (NR.NatRepr (MM.ArchAddrWidth arch)) (MBL.BinaryRepr binFmt) (RenovateConfig arch binFmt callbacks b)

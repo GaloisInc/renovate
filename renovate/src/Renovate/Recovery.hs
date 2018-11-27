@@ -20,9 +20,6 @@ module Renovate.Recovery (
   isIncompleteFunction,
   isIncompleteBlock,
   numBlockRegions,
-  ArchBits,
-  ArchInfo(..),
-  ArchVals(..),
   Diagnostic(..)
   ) where
 
@@ -46,13 +43,10 @@ import qualified Data.Traversable as T
 import qualified Data.Macaw.Architecture.Info as MC
 import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Discovery as MC
-import qualified Data.Macaw.Types as MC
 import qualified Data.Macaw.Symbolic as MS
 import qualified Data.Parameterized.Context as Ctx
 import qualified Data.Parameterized.Some as PU
-import qualified Lang.Crucible.Backend as C
 import qualified Lang.Crucible.CFG.Core as C
-import qualified Lang.Crucible.CFG.Extension as C
 import qualified Lang.Crucible.CFG.Reg as CR
 import qualified Lang.Crucible.FunctionHandle as C
 import qualified What4.FunctionName as C
@@ -64,14 +58,6 @@ import           Renovate.Diagnostic
 import           Renovate.ISA
 import           Renovate.Redirect.Monad ( SymbolMap )
 import           Renovate.Recovery.Overlap
-
-type ArchBits arch = (  MC.ArchConstraints arch,
-                        MC.RegisterInfo (MC.ArchReg arch),
-                        MC.HasRepr (MC.ArchReg arch) MC.TypeRepr,
-                        MC.MemWidth (MC.ArchAddrWidth arch),
-                        ArchInfo arch,
-                        Show (MC.ArchReg arch (MC.BVType (MC.ArchAddrWidth arch))),
-                        C.IsSyntaxExtension (MS.MacawExt arch))
 
 data Cached a = Cached (IO.IORef (Maybe a)) (IO a)
 type SCFG f arch = f (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch)
@@ -136,7 +122,7 @@ data BlockInfo arch = BlockInfo
 isIncompleteBlockAddress :: BlockInfo arch -> ConcreteAddress arch -> Bool
 isIncompleteBlockAddress bi a = S.member a (biIncomplete bi)
 
-analyzeDiscoveredFunctions :: (ArchBits arch)
+analyzeDiscoveredFunctions :: (MS.ArchBits arch)
                            => Recovery arch
                            -> MC.Memory (MC.ArchAddrWidth arch)
                            -> (ConcreteAddress arch, ConcreteAddress arch)
@@ -158,27 +144,13 @@ analyzeDiscoveredFunctions recovery mem textAddrRange info !iterations =
         _ -> return ()
       analyzeDiscoveredFunctions recovery mem textAddrRange info' (iterations + 1)
 
-data ArchVals arch =
-  ArchVals { archFunctions :: MS.MacawSymbolicArchFunctions arch
-           , withArchEval :: forall a sym . (C.IsSymInterface sym) =>  sym  -> (MS.MacawArchEvalFn sym arch -> IO a) -> IO a
-           , withArchConstraints :: forall a . ((C.IsSyntaxExtension (MS.MacawExt arch), MC.MemWidth (MC.ArchAddrWidth arch), MC.PrettyF (MC.ArchReg arch)) => a) -> a
-           }
-
--- | A class to capture the architecture-specific information required to
--- perform block recovery and translation into a Crucible CFG.
---
--- For architectures that do not have a symbolic backend yet, have this function
--- return 'Nothing'.
-class ArchInfo arch where
-  archVals :: proxy arch -> Maybe (ArchVals arch)
-
 toRegCFG :: forall arch ids s
-          . (ArchBits arch)
+          . (MS.ArchBits arch)
          => C.HandleAllocator s
          -> MC.DiscoveryFunInfo arch ids
          -> Maybe (ST s (SCFG CR.SomeCFG arch))
 toRegCFG halloc dfi = do
-  archFns <- archFunctions <$> archVals (Proxy @arch)
+  archFns <- MS.archFunctions <$> MS.archVals (Proxy @arch)
   -- We only support statically linked binaries right now, so we don't have
   -- to deal with segments
   let memBaseVarMap = M.empty
@@ -188,16 +160,16 @@ toRegCFG halloc dfi = do
   return (MS.mkFunRegCFG archFns halloc memBaseVarMap nm posFn dfi)
 
 toCFG :: forall arch
-       . (ArchBits arch)
+       . (MS.ArchBits arch)
       => SymbolicRegCFG arch
       -> Maybe (IO (SCFG C.SomeCFG arch))
 toCFG symRegCFG = do
-  archFns <- archFunctions <$> archVals (Proxy @arch)
+  archFns <- MS.archFunctions <$> MS.archVals (Proxy @arch)
   return $ do
     regCFG <- getSymbolicRegCFG symRegCFG -- this is why we're in IO, not ST
     return $ MS.crucGenArchConstraints archFns $ MS.toCoreCFG archFns regCFG
 
-cfgFromAddrsWith :: (ArchBits arch)
+cfgFromAddrsWith :: (MS.ArchBits arch)
                  => Recovery arch
                  -> MC.Memory (MC.ArchAddrWidth arch)
                  -> (ConcreteAddress arch, ConcreteAddress arch)
@@ -236,7 +208,7 @@ addrInRange (textStart, textEnd) addr = fromMaybe False $ do
   let soEnd = absoluteAddress textEnd
   return (absAddr >= soStart && absAddr < soEnd)
 
-blockInfo :: (ArchBits arch)
+blockInfo :: (MS.ArchBits arch)
           => Recovery arch
           -> MC.Memory (MC.RegAddrWidth (MC.ArchReg arch))
           -> (ConcreteAddress arch, ConcreteAddress arch)
@@ -329,7 +301,7 @@ data Recovery arch =
 -- that attempts to make code relocatable (the symbolization phase) fails badly
 -- in this case.  To avoid these failures, we constrain our code recovery to the
 -- text section.
-recoverBlocks :: (ArchBits arch)
+recoverBlocks :: (MS.ArchBits arch)
               => Recovery arch
               -> MC.Memory (MC.ArchAddrWidth arch)
               -> SymbolMap arch

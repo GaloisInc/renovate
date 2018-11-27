@@ -49,6 +49,7 @@ test-suite renovate-x86-tests
                  parameterized-utils,
                  macaw-base,
                  macaw-x86,
+                 macaw-x86-symbolic,
                  bytestring,
                  containers,
                  tasty >= 0.10 && < 2,

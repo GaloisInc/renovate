@@ -26,6 +26,7 @@ library
                        exceptions,
                        parameterized-utils,
                        macaw-base,
+                       macaw-symbolic,
                        macaw-loader,
                        macaw-loader-ppc,
                        macaw-ppc,
