@@ -129,24 +129,12 @@ toRewritingTest :: Maybe Runner
                 -> FilePath
                 -> T.TestTree
 toRewritingTest mRunner hdlAlloc strat exePath = T.testCase exePath $ do
-  bytes <- BS.readFile exePath
-  let configs :: [(R.Architecture, R.SomeConfig R.AnalyzeAndRewrite (Const ()))]
-      configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analysis))
+  let configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analysis))
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))
                 ]
-  case E.parseElf bytes of
-    E.ElfHeaderError _ err -> T.assertFailure ("ELF header error: " ++ err)
-    E.Elf32Res errs e32 -> do
-      case errs of
-        [] -> return ()
-        _ -> T.assertFailure ("ELF32 errors: " ++ show errs)
-      R.withElfConfig (E.Elf32 e32) configs (testRewriter mRunner hdlAlloc strat exePath allOutputEqual)
-    E.Elf64Res errs e64 -> do
-      case errs of
-        [] -> return ()
-        _ -> T.assertFailure ("ELF64 errors: " ++ show errs)
-      R.withElfConfig (E.Elf64 e64) configs (testRewriter mRunner hdlAlloc strat exePath allOutputEqual)
+
+  withELF exePath configs (testRewriter mRunner hdlAlloc strat exePath allOutputEqual)
 
 -- | Instead of making sure the original and rewritten have the same behavior,
 -- we want to make sure that the original binary fails and the new binary exits
