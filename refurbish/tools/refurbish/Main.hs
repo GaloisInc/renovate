@@ -42,6 +42,8 @@ import           Text.Read ( readMaybe )
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.BinaryLoader as MBL
 import           Data.Macaw.BinaryLoader.X86 ()
+import           Data.Macaw.X86.Symbolic ()
+import           Data.Macaw.PPC.Symbolic ()
 import qualified Data.Parameterized.NatRepr as NR
 import qualified Lang.Crucible.FunctionHandle as C
 

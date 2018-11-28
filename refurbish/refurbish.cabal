@@ -63,6 +63,8 @@ executable refurbish
                        macaw-base,
                        macaw-loader,
                        macaw-loader-x86,
+                       macaw-x86-symbolic,
+                       macaw-ppc-symbolic,
                        renovate,
                        renovate-ppc,
                        renovate-x86
