@@ -139,6 +139,11 @@ data ISA arch = ISA
       -> RegisterType arch
       -> RegisterType arch
       -> Instruction arch (InstructionAnnotation arch)
+  , isaMoveImmediate
+      :: Integer
+      -> RegisterType arch
+      -> Integer
+      -> Instruction arch (InstructionAnnotation arch)
   , isaLoad
       :: Integer
       -> RegisterType arch
@@ -148,6 +153,11 @@ data ISA arch = ISA
       :: Integer
       -> StackAddress arch
       -> RegisterType arch
+      -> Instruction arch (InstructionAnnotation arch)
+  , isaStoreImmediate
+      :: Integer
+      -> StackAddress arch
+      -> Integer
       -> Instruction arch (InstructionAnnotation arch)
   , isaAddImmediate
       :: RegisterType arch

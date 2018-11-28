@@ -63,8 +63,10 @@ isa = R.ISA
   , R.isaMakeSymbolicCall = x64MakeSymbolicCall
   , R.isaPrettyInstruction = show . PD.pretty
   , R.isaMove = x86Move
+  , R.isaMoveImmediate = x86MoveImmediate
   , R.isaLoad = x86Load
   , R.isaStore = x86Store
+  , R.isaStoreImmediate = x86StoreImmediate
   , R.isaAddImmediate = x86AddImmediate
   , R.isaSubtractImmediate = x86SubtractImmediate
   }
@@ -88,6 +90,10 @@ x86Move :: Integer -> Value -> Value -> Instruction TargetAddress
 x86Move _ dest_reg src_reg =
   noAddr $ makeInstr "mov" [dest_reg, src_reg]
 
+x86MoveImmediate :: Integer -> Value -> Integer -> Instruction TargetAddress
+x86MoveImmediate _ dest_reg imm =
+  noAddr $ makeInstr "mov" [dest_reg, D.QWordImm $ fromIntegral imm]
+
 x86Load
   :: Integer -> Value -> R.StackAddress X86.X86_64 -> Instruction TargetAddress
 x86Load size reg addr =
@@ -97,6 +103,15 @@ x86Store
   :: Integer -> R.StackAddress X86.X86_64 -> Value -> Instruction TargetAddress
 x86Store size addr reg =
   noAddr $ makeInstr "mov" [x86StackAddress addr size, reg]
+
+x86StoreImmediate
+  :: Integer
+  -> R.StackAddress X86.X86_64
+  -> Integer
+  -> Instruction TargetAddress
+x86StoreImmediate size addr imm =
+  noAddr $
+    makeInstr "mov" [x86StackAddress addr size, D.QWordImm $ fromIntegral imm]
 
 x86AddImmediate :: Value -> Integer -> [Instruction TargetAddress]
 x86AddImmediate _ = x86OpSPImmediate $ B.pack [0x4c, 0x01, 0xd4]
