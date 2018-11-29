@@ -26,14 +26,13 @@ module Renovate.Arch.PPC (
 import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.CFG.Core as MC
 import qualified Data.Macaw.Memory as MM
-import qualified Data.Macaw.Symbolic as MS
 
 import qualified Data.Macaw.PPC as MP
 import qualified Data.Macaw.BinaryLoader.PPC as BLP
 -- FIXME: We probably shouldn't need this import, since the PPCReg type is
 -- re-exported from Data.Macaw.PPC
 import           Data.Macaw.PPC.PPCReg ()
-import qualified Data.Macaw.PPC.Symbolic as MPS
+import           Data.Macaw.PPC.Symbolic ()
 
 import qualified Renovate as R
 import           Renovate.Arch.PPC.ISA
