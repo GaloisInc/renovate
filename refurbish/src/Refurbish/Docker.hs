@@ -27,7 +27,7 @@ runner mapping args =
   P.readProcessWithExitCode "docker" dargs ""
   where
     argMap = [["-v", src ++ ":" ++ dst] | (src, dst) <- mapping]
-    dargs = concat [ ["run"]
+    dargs = concat [ ["run", "--rm"]
                    , concat argMap
                    , [qemuRunnerName]
                    , args
