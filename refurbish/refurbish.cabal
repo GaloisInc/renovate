@@ -61,6 +61,7 @@ executable refurbish
                        elf-edit,
                        parameterized-utils,
                        macaw-base,
+                       macaw-symbolic,
                        macaw-loader,
                        macaw-loader-x86,
                        macaw-x86-symbolic,

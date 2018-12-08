@@ -49,11 +49,13 @@ import           Prelude
 
 import qualified Data.ElfEdit as E
 import qualified Data.Macaw.CFG as MM
+import qualified Data.Macaw.Symbolic as MS
 
 import qualified Renovate.Address as RA
 import qualified Renovate.BasicBlock as B
 import qualified Renovate.Diagnostic as RD
 import qualified Renovate.ISA as ISA
+import qualified Renovate.Recovery as RE
 import qualified Renovate.Rewrite as RW
 
 assertM :: (Monad m, HasCallStack) => Bool -> m ()
@@ -99,8 +101,8 @@ data RewriterInfo arch =
   deriving (Generic)
 
 data SomeBlocks = forall arch
-                . (B.InstructionConstraints arch)
-                => SomeBlocks (ISA.ISA arch) [B.ConcreteBlock arch]
+                . (B.InstructionConstraints arch, MS.MacawArchConstraints arch)
+                => SomeBlocks (ISA.ISA arch) [B.ConcreteBlock arch] (RE.BlockInfo arch)
 
 newtype ElfRewriter arch a = ElfRewriter { unElfRewrite :: S.StateT (RewriterInfo arch) IO a }
                           deriving (Monad,

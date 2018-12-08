@@ -44,7 +44,9 @@ import qualified Data.Macaw.BinaryLoader as MBL
 import           Data.Macaw.BinaryLoader.X86 ()
 import           Data.Macaw.X86.Symbolic ()
 import           Data.Macaw.PPC.Symbolic ()
+import qualified Data.Macaw.Symbolic as MS
 import qualified Data.Parameterized.NatRepr as NR
+import qualified Lang.Crucible.CFG.Extension as CE
 import qualified Lang.Crucible.FunctionHandle as C
 
 import qualified Renovate as R
@@ -112,7 +114,7 @@ main = O.execParser optParser >>= mainWithOptions
 mainWithOptions :: Options -> IO ()
 mainWithOptions o = do
   bytes <- BS.readFile (oInput o)
-  let configs :: [(R.Architecture, R.SomeConfig R.AnalyzeAndRewrite (Const ()))]
+  let configs :: [(R.Architecture, R.SomeConfig R.AnalyzeAndRewrite R.BlockInfo)]
       configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analysis))
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))
@@ -128,8 +130,8 @@ mainWithOptions o = do
         _ -> print errs
       R.withElfConfig (E.Elf32 e32) configs $ \rc e loadedBinary -> do
         let rc' = rc { R.rcUpdateSymbolTable = True }
-        (e', _, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary R.Parallel
-        printInfo o ri
+        (e', bi, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary R.Parallel
+        printInfo o bi ri
         LBS.writeFile (oOutput o) (E.renderElf e')
         when (oRunREPL o) (runREPL ri)
     E.Elf64Res errs e64 -> do
@@ -138,8 +140,8 @@ mainWithOptions o = do
         _ -> print errs
       R.withElfConfig (E.Elf64 e64) configs $ \rc e loadedBinary -> do
         let rc' = rc { R.rcUpdateSymbolTable = True }
-        (e', _, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary R.Parallel
-        printInfo o ri
+        (e', bi, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary R.Parallel
+        printInfo o bi ri
         LBS.writeFile (oOutput o) (E.renderElf e')
         when (oRunREPL o) (runREPL ri)
 
@@ -154,9 +156,13 @@ newtype BlockMapping arch =
   BlockMapping (M.Map (R.ConcreteAddress arch) (R.ConcreteAddress arch))
 
 data SomeBlockIndex =
-  forall arch . (MM.MemWidth (MM.ArchAddrWidth arch), R.InstructionConstraints arch) =>
+  forall arch . ( MM.MemWidth (MM.ArchAddrWidth arch)
+                , R.InstructionConstraints arch
+                , MS.MacawArchConstraints arch
+                ) =>
   SomeBlockIndex { _blockIndex :: IM.IntervalMap (R.ConcreteAddress arch) (R.ConcreteBlock arch)
                  , _blockISA :: R.ISA arch
+                 , _blockInfo :: R.BlockInfo arch
                  }
 
 runREPL :: R.RewriterInfo arch -> IO ()
@@ -171,11 +177,11 @@ runREPL ri = H.runInputT settings' (repl hdlrs)
                     , discoveredIndex =
                       case ri ^. R.riRecoveredBlocks of
                         Nothing -> Nothing
-                        Just (R.SomeBlocks isa bs) -> Just (SomeBlockIndex (indexBlocks isa bs) isa)
+                        Just (R.SomeBlocks isa bs bi) -> Just (SomeBlockIndex (indexBlocks isa bs) isa bi)
                     , outputIndex =
                       case ri ^. R.riOutputBlocks of
                         Nothing -> Nothing
-                        Just (R.SomeBlocks isa bs) -> Just (SomeBlockIndex (indexBlocks isa bs) isa)
+                        Just (R.SomeBlocks isa bs bi) -> Just (SomeBlockIndex (indexBlocks isa bs) isa bi)
                     , blockMapping = Some (BlockMapping (M.fromList (ri ^. R.riBlockMapping)))
                     }
 
@@ -264,10 +270,28 @@ replPrintDiscoveredBlock ri =
           | Just (addr :: Word64) <- readMaybe mAddr ->
             case discoveredIndex ri of
               Nothing -> H.outputStrLn "No discovered blocks"
-              Just (SomeBlockIndex idx isa) -> do
+              Just (SomeBlockIndex idx isa bi) -> do
                 let caddr = R.concreteFromAbsolute (fromIntegral addr)
                 F.forM_ (IM.elems (IM.containing idx caddr)) $ printOutputBlock H.outputStr isa
+                case M.lookup caddr (R.biCFG bi) of
+                  Nothing -> H.outputStrLn "No Crucible CFG"
+                  Just scfg -> do
+                    cfg <- liftIO $ R.getSymbolicCFG scfg
+                    H.outputStrLn (show cfg)
         _ -> invalidArguments cmd
+
+-- replPrintCFG :: REPLInfo -> CommandHandler
+-- replPrintCFG ri =
+--   CommandHandler { commandName = "print-cfg"
+--                  , commandDesc = "Print the Crucible CFG for the function at the given address"
+--                  , commandHandler = hdlr
+--                  }
+--   where
+--     hdlr cmd args =
+--       case args of
+--         [mAddr]
+--           | Just (addr :: Word64) <- readMaybe mAddr ->
+--             case discoveredIndex ri
 
 replPrintOutputBlock :: REPLInfo -> CommandHandler
 replPrintOutputBlock ri =
@@ -282,7 +306,7 @@ replPrintOutputBlock ri =
           | Just (addr :: Word64) <- readMaybe mAddr ->
             case outputIndex ri of
               Nothing -> H.outputStrLn "No output blocks"
-              Just (SomeBlockIndex idx isa) -> do
+              Just (SomeBlockIndex idx isa bi) -> do
                 let caddr = R.concreteFromAbsolute (fromIntegral addr)
                 F.forM_ (IM.elems (IM.containing idx caddr)) $ printOutputBlock H.outputStr isa
         _ -> invalidArguments cmd
@@ -307,7 +331,7 @@ tryOriginalAddress :: REPLInfo -> Word64 -> Maybe (H.InputT IO ())
 tryOriginalAddress ri addr = do
   bi <- discoveredIndex ri
   case bi of
-    SomeBlockIndex idx isa -> do
+    SomeBlockIndex idx isa bi -> do
       let caddr = R.concreteFromAbsolute (fromIntegral addr)
       case IM.elems (IM.containing idx caddr) of
         [] -> Nothing
@@ -317,7 +341,7 @@ tryOutputAddress :: REPLInfo -> Word64 -> Maybe (H.InputT IO ())
 tryOutputAddress ri addr = do
   bi <- outputIndex ri
   case bi of
-    SomeBlockIndex idx isa -> do
+    SomeBlockIndex idx isa bi -> do
       let caddr = R.concreteFromAbsolute (fromIntegral addr)
       case IM.elems (IM.containing idx caddr) of
         [] -> Nothing
@@ -342,7 +366,7 @@ replOriginalBlockInfo ri isa waddr addr bs = do
 {-
   case outputIndex ri of
     Nothing -> H.outputStrLn "There are no output blocks"
-    Just (SomeBlockIndex idx isa') -> do
+    Just (SomeBlockIndex idx isa' bi) -> do
       let Some (BlockMapping bm) = blockMapping ri
       let caddr' = R.concreteFromAbsolute (fromIntegral waddr)
       case M.lookup caddr' bm of
@@ -397,15 +421,16 @@ invalidArguments cmd =
 -- Factored out so that we can call it once for both 32 and 64 bits
 printInfo :: (MM.MemWidth (MM.ArchAddrWidth arch))
           => Options
+          -> R.BlockInfo arch
           -> R.RewriterInfo arch
           -> IO ()
-printInfo o ri = do
+printInfo o _ ri = do
   withHandleWhen (oBlockMappingFile o) (printBlockMapping (ri ^. R.riBlockMapping))
   F.forM_ (ri ^. R.riOutputBlocks) (printRequestedBlocks (oPrintOutputBlocks o) (oOutputBlockFile o))
   F.forM_ (ri ^. R.riRecoveredBlocks) (printRequestedBlocks (oPrintDiscoveredBlocks o) (oDiscoveredBlockFile o))
 
 printRequestedBlocks :: [Word64] -> Maybe FilePath -> R.SomeBlocks -> IO ()
-printRequestedBlocks reqs mOutFile (R.SomeBlocks isa blocks) = do
+printRequestedBlocks reqs mOutFile (R.SomeBlocks isa blocks _) = do
   let idx = indexBlocks isa blocks
   let cbs = [ b
             | addrWord <- reqs
@@ -440,10 +465,10 @@ withHandleWhen mf k =
       | fn == "-" -> k IO.stdout
       | otherwise -> IO.withFile fn IO.WriteMode k
 
-analysis :: R.AnalyzeAndRewrite arch binFmt (Const ())
+analysis :: R.AnalyzeAndRewrite arch binFmt R.BlockInfo
 analysis =
   R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
-                      , R.arAnalyze = \_ _ -> return (Const ())
+                      , R.arAnalyze = \env _ -> return (R.analysisBlockInfo env)
                       , R.arPreRewrite = \_ _ -> return (Const ())
                       , R.arRewrite = \_ _ _ b -> return (Just (R.basicBlockInstructions b))
                       }

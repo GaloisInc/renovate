@@ -60,6 +60,7 @@ import qualified Renovate.Rewrite as RW
 data SomeConfig callbacks (b :: * -> *) = forall arch binFmt
                   . (B.InstructionConstraints arch,
                      MS.ArchBits arch,
+                     MS.MacawArchConstraints arch,
                      MBL.BinaryLoader arch binFmt
                     )
                   => SomeConfig (NR.NatRepr (MM.ArchAddrWidth arch)) (MBL.BinaryRepr binFmt) (RenovateConfig arch binFmt callbacks b)
