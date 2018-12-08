@@ -29,6 +29,7 @@ library
                        macaw-base,
                        macaw-loader,
                        macaw-loader-x86,
+                       parameterized-utils,
                        ansi-wl-pprint,
                        exceptions,
                        prettyprinter,

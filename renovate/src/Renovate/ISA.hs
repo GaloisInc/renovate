@@ -16,7 +16,9 @@ module Renovate.ISA
 
 import Data.Word ( Word8, Word64 )
 
+import           Data.Parameterized.Some
 import qualified Data.Macaw.CFG as MM
+import qualified Data.Macaw.Types as MT
 
 import Renovate.Address
 import Renovate.BasicBlock.Types ( Instruction, InstructionAnnotation, RegisterType, TaggedInstruction )
@@ -135,27 +137,27 @@ data ISA arch = ISA
   , isaPrettyInstruction :: forall t . Instruction arch t -> String
   -- ^ Pretty print an instruction for diagnostic purposes
   , isaMove
-      :: Integer
+      :: Some MT.TypeRepr
       -> RegisterType arch
       -> RegisterType arch
       -> Instruction arch (InstructionAnnotation arch)
   , isaMoveImmediate
-      :: Integer
+      :: Some MT.TypeRepr
       -> RegisterType arch
       -> Integer
       -> Instruction arch (InstructionAnnotation arch)
   , isaLoad
-      :: Integer
+      :: Some MT.TypeRepr
       -> RegisterType arch
       -> StackAddress arch
       -> Instruction arch (InstructionAnnotation arch)
   , isaStore
-      :: Integer
+      :: Some MT.TypeRepr
       -> StackAddress arch
       -> RegisterType arch
       -> Instruction arch (InstructionAnnotation arch)
   , isaStoreImmediate
-      :: Integer
+      :: Some MT.TypeRepr
       -> StackAddress arch
       -> Integer
       -> Instruction arch (InstructionAnnotation arch)

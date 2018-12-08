@@ -1,5 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeApplications #-}
 -- | The 'ISA' for x86_64
 module Renovate.Arch.X86_64.ISA (
   isa,
@@ -16,10 +18,13 @@ import qualified Data.ByteString.Lazy as LB
 import qualified Data.Functor.Identity as I
 import           Data.Int ( Int32 )
 import           Data.Maybe
+import           Data.Parameterized.Some
+import           Data.Parameterized.NatRepr
 import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Word ( Word8, Word64 )
 
 import qualified Data.Macaw.Memory as MM
+import qualified Data.Macaw.Types as MT
 import qualified Data.Macaw.X86 as X86
 import qualified Flexdis86 as D
 
@@ -71,47 +76,85 @@ isa = R.ISA
   , R.isaSubtractImmediate = x86SubtractImmediate
   }
 
-x86StackAddress :: R.StackAddress X86.X86_64 -> Integer -> Value
-x86StackAddress addr size = do
+x86StackAddress :: R.StackAddress X86.X86_64 -> (Some MT.TypeRepr) -> Value
+x86StackAddress addr (Some tp) = do
   let (D.QWordReg base_reg) = R.saBase addr
   let x86_addr = D.Addr_64 D.SS
         (Just base_reg)
         Nothing
         (D.Disp32 $ D.Imm32Concrete $ fromIntegral $ R.saOffset addr)
-  case size of
-    1  -> D.Mem8 x86_addr
-    2  -> D.Mem16 x86_addr
-    4  -> D.Mem32 x86_addr
-    8  -> D.Mem64 x86_addr
-    16 -> D.Mem128 x86_addr
-    _  -> error $ "unexpected move size: " ++ show size
+  case tp of
+    MT.BVTypeRepr w
+      | Just Refl <- testEquality w (knownNat   @8)  -> D.Mem8   x86_addr
+      | Just Refl <- testEquality w (knownNat  @16)  -> D.Mem16  x86_addr
+      | Just Refl <- testEquality w (knownNat  @32)  -> D.Mem32  x86_addr
+      | Just Refl <- testEquality w (knownNat  @64)  -> D.Mem64  x86_addr
+      | Just Refl <- testEquality w (knownNat @128)  -> D.Mem128 x86_addr
+    MT.FloatTypeRepr MT.SingleFloatRepr -> D.Mem128 x86_addr
+    MT.FloatTypeRepr MT.DoubleFloatRepr -> D.Mem128 x86_addr
+    _  -> error $ "unexpected move type: " ++ show tp
 
-x86Move :: Integer -> Value -> Value -> Instruction TargetAddress
-x86Move _ dest_reg src_reg =
-  noAddr $ makeInstr "mov" [dest_reg, src_reg]
+x86MovName :: Some MT.TypeRepr -> String
+x86MovName (Some tp) = case tp of
+  MT.BVTypeRepr{} -> "mov"
+  MT.FloatTypeRepr MT.SingleFloatRepr -> "movss"
+  MT.FloatTypeRepr MT.DoubleFloatRepr -> "movsd"
+  _ -> error $ "unexpected move type: " ++ show tp
 
-x86MoveImmediate :: Integer -> Value -> Integer -> Instruction TargetAddress
-x86MoveImmediate _ dest_reg imm =
-  noAddr $ makeInstr "mov" [dest_reg, D.QWordImm $ fromIntegral imm]
+x86YMMToXMM :: Some MT.TypeRepr -> Value -> Value
+x86YMMToXMM (Some tp) val
+  | MT.FloatTypeRepr{} <- tp
+  , D.YMMReg reg <- val =
+    D.XMMReg $ D.xmmReg $ D.ymmRegNo reg
+  | otherwise =
+    val
+
+x86MakeMovInstr
+  :: Some MT.TypeRepr
+  -> Value
+  -> Value
+  -> Instruction TargetAddress
+x86MakeMovInstr tp dest src =
+  noAddr $ makeInstr (x86MovName tp) $ map (x86YMMToXMM tp) [dest, src]
+
+x86Move
+  :: Some MT.TypeRepr
+  -> Value
+  -> Value
+  -> Instruction TargetAddress
+x86Move = x86MakeMovInstr
+
+x86MoveImmediate
+  :: Some MT.TypeRepr
+  -> Value
+  -> Integer
+  -> Instruction TargetAddress
+x86MoveImmediate tp dest_reg imm =
+  x86MakeMovInstr tp dest_reg (D.QWordImm $ fromIntegral imm)
 
 x86Load
-  :: Integer -> Value -> R.StackAddress X86.X86_64 -> Instruction TargetAddress
-x86Load size reg addr =
-  noAddr $ makeInstr "mov" [reg, x86StackAddress addr size]
+  :: Some MT.TypeRepr
+  -> Value
+  -> R.StackAddress X86.X86_64
+  -> Instruction TargetAddress
+x86Load tp reg addr =
+  x86MakeMovInstr tp reg (x86StackAddress addr tp)
 
 x86Store
-  :: Integer -> R.StackAddress X86.X86_64 -> Value -> Instruction TargetAddress
-x86Store size addr reg =
-  noAddr $ makeInstr "mov" [x86StackAddress addr size, reg]
+  :: Some MT.TypeRepr
+  -> R.StackAddress X86.X86_64
+  -> Value
+  -> Instruction TargetAddress
+x86Store tp addr reg =
+  x86MakeMovInstr tp (x86StackAddress addr tp) reg
 
 x86StoreImmediate
-  :: Integer
+  :: Some MT.TypeRepr
   -> R.StackAddress X86.X86_64
   -> Integer
   -> Instruction TargetAddress
-x86StoreImmediate size addr imm =
-  noAddr $
-    makeInstr "mov" [x86StackAddress addr size, D.QWordImm $ fromIntegral imm]
+x86StoreImmediate tp addr imm =
+  x86MakeMovInstr tp (x86StackAddress addr tp) (D.QWordImm $ fromIntegral imm)
 
 x86AddImmediate :: Value -> Integer -> [Instruction TargetAddress]
 x86AddImmediate _ = x86OpSPImmediate $ B.pack [0x4c, 0x01, 0xd4]
