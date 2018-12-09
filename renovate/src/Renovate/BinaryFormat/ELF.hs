@@ -291,29 +291,57 @@ allocatedVAddrs e = F.foldl' (Map.unionWith max) Map.empty <$> traverse processR
     E.ElfAbsoluteSize size -> return (Map.singleton (E.elfSegmentVirtAddr seg) size)
   processRegion _ = return Map.empty
 
--- | @availableAddrs lo hi alignment allocated@ computes a list of @(addr, size)@ pairs where
---
--- * @lo <= addr@
--- * @addr+size-1 <= hi@
--- * @addr `mod` alignment == 0@
--- * @size `mod` alignment == 0@
--- * the addresses @addr@ through @addr+size-1@ are not already in the range
---   @k@ through @k+v-1@ for any key-value pair @(k, v)@ in @allocated@
+-- | Generate a list of @(addr, size)@ pairs where each pair is within @(lo,
+-- hi)@ (i.e., in range of a jump from the text section) and correctly aligned
+-- w.r.t. the passed-in alignment.
 availableAddrs :: (Ord w, Integral w) => w -> w -> w -> Map.Map w w -> [(w, w)]
-availableAddrs lo hi alignment allocated = go lo (Map.toAscList allocated) where
-  go addr [] = buildPair addr hi
-  go addr ((_, 0):xs) = go addr xs
-  go addr ((addr', size'):xs) = buildPair addr (min hi (addr'-1)) ++ go (addr'+size') xs
+availableAddrs lo hi alignment allocated =
+  -- Note that we aren't considering the space between lo and the first region.
+  -- We could, but it tends to be hard to put data before something else.
+  go lo (Map.toAscList allocated)
+  where
+    -- This function scans the list of already-allocated address ranges and puts
+    -- together a list of pairs representing unallocated ranges.  The @addr@
+    -- argument is the start of the next available range.
+    go addr allocd =
+      case allocd of
+        [] ->
+          -- In this case, we are out of allocated pairs.  We'll make one last
+          -- address range starting here and spanning to the end of the
+          -- reachable range
+          buildAlignedRange addr hi
+        (_, 0) : rest ->
+          -- In this case, we hit a zero-sized range.  Just skip it
+          go addr rest
+        (allocatedStart, allocatedSize) : []
+          | allocatedStart >= hi ->
+            -- If the last region is beyond the high watermark, just throw it away
+            []
+          | otherwise ->
+            -- Otherwise, we have the last allocated region and want to make a
+            -- range between it and the high watermark
+            buildAlignedRange (allocatedStart + allocatedSize) hi
+        r1@(r1Base, r1Size) : r2 : rest ->
+          -- We have a pair of allocated regions: generate a free region between
+          -- them, as long as the alignment correction doesn't run it into the
+          -- next allocated region.
+          buildAlignedRangeBetween r1 r2 ++ go (r1Base + r1Size) (r2 : rest)
 
-  buildPair base_ end_
-    | base >= hi || end <= lo = []
-    -- paranoia: what if end_ is 0, so end is maxBound? then the above check
-    -- wouldn't fire, but we still don't want to return a successful answer
-    | end == -1 = []
-    | otherwise = [(base, end-base+1)]
-    where
-    end = end_ - ((end_+1) `mod` alignment)
-    base = base_ + ((alignment - base_ `mod` alignment) `mod` alignment)
+    buildAlignedRange base0 end
+      | base >= hi || end <= lo = []
+      | end == -1 = []
+      | otherwise = [(base, end - base)]
+      where
+        base = base0 + (alignment - (base0 `mod` alignment))
+
+    buildAlignedRangeBetween (r1Start, r1Size) (r2Start, _r2Size)
+      | base >= hi || end <= lo || base >= r2Start = []
+      | otherwise = [(base, end - base)]
+      where
+        base0 = r1Start + r1Size
+        base = base0 + (alignment - (base0 `mod` alignment))
+        end = r2Start - 1
+
 
 -- | Given an existing section, find the range of addresses where we could lay
 -- out code while still being able to jump to anywhere in the existing section.
@@ -350,7 +378,8 @@ selectLayoutAddr lo hi alignment e = do
     Right m -> return m
   case availableAddrs lo hi alignment allocated of
     [] -> fail "No unallocated virtual address space within jumping range of the text section is available for use as a new extratext section."
-    available -> return $ L.maximumBy (O.comparing snd) available
+    available -> do
+      return $ L.maximumBy (O.comparing snd) available
 
 -- | The rewriter driver
 --
