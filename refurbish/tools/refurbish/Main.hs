@@ -128,7 +128,7 @@ mainWithOptions o = do
         _ -> print errs
       R.withElfConfig (E.Elf32 e32) configs $ \rc e loadedBinary -> do
         let rc' = rc { R.rcUpdateSymbolTable = True }
-        (e', _, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary R.Parallel
+        (e', _, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary (R.Parallel R.IgnoreLoops)
         printInfo o ri
         LBS.writeFile (oOutput o) (E.renderElf e')
         when (oRunREPL o) (runREPL ri)
@@ -138,7 +138,7 @@ mainWithOptions o = do
         _ -> print errs
       R.withElfConfig (E.Elf64 e64) configs $ \rc e loadedBinary -> do
         let rc' = rc { R.rcUpdateSymbolTable = True }
-        (e', _, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary R.Parallel
+        (e', _, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary (R.Parallel R.IgnoreLoops)
         printInfo o ri
         LBS.writeFile (oOutput o) (E.renderElf e')
         when (oRunREPL o) (runREPL ri)

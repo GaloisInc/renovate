@@ -32,7 +32,7 @@ module Renovate.Redirect.Monad (
   recordUnrelocatableTermBlock,
   recordIncompleteBlock,
   recordUnrelocatableSize,
-  recordResuedBytes,
+  recordReusedBytes,
   recordBlockMap,
   ) where
 
@@ -111,6 +111,9 @@ newtype RewriterT arch m a =
             RWS.MonadWriter Diagnostics,
             ET.MonadError E.SomeException)
 
+instance T.MonadIO m => T.MonadIO (RewriterT arch m) where
+  liftIO = RewriterT . T.liftIO
+
 -- | A 'RewriterT' over the 'I.Identity' 'Monad'
 type Rewriter arch a = RewriterT arch I.Identity a
 
@@ -187,8 +190,8 @@ recordUnrelocatableSize = do
   s <- RWS.get
   RWS.put $! s { rwsSmallBlockCount = rwsSmallBlockCount s + 1 }
 
-recordResuedBytes :: (Monad m) => Int -> RewriterT arch m ()
-recordResuedBytes nBytes = do
+recordReusedBytes :: (Monad m) => Int -> RewriterT arch m ()
+recordReusedBytes nBytes = do
   s <- RWS.get
   RWS.put $! s { rwsReusedByteCount = rwsReusedByteCount s + nBytes }
 

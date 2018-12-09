@@ -3,6 +3,8 @@
 module Renovate.Redirect (
   redirect,
   LayoutStrategy(..),
+  LoopStrategy(..),
+  loopStrategy,
   ConcreteBlock,
   SymbolicBlock,
   BasicBlock(..),
@@ -19,7 +21,7 @@ module Renovate.Redirect (
   ) where
 
 import           Control.Monad ( when )
-import           Control.Monad.Trans ( lift )
+import           Control.Monad.Trans ( MonadIO, lift )
 import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import qualified Data.List as L
@@ -37,6 +39,8 @@ import           Renovate.Recovery ( BlockInfo, isIncompleteBlockAddress, biOver
 import           Renovate.Recovery.Overlap ( disjoint )
 import           Renovate.Redirect.Concretize
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
+                                                      , LoopStrategy(..)
+                                                      , loopStrategy
                                                       , Status(..)
                                                       , Layout(..)
                                                       , ConcretePair(..)
@@ -59,7 +63,7 @@ import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions )
 -- The function runs in an arbitrary 'Monad' to allow instrumentors to
 -- carry around their own state.
 --
-redirect :: (Monad m, InstructionConstraints arch, HasInjectedFunctions m arch)
+redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch)
          => ISA arch
          -- ^ Information about the ISA in use
          -> BlockInfo arch
@@ -105,7 +109,7 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
          RM.recordIncompleteBlock
        return (SymbolicPair (LayoutPair cb sb Unmodified))
   injectedCode <- lift getInjectedFunctions
-  layout <- concretize strat layoutAddr transformedBlocks injectedCode
+  layout <- concretize strat layoutAddr transformedBlocks injectedCode blockInfo
   let concretizedBlocks = programBlockLayout layout
   let paddingBlocks = layoutPaddingBlocks layout
   let injectedBlocks = injectedBlockLayout layout

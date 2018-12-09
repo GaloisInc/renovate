@@ -14,6 +14,7 @@ module Renovate.Recovery (
   BlockInfo(..),
   SymbolicCFG,
   SymbolicRegCFG,
+  SCFG,
   getSymbolicCFG,
   getSymbolicRegCFG,
   isIncompleteBlockAddress,
@@ -68,11 +69,11 @@ newtype SymbolicRegCFG arch = SymbolicRegCFG (Cached (SCFG CR.SomeCFG arch))
 --
 -- We have this representation to let us lazily construct CFGs, as we won't
 -- usually need all of them
-getSymbolicCFG :: SymbolicCFG arch -> IO (C.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch))
+getSymbolicCFG :: SymbolicCFG arch -> IO (SCFG C.SomeCFG arch)
 getSymbolicCFG (SymbolicCFG cached) = getCached cached
 
 -- | Construct or return the cached symbolic registerized CFG
-getSymbolicRegCFG :: SymbolicRegCFG arch -> IO (CR.SomeCFG (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch))
+getSymbolicRegCFG :: SymbolicRegCFG arch -> IO (SCFG CR.SomeCFG arch)
 getSymbolicRegCFG (SymbolicRegCFG cached) = getCached cached
 
 getCached :: Cached a -> IO a

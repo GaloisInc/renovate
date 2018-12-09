@@ -5,13 +5,15 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 module Renovate.Rewrite (
+  RewriteMT,
   RewriteM,
   RewriteInfo(..),
   RewriteSite(..),
   BlockCFGIndex,
   mkRewriteEnv,
+  runRewriteMT,
   runRewriteM,
-  rewriteIO,
+  hoist,
   lookupBlockCFG,
   lookupEntryAddress,
   HasInjectedFunctions(..),
@@ -23,7 +25,7 @@ module Renovate.Rewrite (
   recordRewrite
   ) where
 
-import qualified Control.Monad.Trans as MT
+import qualified Control.Monad.Identity as I
 import qualified Control.Monad.RWS.Strict as RWS
 import           Control.Monad.ST ( RealWorld )
 import qualified Data.ByteString as BS
@@ -105,25 +107,26 @@ data RewriteEnv arch = RewriteEnv
 type BlockCFGIndex arch = M.Map (A.ConcreteAddress arch) (S.Set (FR.FunctionCFG arch))
 
 -- | A monadic environment for binary rewriting
-newtype RewriteM arch a = RewriteM { unRewriteM :: RWS.RWST (RewriteEnv arch) () (RewriteInfo arch) IO a }
+newtype RewriteMT arch m a = RewriteM { unRewriteM :: RWS.RWST (RewriteEnv arch) () (RewriteInfo arch) m a }
   deriving (Applicative,
             Functor,
             Monad,
             RWS.MonadReader (RewriteEnv arch),
-            RWS.MonadState (RewriteInfo arch))
+            RWS.MonadState (RewriteInfo arch),
+            RWS.MonadIO)
 
-instance HasInjectedFunctions (RewriteM arch) arch where
+type RewriteM arch = RewriteMT arch I.Identity
+
+instance Monad m => HasInjectedFunctions (RewriteMT arch m) arch where
   getInjectedFunctions = getInj
 
-getInj :: RewriteM arch [(A.SymbolicAddress arch, BS.ByteString)]
+getInj :: Monad m => RewriteMT arch m [(A.SymbolicAddress arch, BS.ByteString)]
 getInj = do
   m <- RWS.gets injectedFunctions
   return [ (a, bs) | (a, (_, bs)) <- M.toList m ]
 
--- | This is a separate function instead of a 'MonadIO' instance so that we can
--- use it internally, but not export it to the user at all.
-rewriteIO :: IO a -> RewriteM arch a
-rewriteIO a = RewriteM (MT.lift a)
+hoist :: Monad m => RewriteM arch a -> RewriteMT arch m a
+hoist (RewriteM act) = RewriteM (RWS.mapRWST (return . I.runIdentity) act)
 
 -- | Make a mapping from block addresses to their CFGs.
 mkBlockCFGIndex :: [FR.FunctionCFG arch] -> BlockCFGIndex arch
@@ -164,8 +167,19 @@ runRewriteM :: RewriteEnv arch
             -- ^ A symbolic address allocator for injected functions
             -> RewriteM arch a
             -- ^ The rewriting action to run
-            -> IO (a, RewriteInfo arch)
-runRewriteM env newGlobalBase symAlloc i = do
+            -> (a, RewriteInfo arch)
+runRewriteM env newGlobalBase symAlloc = I.runIdentity . runRewriteMT env newGlobalBase symAlloc
+
+runRewriteMT :: Monad m
+             => RewriteEnv arch
+             -> A.ConcreteAddress arch
+             -- ^ The address to start allocating new global variables at
+             -> RS.SymbolicAddressAllocator arch
+             -- ^ A symbolic address allocator for injected functions
+             -> RewriteMT arch m a
+             -- ^ The rewriting action to run
+             -> m (a, RewriteInfo arch)
+runRewriteMT env newGlobalBase symAlloc i = do
   (res, st, _) <- RWS.runRWST (unRewriteM i) env emptyInfo
   return (res, st)
   where
