@@ -5,11 +5,20 @@
 #endif
 
 #ifdef __powerpc__
-/*TBD: rval value on exit */
+/* Use register variables so that GCC figures out which load
+ * instruction to use (ld, li, or mr) */
 #define EXIT(rval)                              \
-  asm volatile                                  \
-     ("li 0,1\n"                                \
-      "sc")
+  {                                             \
+    register int r0 asm ("r0");                 \
+    register int r3 asm ("r3");                 \
+    r0 = 1;                                     \
+    r3 = (rval);                                \
+    asm volatile                                \
+       ("sc"                                    \
+        : /* no output */                       \
+        : "r" (r0), "r" (r3)                    \
+        : /* no extra modifications */);        \
+  }
 #endif
 
 #if defined(__x86_64) || defined(__i686__)
