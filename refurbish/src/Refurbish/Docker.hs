@@ -11,9 +11,17 @@ import qualified System.Process as P
 qemuRunnerName :: String
 qemuRunnerName = "refurbish-qemu-runner"
 
+dockerFile :: String
+dockerFile =
+  unlines [ "FROM ubuntu:18.04"
+          , "RUN apt update"
+          , "RUN apt install -y qemu-user"
+          , "WORKDIR /tmp"
+          ]
+
 initializeQemuRunner :: IO (Either (Int, String, String) Runner)
 initializeQemuRunner = do
-  (ec, out, err) <- P.readProcessWithExitCode "docker" ["build", "-t", qemuRunnerName, "."] ""
+  (ec, out, err) <- P.readProcessWithExitCode "docker" ["build", "-t", qemuRunnerName, "-"] dockerFile
   case ec of
     E.ExitSuccess -> do return (Right (Runner runner))
     E.ExitFailure rv -> return (Left (rv, out, err))
