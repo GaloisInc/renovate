@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -46,12 +47,9 @@ deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (TargetAddress a
 newtype Instruction a = I { unI :: D.AnnotatedInstruction a }
   deriving (Eq, Show)
 
-type instance R.Instruction MP.PPC32 = Instruction
-type instance R.InstructionAnnotation MP.PPC32 = TargetAddress MP.PPC32
-type instance R.RegisterType MP.PPC32 = Some D.Operand
-type instance R.Instruction MP.PPC64 = Instruction
-type instance R.InstructionAnnotation MP.PPC64 = TargetAddress MP.PPC64
-type instance R.RegisterType MP.PPC64 = Some D.Operand
+type instance R.Instruction (MP.AnyPPC v) = Instruction
+type instance R.InstructionAnnotation (MP.AnyPPC v) = TargetAddress (MP.AnyPPC v)
+type instance R.RegisterType (MP.AnyPPC v) = Some D.Operand
 
 instance PP.Pretty (Instruction a) where
   pretty = PP.pretty . ppcPrettyInstruction
@@ -349,12 +347,8 @@ newJumpOffset nBits srcAddr targetAddr
   where
     rawOff = targetAddr `R.addressDiff` srcAddr
 
--- | These are orphan instances; is there a better place to put them?
-instance R.ToGenericInstruction MP.PPC32 where
-  toGenericInstruction   = toInst
-  fromGenericInstruction = fromInst
-
-instance R.ToGenericInstruction MP.PPC64 where
+-- | This is an are orphan instance; is there a better place to put it?
+instance R.ToGenericInstruction (MP.AnyPPC v) where
   toGenericInstruction   = toInst
   fromGenericInstruction = fromInst
 
