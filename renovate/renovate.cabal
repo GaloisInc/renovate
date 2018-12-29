@@ -52,7 +52,7 @@ library
                        heaps >= 0.3 && < 0.4,
                        IntervalMap >= 0.6 && < 0.7,
                        mtl >= 2.2 && < 2.3,
-                       mwc-random >= 0.13.6.0 && < 0.14,
+                       mwc-random >= 0.13.6.0 && < 0.15,
                        exceptions >= 0.7 && < 0.11,
                        vector >= 0.10 && < 0.13,
                        lens >= 4 && < 5,
