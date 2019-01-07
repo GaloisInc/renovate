@@ -64,7 +64,7 @@ import qualified Data.Foldable as F
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
-import           Data.Maybe ( catMaybes, maybeToList, listToMaybe, isJust )
+import           Data.Maybe ( catMaybes, fromMaybe, maybeToList, listToMaybe, isJust )
 import           Data.Monoid
 import qualified Data.Ord as O
 import qualified Data.Sequence as Seq
@@ -487,7 +487,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   ( analysisResult
     , overwrittenBytes
     , instrumentedBytes
-    , _mNewData
+    , mNewData
     , newSyms
     , addrMap ) <- instrumentTextSection cfg hdlAlloc loadedBinary textSectionRange
                                        (E.elfSectionData textSection) strat layoutAddr dataAddr symmap
@@ -513,6 +513,8 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- Wrap the new text section in a loadable segment
   newTextSegment <- withCurrentELF (newExecutableSegment newTextAddr (Seq.singleton (E.ElfDataSection newTextSec)))
   modifyCurrentELF (appendSegment newTextSegment)
+
+
   -- Update the symbol table (if there is one)
   --
   -- FIXME: If we aren't updating the symbol table (but there is one), just
@@ -525,6 +527,20 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
           modifyCurrentELF (appendDataRegion (E.ElfDataSymtab newSymtab) symbolTableAlignment)
       | otherwise -> return ()
     _ -> return ()
+
+  -- Append a fresh data segment (of size 1 page) with zero contents.
+  --
+  -- We need this to be at the highest address in the final binary (mostly to
+  -- satisfy qemu, which sets the program brk to the highest address of any data
+  -- segment).  NOTE: If we have concrete data contents, we need to overwrite
+  -- the empty data later.  We must also make sure that the rewriter pass didn't
+  -- ask for more space than we reserved.  If we find that to be a problem, we
+  -- could probably just safely put this at the end of the binary after we
+  -- figure out how much space we need.
+  let dataPage = fromMaybe (B.pack (replicate 4096 0)) mNewData
+  newDataSec <- withCurrentELF (newDataSection (fromIntegral (rcDataLayoutBase cfg)) dataPage)
+  newDataSeg <- withCurrentELF (newDataSegment newDataSec)
+  modifyCurrentELF (appendSegment newDataSeg)
 
   modifyCurrentELF appendHeaders
   -- Now overwrite the original code (in the .text segment) with the
@@ -880,6 +896,42 @@ newTextSection startAddr bytes e = do
                          , E.elfSectionIndex = newTextIdx
                          }
   return (E.ElfSectionIndex newTextIdx, sec)
+
+newDataSection :: (Integral (E.ElfWordType w), Show (E.ElfWordType w), Bits (E.ElfWordType w))
+               => E.ElfWordType w
+               -> B.ByteString
+               -> E.Elf w
+               -> ElfRewriter arch (E.ElfSection (E.ElfWordType w))
+newDataSection baseDataAddr bytes e = do
+  let newDataIdx = nextSectionIndex e
+  let sec = E.ElfSection { E.elfSectionName = C8.pack ".extradata"
+                         , E.elfSectionType = E.SHT_PROGBITS
+                         , E.elfSectionFlags = E.shf_alloc .|. E.shf_write
+                         , E.elfSectionAddr = baseDataAddr
+                         , E.elfSectionSize = fromIntegral (B.length bytes)
+                         , E.elfSectionLink = 0
+                         , E.elfSectionInfo = 0
+                         , E.elfSectionAddrAlign = 32
+                         , E.elfSectionEntSize = 0
+                         , E.elfSectionData = bytes
+                         , E.elfSectionIndex = newDataIdx
+                         }
+  return sec
+
+newDataSegment :: (Integral (E.ElfWordType w), Show (E.ElfWordType w))
+               => E.ElfSection (E.ElfWordType w)
+               -> E.Elf w
+               -> ElfRewriter arch (E.ElfSegment w)
+newDataSegment section e =
+  return E.ElfSegment { E.elfSegmentType = E.PT_LOAD
+                      , E.elfSegmentFlags = E.pf_r .|. E.pf_w
+                      , E.elfSegmentIndex = nextSegmentIndex e
+                      , E.elfSegmentVirtAddr = E.elfSectionAddr section
+                      , E.elfSegmentPhysAddr = E.elfSectionAddr section
+                      , E.elfSegmentAlign = fromIntegral newTextAlign
+                      , E.elfSegmentMemSize = E.ElfAbsoluteSize (fromIntegral (E.elfSectionSize section))
+                      , E.elfSegmentData = Seq.singleton (E.ElfDataSection section)
+                      }
 
 -- | Allocate a fresh segment that is executable and loadable
 --
