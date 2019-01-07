@@ -72,6 +72,20 @@ executable refurbish
   default-language:    Haskell2010
   ghc-options: -Wall
 
+-- Run an executable in a docker container. Useful e.g. to run a ppc
+-- binary on x86, without intermediating through a test suite.
+executable refurbish-run
+  main-is:             Main.hs
+  -- other-modules:
+  -- other-extensions:
+  build-depends:       base >=4.10 && <5,
+                       directory,
+                       filepath,
+                       refurbish
+  hs-source-dirs:      tools/refurbish-run
+  default-language:    Haskell2010
+  ghc-options: -Wall -rtsopts -threaded
+
 test-suite refurbish-tests
   default-language: Haskell2010
   type: exitcode-stdio-1.0
