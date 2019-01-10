@@ -41,21 +41,11 @@ library
   hs-source-dirs: src
   default-language: Haskell2010
   ghc-options: -Wall
-
--- The refurbish tool depends on the husk-scheme package which is not
--- GHC 8.6 compatible (it needs a MonadFail instace). The husk-scheme
--- package has not been updated since 2016, but we could fork it and
--- apply the trivial fix if needed. But for now, just adding a flag to
--- not build the refurbish tool with sfe on 8.6.
-flag build-refurbish-tool
-  description: Build the refurbish tool.
-  manual: True
-  default: True
-
+                  
 executable refurbish
   main-is:             Main.hs
-  if !flag(build-refurbish-tool)
-     buildable: False
+  -- other-modules:
+  -- other-extensions:
   build-depends:       base >=4.10 && <5,
                        bytestring,
                        text >= 1 && < 2,
