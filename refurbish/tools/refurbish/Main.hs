@@ -10,10 +10,8 @@
 module Main ( main ) where
 
 import           Control.Applicative ( (<|>) )
-import qualified Control.Exception as X
 import           Control.Lens ( (^.) )
 import           Control.Monad ( when )
-import           Control.Monad.IO.Class ( liftIO )
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ElfEdit as E
@@ -30,9 +28,6 @@ import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Word ( Word64 )
 import qualified Fmt as Fmt
 import           Fmt ( (+|), (|+), (+||), (||+) )
-import qualified Language.Scheme.Core as LSC
-import qualified Language.Scheme.Parser as LSP
-import qualified Language.Scheme.Types as LST
 import qualified Options.Applicative as O
 import qualified System.Console.Haskeline as H
 import qualified System.Exit as IO
@@ -229,7 +224,6 @@ commandHandlers ri = CommandHandlers m
     cs = [ replPrintDiscoveredBlock ri
          , replPrintOutputBlock ri
          , replAddressInfo ri
-         , replEval ri
          , replHelp cs
          ]
 
@@ -365,28 +359,6 @@ replOutputBlockInfo :: (R.InstructionConstraints arch)
 replOutputBlockInfo ri isa waddr addr bs = do
   H.outputStrLn ("The instruction at " +|| PD.pretty addr ||+ " is in a block added by the rewriter")
   F.forM_ bs (printOutputBlock H.outputStr isa)
-
-replEval :: REPLInfo -> CommandHandler
-replEval _ri =
-  CommandHandler { commandName = "eval"
-                 , commandDesc = "Evaluate a scheme program (with access to the rewriter metrics)"
-                 , commandHandler = hdlr
-                 }
-  where
-    hdlr cmd args =
-      case args of
-        [inputFile] -> do
-          econtents <- liftIO (X.try (readFile inputFile))
-          case econtents of
-            Left (err :: X.IOException) -> H.outputStrLn ("Error reading file " +| inputFile |+ ": " +|| err ||+ "")
-            Right scm -> do
-              env <- liftIO $ LSC.r7rsEnv
-              _ <- liftIO $ LSC.runIOThrowsREPL $ do
-                exprs <- LST.liftThrows $ LSP.readExprList scm
-                vals <- mapM (LSC.evalLisp env) exprs
-                return (show vals)
-              return ()
-        _ -> invalidArguments cmd
 
 invalidArguments :: String -> H.InputT IO ()
 invalidArguments cmd =

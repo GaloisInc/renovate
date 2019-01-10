@@ -57,7 +57,6 @@ executable refurbish
                        lens,
                        fmt >= 0.6 && < 0.7,
                        haskeline >= 0.7 && < 0.8,
-                       husk-scheme >= 3 && < 4,
                        elf-edit,
                        parameterized-utils,
                        macaw-base,
