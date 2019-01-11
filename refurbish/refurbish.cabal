@@ -57,7 +57,6 @@ executable refurbish
                        lens,
                        fmt >= 0.6 && < 0.7,
                        haskeline >= 0.7 && < 0.8,
-                       husk-scheme >= 3 && < 4,
                        elf-edit,
                        parameterized-utils,
                        macaw-base,
@@ -71,6 +70,20 @@ executable refurbish
   hs-source-dirs:      tools/refurbish
   default-language:    Haskell2010
   ghc-options: -Wall
+
+-- Run an executable in a docker container. Useful e.g. to run a ppc
+-- binary on x86, without intermediating through a test suite.
+executable refurbish-run
+  main-is:             Main.hs
+  -- other-modules:
+  -- other-extensions:
+  build-depends:       base >=4.10 && <5,
+                       directory,
+                       filepath,
+                       refurbish
+  hs-source-dirs:      tools/refurbish-run
+  default-language:    Haskell2010
+  ghc-options: -Wall -rtsopts -threaded
 
 test-suite refurbish-tests
   default-language: Haskell2010

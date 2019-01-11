@@ -92,12 +92,9 @@ data BlockInfo arch = BlockInfo
   -- ^ All blocks found
   , biFunctionEntries  :: [ConcreteAddress arch]
   -- ^ All known function addresses
-  , biFunctionBlocks   :: M.Map (ConcreteAddress arch) [ConcreteBlock arch]
-  -- ^ Map from a function address to the set of all blocks in that function
-  , biDiscoveryFunInfo :: M.Map (ConcreteAddress arch) (PU.Some (MC.DiscoveryFunInfo arch))
-  -- ^ Map from a function address to the discovered information abou
-  -- that function.  Note that the function might be incomplete if
-  -- some of the blocks could not be fully analyzed.
+  , biFunctions        :: M.Map (ConcreteAddress arch) ([ConcreteBlock arch], PU.Some (MC.DiscoveryFunInfo arch))
+  -- ^ Map from a function address to the set of all blocks in that function,
+  -- along with the other information discovered by macaw for that function.
   , biIncomplete       :: S.Set (ConcreteAddress arch)
   -- ^ The set of blocks that reside in incomplete functions (i.e.,
   -- functions for which we cannot find all of the code).  Note that
@@ -225,7 +222,7 @@ blockInfo recovery mem textAddrRange di = do
   blocks <- catMaybes <$> mapM blockBuilder (M.elems macawBlocks)
   let addBlock m b = M.insert (basicBlockAddress b) b m
   let blockIndex = F.foldl' addBlock M.empty blocks
-  let funcBlocks = M.fromList [ (funcAddr, mapMaybe (\a -> M.lookup a blockIndex) blockAddrs)
+  let funcBlocks = M.fromList [ (funcAddr, (mapMaybe (\a -> M.lookup a blockIndex) blockAddrs, PU.Some dfi))
                               | PU.Some dfi <- validFuncs
                               , Just funcAddr <- [concreteFromSegmentOff mem (MC.discoveredFunAddr dfi)]
                               , let blockAddrs = mapMaybe (concreteFromSegmentOff mem) (M.keys (dfi L.^. MC.parsedBlocks))
@@ -258,8 +255,7 @@ blockInfo recovery mem textAddrRange di = do
 
   return BlockInfo { biBlocks = blocks
                    , biFunctionEntries = mapMaybe (concreteFromSegmentOff mem) funcEntries
-                   , biFunctionBlocks = funcBlocks
-                   , biDiscoveryFunInfo = infos
+                   , biFunctions = funcBlocks
                    , biIncomplete = indexIncompleteBlocks mem infos
                    , biCFG = M.map fst cfgPairs
                    , biRegCFG = M.map snd cfgPairs
