@@ -121,7 +121,7 @@ pageAlignment = 0x1000
 withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
               -> [(Arch.Architecture, SomeConfig callbacks b)]
-              -> (forall arch . (MS.ArchBits arch,
+              -> (forall arch . (MS.SymArchConstraints arch,
                                   MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch)),
                                   E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                                   B.InstructionConstraints arch)
@@ -170,7 +170,7 @@ withElfConfig e0 configs k = do
 rewriteElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
-               MS.ArchBits arch)
+               MS.SymArchConstraints arch)
            => RenovateConfig arch binFmt AnalyzeAndRewrite b
            -- ^ The configuration for the rewriter
            -> C.HandleAllocator RealWorld
@@ -198,7 +198,7 @@ rewriteElf cfg hdlAlloc e loadedBinary strat = do
 analyzeElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
-               MS.ArchBits arch)
+               MS.SymArchConstraints arch)
            => RenovateConfig arch binFmt AnalyzeOnly b
            -- ^ The configuration for the analysis
            -> C.HandleAllocator RealWorld
@@ -413,7 +413,7 @@ selectLayoutAddr lo hi alignment e = do
 doRewrite :: (B.InstructionConstraints arch,
               MBL.BinaryLoader arch binFmt,
               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
-              MS.ArchBits arch)
+              MS.SymArchConstraints arch)
           => RenovateConfig arch binFmt AnalyzeAndRewrite b
           -> C.HandleAllocator RealWorld
           -> MBL.LoadedBinary arch binFmt
@@ -933,7 +933,7 @@ instrumentTextSection :: forall w arch binFmt b
                           MBL.BinaryLoader arch binFmt,
                           B.InstructionConstraints arch,
                           Integral (E.ElfWordType w),
-                          MS.ArchBits arch)
+                          MS.SymArchConstraints arch)
                       => RenovateConfig arch binFmt AnalyzeAndRewrite b
                       -> C.HandleAllocator RealWorld
                       -> MBL.LoadedBinary arch binFmt
@@ -1018,7 +1018,7 @@ withAnalysisEnv :: forall w arch binFmt callbacks b a
                        MBL.BinaryLoader arch binFmt,
                        B.InstructionConstraints arch,
                        Integral (E.ElfWordType w),
-                       MS.ArchBits arch)
+                       MS.SymArchConstraints arch)
                    => RenovateConfig arch binFmt callbacks b
                    -> C.HandleAllocator RealWorld
                    -> MBL.LoadedBinary arch binFmt

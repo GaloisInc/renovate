@@ -123,7 +123,7 @@ data BlockInfo arch = BlockInfo
 isIncompleteBlockAddress :: BlockInfo arch -> ConcreteAddress arch -> Bool
 isIncompleteBlockAddress bi a = S.member a (biIncomplete bi)
 
-analyzeDiscoveredFunctions :: (MS.ArchBits arch)
+analyzeDiscoveredFunctions :: (MS.SymArchConstraints arch)
                            => Recovery arch
                            -> MC.Memory (MC.ArchAddrWidth arch)
                            -> (ConcreteAddress arch, ConcreteAddress arch)
@@ -146,7 +146,7 @@ analyzeDiscoveredFunctions recovery mem textAddrRange info !iterations =
       analyzeDiscoveredFunctions recovery mem textAddrRange info' (iterations + 1)
 
 toRegCFG :: forall arch ids s
-          . (MS.ArchBits arch)
+          . (MS.SymArchConstraints arch)
          => C.HandleAllocator s
          -> MC.DiscoveryFunInfo arch ids
          -> Maybe (ST s (SCFG CR.SomeCFG arch))
@@ -161,16 +161,16 @@ toRegCFG halloc dfi = do
   return (MS.mkFunRegCFG archFns halloc memBaseVarMap nm posFn dfi)
 
 toCFG :: forall arch
-       . (MS.ArchBits arch)
+       . (MS.SymArchConstraints arch)
       => SymbolicRegCFG arch
       -> Maybe (IO (SCFG C.SomeCFG arch))
 toCFG symRegCFG = do
   archFns <- MS.archFunctions <$> MS.archVals (Proxy @arch)
   return $ do
     regCFG <- getSymbolicRegCFG symRegCFG -- this is why we're in IO, not ST
-    return $ MS.crucGenArchConstraints archFns $ MS.toCoreCFG archFns regCFG
+    return (MS.toCoreCFG archFns regCFG)
 
-cfgFromAddrsWith :: (MS.ArchBits arch)
+cfgFromAddrsWith :: (MS.SymArchConstraints arch)
                  => Recovery arch
                  -> MC.Memory (MC.ArchAddrWidth arch)
                  -> (ConcreteAddress arch, ConcreteAddress arch)
@@ -209,7 +209,7 @@ addrInRange (textStart, textEnd) addr = fromMaybe False $ do
   let soEnd = absoluteAddress textEnd
   return (absAddr >= soStart && absAddr < soEnd)
 
-blockInfo :: (MS.ArchBits arch)
+blockInfo :: (MS.SymArchConstraints arch)
           => Recovery arch
           -> MC.Memory (MC.RegAddrWidth (MC.ArchReg arch))
           -> (ConcreteAddress arch, ConcreteAddress arch)
@@ -302,7 +302,7 @@ data Recovery arch =
 -- that attempts to make code relocatable (the symbolization phase) fails badly
 -- in this case.  To avoid these failures, we constrain our code recovery to the
 -- text section.
-recoverBlocks :: (MS.ArchBits arch)
+recoverBlocks :: (MS.SymArchConstraints arch)
               => Recovery arch
               -> MC.Memory (MC.ArchAddrWidth arch)
               -> SymbolMap arch
