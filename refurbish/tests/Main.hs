@@ -119,7 +119,7 @@ toRewritingTest mRunner hdlAlloc strat exePath = T.testCase exePath $ do
 
 testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , E.ElfWidthConstraints w
-                , MS.ArchBits arch
+                , MS.SymArchConstraints arch
                 , R.InstructionConstraints arch
                 , MBL.BinaryLoader arch (E.Elf w)
                 )
@@ -179,14 +179,15 @@ readTestArguments exePath = do
 
 withELF :: FilePath
         -> [(R.Architecture, R.SomeConfig R.AnalyzeAndRewrite a)]
-        -> (forall arch . (MS.ArchBits arch,
-                                  MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch)),
-                                  E.ElfWidthConstraints (MM.ArchAddrWidth arch),
-                                  R.InstructionConstraints arch)
-                                   => R.RenovateConfig arch (E.Elf (MM.ArchAddrWidth arch)) R.AnalyzeAndRewrite a
-                                   -> E.Elf (MM.ArchAddrWidth arch)
-                                   -> MBL.LoadedBinary arch (E.Elf (MM.ArchAddrWidth arch))
-                                   -> IO ())
+        -> (forall arch . ( MS.SymArchConstraints arch
+                          , MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch))
+                          , E.ElfWidthConstraints (MM.ArchAddrWidth arch)
+                          , R.InstructionConstraints arch
+                          ) =>
+               R.RenovateConfig arch (E.Elf (MM.ArchAddrWidth arch)) R.AnalyzeAndRewrite a
+            -> E.Elf (MM.ArchAddrWidth arch)
+            -> MBL.LoadedBinary arch (E.Elf (MM.ArchAddrWidth arch))
+            -> IO ())
         -> T.Assertion
 withELF exePath configs k = do
   bytes <- BS.readFile exePath
