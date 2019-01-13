@@ -113,7 +113,7 @@ testBlockRecovery :: (w ~ MM.ArchAddrWidth arch,
                       R.InstructionConstraints arch,
                       MBL.BinaryLoader arch binFmt,
                       E.ElfWidthConstraints w,
-                      MS.ArchBits arch
+                      MS.SymArchContraints arch
                      )
                   => C.HandleAllocator RealWorld
                   -> R.RenovateConfig arch binFmt R.AnalyzeOnly TestConfig
