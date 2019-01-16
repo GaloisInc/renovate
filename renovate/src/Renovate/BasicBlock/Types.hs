@@ -36,6 +36,7 @@ module Renovate.BasicBlock.Types (
 
 import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Typeable ( Typeable )
+import           Data.Word
 
 import qualified Data.Macaw.CFG as MC
 
@@ -221,6 +222,7 @@ type FallthroughBlock arch = BasicBlock (SymbolicInfo arch) (SymbolicFallthrough
 data AddressAssignedBlock arch = AddressAssignedBlock
   { lbBlock :: FallthroughBlock arch -- ^ The block with symbolic addresses
   , lbAt    :: ConcreteAddress arch -- ^ The concrete address for this block
+  , lbSize  :: Word64 -- ^ How many bytes we set aside for this block (or 0 if we aren't moving/rewriting it)
   }
 
 -- | Address information for a symbolic block.

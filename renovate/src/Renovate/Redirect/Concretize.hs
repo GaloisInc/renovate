@@ -6,6 +6,7 @@
 -- blocks.
 module Renovate.Redirect.Concretize ( concretize ) where
 
+import           Control.Exception ( assert )
 import           Control.Monad.IO.Class ( MonadIO )
 import qualified Control.Monad.State as S
 import qualified Data.ByteString as BS
@@ -14,7 +15,8 @@ import qualified Data.Map as M
 import qualified Data.Traversable as T
 import qualified Data.Map as Map
 import           Data.Maybe ( maybeToList )
-import           Data.Monoid ((<>))
+import           Data.Monoid ( Sum(Sum), (<>))
+import           Data.Word ( Word64 )
 
 import           Renovate.Address
 import           Renovate.BasicBlock
@@ -62,7 +64,7 @@ concretize strat startAddr blocks injectedCode blockInfo = do
   let concreteAddresses = programBlockLayout layout
   let injectedAddresses = injectedBlockLayout layout
   let concreteAddressMap = M.fromList [ (symbolicAddress (basicBlockAddress sb), ca)
-                                      | AddressAssignedPair (LayoutPair _ (AddressAssignedBlock sb ca) _) <- F.toList concreteAddresses
+                                      | AddressAssignedPair (LayoutPair _ (AddressAssignedBlock sb ca _) _) <- F.toList concreteAddresses
                                       ]
   let injectedAddressMap = M.fromList [ (symAddr, concAddr)
                                       | (symAddr, concAddr, _) <- injectedAddresses
@@ -71,7 +73,7 @@ concretize strat startAddr blocks injectedCode blockInfo = do
       -- Make note of symbolic names for each embrittled function. We can
       -- use this to make new symtab entries for them.
   let brittleMap = M.fromList [ (ca, (basicBlockAddress oa, nm))
-                              | AddressAssignedPair (LayoutPair oa (AddressAssignedBlock _sb ca) _) <- F.toList concreteAddresses
+                              | AddressAssignedPair (LayoutPair oa (AddressAssignedBlock _sb ca _) _) <- F.toList concreteAddresses
                               , nm <- maybeToList $ Map.lookup (basicBlockAddress oa) symmap
                               ]
   -- TODO: JED: Should this be a put or an append?
@@ -121,11 +123,15 @@ concretizeJumps :: (Monad m, InstructionConstraints arch)
                 => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
                 -> AddressAssignedPair arch
                 -> RewriterT arch m (ConcretePair arch)
-concretizeJumps concreteAddressMap (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock sb baddr) Modified)) = do
+concretizeJumps concreteAddressMap (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock sb baddr maxSize) Modified)) = do
   let insnAddrs = basicBlockInstructions sb
-  concretizedInstrs <- S.evalStateT (T.traverse (mapJumpAddressDriver concreteAddressMap) insnAddrs) baddr
+  concretizedInstrsSizes <- S.evalStateT (T.traverse (mapJumpAddressDriver concreteAddressMap) insnAddrs) baddr
+  let Sum concretizedSize = foldMap snd concretizedInstrsSizes
+      concretizedInstrs = foldMap fst concretizedInstrsSizes
+  assert (concretizedSize <= maxSize) (return ())
+  isa <- askISA
   let sb' = sb { basicBlockAddress = baddr
-               , basicBlockInstructions = concat concretizedInstrs
+               , basicBlockInstructions = concretizedInstrs ++ isaMakePadding isa (maxSize - concretizedSize)
                }
   return (ConcretePair (LayoutPair cb sb' Modified))
 concretizeJumps _concreteAddressMap (AddressAssignedPair (LayoutPair cb _ Unmodified)) =
@@ -136,13 +142,14 @@ mapJumpAddressDriver ::
   (Monad m, InstructionConstraints arch) =>
   M.Map (SymbolicAddress arch) (ConcreteAddress arch) ->
   SymbolicFallthrough arch (InstructionAnnotation arch) ->
-  S.StateT (ConcreteAddress arch) (RewriterT arch m) [Instruction arch ()]
+  S.StateT (ConcreteAddress arch) (RewriterT arch m) ([Instruction arch ()], Sum Word64)
 mapJumpAddressDriver concreteAddressMap sf = do
   addr <- S.get
   isa <- S.lift askISA
   insns <- S.lift $ mapJumpAddress concreteAddressMap (sf, addr)
-  S.put . addressAddOffset addr . fromIntegral . sum . map (isaInstructionSize isa) $ insns
-  return insns
+  let totalSize = sum . map (fromIntegral . isaInstructionSize isa) $ insns
+  S.put $ addressAddOffset addr (fromInteger totalSize)
+  return (insns, fromInteger totalSize)
 
 resolveSymbolicAddr
   :: forall m arch.

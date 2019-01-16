@@ -277,7 +277,7 @@ insertLookupA k fv m = C.getCompose (M.alterF (pairSelf . maybe fv pure) k m) wh
 -- Every symbolic block is assumed to have been assigned an address at this
 -- point.
 assignConcreteAddress :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
-                      => M.Map (SymbolicInfo arch) (ConcreteAddress arch)
+                      => M.Map (SymbolicInfo arch) (ConcreteAddress arch, Word64)
                       -> FallthroughPair arch
                       -> RewriterT arch m (AddressAssignedPair arch)
 assignConcreteAddress assignedAddrs (FallthroughPair (LayoutPair cb fb Modified)) = do
@@ -285,9 +285,9 @@ assignConcreteAddress assignedAddrs (FallthroughPair (LayoutPair cb fb Modified)
     Nothing -> L.error $ printf "Expected an assigned address for symbolic block %s (derived from concrete block %s)"
                                 (show (basicBlockAddress fb))
                                 (show (basicBlockAddress cb))
-    Just addr -> return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb addr) Modified))
+    Just (addr, size) -> return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb addr size) Modified))
 assignConcreteAddress _ (FallthroughPair (LayoutPair cb fb Unmodified)) =
-  return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb (basicBlockAddress cb)) Unmodified))
+  return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb (basicBlockAddress cb) 0) Unmodified))
 
 allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch), F.Foldable t, Functor t)
                                => ConcreteAddress arch
@@ -295,7 +295,7 @@ allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch),
                                -> [[FallthroughBlock arch]]
                                -> t (SymbolicAddress arch, BS.ByteString)
                                -> RewriterT arch m ( AddressHeap arch
-                                                   , M.Map (SymbolicInfo arch) (ConcreteAddress arch)
+                                                   , M.Map (SymbolicInfo arch) (ConcreteAddress arch, Word64)
                                                    , M.Map (SymbolicAddress arch) (ConcreteAddress arch, (SymbolicAddress arch, BS.ByteString))
                                                    )
 allocateSymbolicBlockAddresses startAddr h0 blocksBySize injectedCode = do
@@ -303,8 +303,10 @@ allocateSymbolicBlockAddresses startAddr h0 blocksBySize injectedCode = do
   mem <- askMem
   let blockItemSize = symbolicBlockSize isa mem startAddr
   let blockItemKey = basicBlockAddress
-  (nextStart, h1, m1) <- F.foldlM (allocateBlockGroupAddresses blockItemSize blockItemKey const) (startAddr, h0, M.empty) blocksBySize
-  (_, h2, m2) <- F.foldlM (allocateBlockGroupAddresses (fromIntegral . BS.length . snd) fst (,)) (nextStart, h1, M.empty) ((:[]) <$> injectedCode)
+  let blockItemVal addr size _block = (addr, size)
+  let injectedItemVal addr _size code = (addr, code)
+  (nextStart, h1, m1) <- F.foldlM (allocateBlockGroupAddresses blockItemSize blockItemKey blockItemVal) (startAddr, h0, M.empty) blocksBySize
+  (_, h2, m2) <- F.foldlM (allocateBlockGroupAddresses (fromIntegral . BS.length . snd) fst injectedItemVal) (nextStart, h1, M.empty) ((:[]) <$> injectedCode)
   return (h2, m1, m2)
 
 -- | Allocate an address for the given symbolic block.
@@ -325,7 +327,7 @@ allocateBlockGroupAddresses
                      :: (MM.MemWidth (MM.ArchAddrWidth arch), Monad m, Ord key)
                      => (item -> Word64)
                      -> (item -> key)
-                     -> (ConcreteAddress arch -> item -> val)
+                     -> (ConcreteAddress arch -> Word64 -> item -> val)
                      -> (ConcreteAddress arch, AddressHeap arch, M.Map key val)
                      -> [item]
                      -> RewriterT arch m (ConcreteAddress arch, AddressHeap arch, M.Map key val)
@@ -345,7 +347,7 @@ allocateBlockGroupAddresses itemSize itemKey itemVal (newTextAddr, h, m) items =
 
     blockGroupMapping baseAddr =
       let addrs = scanl (\addr size -> addr `addOff` fromIntegral size) baseAddr itemsSizes
-          newMappings = zipWith (\addr item -> (itemKey item, itemVal addr item)) addrs items
+          newMappings = zipWith3 (\addr size item -> (itemKey item, itemVal addr size item)) addrs itemsSizes items
       in M.union m (M.fromList newMappings)
 
     allocateNewTextAddr =
