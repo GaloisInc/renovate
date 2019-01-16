@@ -11,6 +11,7 @@ module Renovate.Redirect.LayoutBlocks.Types (
   CompactOrdering(..),
   LayoutPair(..),
   SymbolicPair(..),
+  FallthroughPair(..),
   AddressAssignedPair(..),
   ConcretePair(..),
   Status(..),
@@ -122,5 +123,6 @@ data Status
   deriving (Eq, Ord, Read, Show)
 
 newtype SymbolicPair         arch = SymbolicPair { unSymbolicPair :: LayoutPair (SymbolicBlock arch) arch }
+newtype FallthroughPair      arch = FallthroughPair { unFallthroughPair :: LayoutPair (FallthroughBlock arch) arch }
 newtype AddressAssignedPair  arch = AddressAssignedPair { unAddressAssignedPair :: LayoutPair (AddressAssignedBlock arch) arch }
 newtype ConcretePair         arch = ConcretePair { unConcretePair :: LayoutPair (ConcreteBlock arch) arch }

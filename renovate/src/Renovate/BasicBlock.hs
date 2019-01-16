@@ -22,9 +22,16 @@ module Renovate.BasicBlock (
   terminatorType,
   TaggedInstruction,
   tagInstruction,
-  hasNoSymbolicTarget,
   symbolicTarget,
   projectInstruction,
+  FallthroughInstruction(..),
+  SymbolicFallthrough,
+  ConcreteFallthrough,
+  addFallthrough,
+  noFallthrough,
+  hasNoAddresses,
+  FallthroughTag(..),
+  FallthroughBlock,
   -- * Constraints
   InstructionConstraints
   ) where
@@ -83,9 +90,10 @@ concreteBlockSize isa = instructionStreamSize isa . basicBlockInstructions
 -- rewritten.
 --
 -- We find this size by rewriting the jumps with fake addresses (since
--- we don't know the real addresses yet).  For each jump, we always
--- generate the same size of instruction independent of the size of
--- the operand, so this is safe.
+-- we don't know the real addresses yet).  For each jump, we put the target as
+-- far away as possible to guarantee that the ISA gives us the worst-case
+-- instructions in terms of assembled size. Later we will rewrite the jumps
+-- with real addresses, then insert padding to fill out any unused space.
 --
 -- The address parameter is a dummy used as a stand in for the address of jump
 -- destinations.
@@ -93,25 +101,34 @@ symbolicBlockSize :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch))
                   => ISA arch
                   -> MC.Memory (MC.ArchAddrWidth arch)
                   -> ConcreteAddress arch
-                  -> SymbolicBlock arch
+                  -> FallthroughBlock arch
                   -> Word64
-symbolicBlockSize isa mem addr sb = basicInstSize + fromIntegral jumpSizes
+symbolicBlockSize isa mem addr fb = basicInstSize + fromIntegral jumpSizes
   where
-    jumpSizes = sum $ map (computeRewrittenJumpSize isa mem addr . projectInstruction) jumpsToRewrite
-    basicInstSize = sum (map (fromIntegral . isaInstructionSize isa . isaConcretizeAddresses isa mem addr . projectInstruction) standardInstructions)
-    (standardInstructions, jumpsToRewrite) = L.partition hasNoSymbolicTarget (basicBlockInstructions sb)
+    jumpSizes = sum $ map (computeRewrittenJumpSize isa mem addr) jumpsToRewrite
+    basicInstSize = sum (map (fromIntegral . isaInstructionSize isa . isaConcretizeAddresses isa mem addr . ftInstruction) standardInstructions)
+    (standardInstructions, jumpsToRewrite) = L.partition hasNoAddresses (basicBlockInstructions fb)
 
-computeRewrittenJumpSize :: (L.HasCallStack) => ISA arch -> MC.Memory (MC.ArchAddrWidth arch) -> ConcreteAddress arch -> Instruction arch (InstructionAnnotation arch) -> Int
-computeRewrittenJumpSize isa mem addr jmp
-  | Just jmp' <- isaModifyJumpTarget isa concJmp addr addr
-  , origSize == isaInstructionSize isa jmp' = fromIntegral origSize
-  | Just _jmp' <- isaModifyJumpTarget isa concJmp addr addr =
-      error ("computeRewrittenJumpSize: Jump changes sizes: " ++ isaPrettyInstruction isa jmp)
-  | otherwise =
+computeRewrittenJumpSize ::
+  (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch)) =>
+  ISA arch ->
+  MC.Memory (MC.ArchAddrWidth arch) ->
+  ConcreteAddress arch ->
+  SymbolicFallthrough arch (InstructionAnnotation arch) ->
+  Int
+computeRewrittenJumpSize isa mem addr ftJmp = case rewrittenSize of
+  Just size -> size
+  Nothing ->
       error ("computeRewrittenJumpSize: Jump cannot be modified: " ++ isaPrettyInstruction isa jmp)
   where
-    origSize = isaInstructionSize isa jmp
-    concJmp = isaConcretizeAddresses isa mem addr jmp
+    instrSize = fromIntegral . isaInstructionSize isa
+    jmp = isaConcretizeAddresses isa mem addr (ftInstruction ftJmp)
+    fakeTgt = addressAddOffset addr (fromIntegral (isaMaxRelativeJumpSize isa))
+    rewrittenJmp = isaModifyJumpTarget isa addr FallthroughInstruction
+      { ftInstruction = jmp
+      , ftTag = fakeTgt <$ ftTag ftJmp
+      }
+    rewrittenSize = sum . map instrSize <$> rewrittenJmp
 
 -- | Return the 'JumpType' of the terminator instruction (if any)
 --

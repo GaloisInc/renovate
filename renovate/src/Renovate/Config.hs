@@ -179,11 +179,6 @@ data RenovateConfig arch binFmt callbacks (b :: * -> *) = RenovateConfig
   -- calling the function callback.
   , rcAnalysis      :: callbacks arch binFmt b
   -- ^ Caller-specified analysis (and possibly rewriter) to apply to the binary
-  , rcMaxUnconditionalJumpSize :: Word64
-  -- ^ How far can this architecture's unconditional relative jumps reach? New
-  -- code blocks will be laid out in virtual address space within this many
-  -- bytes of the original code blocks, so that the two can jump to each other
-  -- as necessary.
   , rcDataLayoutBase :: Word64
   -- ^ The base address to start laying out new data
   , rcUpdateSymbolTable :: Bool

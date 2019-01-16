@@ -5,6 +5,9 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveTraversable #-}
 module Renovate.BasicBlock.Types (
   BasicBlock(..),
   Instruction,
@@ -16,15 +19,21 @@ module Renovate.BasicBlock.Types (
   AddressAssignedBlock(..),
   TaggedInstruction,
   tagInstruction,
-  hasNoSymbolicTarget,
   symbolicTarget,
   projectInstruction,
+  FallthroughInstruction(..),
+  SymbolicFallthrough,
+  ConcreteFallthrough,
+  addFallthrough,
+  noFallthrough,
+  hasNoAddresses,
+  FallthroughTag(..),
+  FallthroughBlock,
   ToGenericInstruction(..),
   -- * Constraints
   InstructionConstraints
   ) where
 
-import           Data.Maybe ( isNothing )
 import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Typeable ( Typeable )
 
@@ -125,10 +134,6 @@ instance PD.Pretty (Instruction arch a) => PD.Pretty (TaggedInstruction arch a) 
 tagInstruction :: Maybe (SymbolicAddress arch) -> Instruction arch a -> TaggedInstruction arch a
 tagInstruction ma i = Tag (i, ma)
 
--- | Return 'True' if the 'TaggedInstruction' has no symbolic target.
-hasNoSymbolicTarget :: TaggedInstruction arch a -> Bool
-hasNoSymbolicTarget = isNothing . symbolicTarget
-
 -- | If the 'TaggedInstruction' has a 'SymbolicAddress' as a target,
 -- return it.
 symbolicTarget :: TaggedInstruction arch a -> Maybe (SymbolicAddress arch)
@@ -143,11 +148,78 @@ projectInstruction = fst . unTag
 -- which refer to other 'SymbolicBlock's.
 type SymbolicBlock arch = BasicBlock (SymbolicInfo arch) (TaggedInstruction arch) (InstructionAnnotation arch)
 
+-- | When rewriting code after relocating it, we need to track each
+-- instruction's possible successors. In most cases, for straight-line code,
+-- there is just one successor (the immediately next instruction in memory),
+-- and as an optimization we keep straight-line code blocks together during
+-- relocation. So we distinguish these cases:
+--
+-- 1. Straight-line code, which always implicitly falls through to the "next"
+--    instruction. In most cases, we ensure that the next instruction is the
+--    same in both the original and rewritten code, so these instructions need
+--    not be rewritten and need not store a successor at all.
+-- 2. Straight-line code that ends a basic block (because another block targets
+--    the next instruction). These instructions fall through to another block,
+--    which may have been relocated, so we must track the location of their
+--    fallthrough successor.
+-- 2. Unconditional jumps, which definitely redirect control flow. These need
+--    one address for their target.
+-- 3. Conditional jumps, which may either redirect control flow or implicitly
+--    fall through to the "next" instruction. Because we may relocate both the
+--    target of the jump and the implicit fall-through instructions, we need
+--    two addresses.
+--
+-- We use the parameter to choose between symbolic and concrete
+-- addresses for the successors.
+data FallthroughTag a = FallthroughTag
+  { ftTarget :: Maybe a
+  , ftFallthrough :: Maybe a
+  } deriving (Eq, Ord, Read, Show, Functor, Foldable, Traversable)
+
+-- | A wrapper around a normal instruction that includes optional addresses for
+-- all of the instruction's successors that may be relocated. The addresses can
+-- be chosen to be symbolic or concrete by picking different @addr@s.
+data FallthroughInstruction arch addr a = FallthroughInstruction
+  { ftInstruction :: Instruction arch a
+  , ftTag :: FallthroughTag addr
+  }
+
+type SymbolicFallthrough arch = FallthroughInstruction arch (SymbolicAddress arch)
+type ConcreteFallthrough arch = FallthroughInstruction arch (ConcreteAddress arch)
+
+instance PD.Pretty (Instruction arch a) => PD.Pretty (FallthroughInstruction arch addr a) where
+  pretty = PD.pretty . ftInstruction
+
+-- | Lift a 'TaggedInstruction' to a 'FallthroughInstruction' by adding the
+-- symbolic address of its fallthrough successor. If it didn't have a jump
+-- target before, it's considered straightline code and the successor address
+-- is ignored.
+addFallthrough :: SymbolicAddress arch -> TaggedInstruction arch a -> SymbolicFallthrough arch a
+addFallthrough fallthrough (Tag (i, tgt)) = FallthroughInstruction i (FallthroughTag tgt (Just fallthrough))
+
+-- | Lift a 'TaggedInstruction' to a 'FallthroughInstruction' by asserting that
+-- it has no fallthrough successor. If it didn't have a jump target before, it
+-- shouldn't need to be rewritten. So we treat it as straightline code.
+noFallthrough :: TaggedInstruction arch a -> SymbolicFallthrough arch a
+noFallthrough (Tag (i, tgt)) = FallthroughInstruction i (FallthroughTag tgt Nothing)
+
+-- | Return 'True' if the 'FallthroughInstruction' has no target or fallthrough addresses.
+hasNoAddresses :: FallthroughInstruction arch addr a -> Bool
+hasNoAddresses fi = case ftTag fi of
+  FallthroughTag Nothing Nothing -> True
+  _ -> False
+
+-- | The type of 'BasicBlock's that have up to two symbolic addresses.
+-- Unconditional jumps are annotated with symbolic address targets, and
+-- conditional jumps are annotated with two symbolic addresses for their target
+-- and fallthrough behavior.
+type FallthroughBlock arch = BasicBlock (SymbolicInfo arch) (SymbolicFallthrough arch) (InstructionAnnotation arch)
+
 -- | Some algorithms (such as layout) will need to assigned an address
 -- to symbolic blocks and then make the blocks concrete. This type
 -- bundles up a symbolic block and concrete address for that purpose.
 data AddressAssignedBlock arch = AddressAssignedBlock
-  { lbBlock :: SymbolicBlock arch   -- ^ The symbolic block
+  { lbBlock :: FallthroughBlock arch -- ^ The block with symbolic addresses
   , lbAt    :: ConcreteAddress arch -- ^ The concrete address for this block
   }
 

@@ -7,6 +7,7 @@
 module Renovate.Redirect.Concretize ( concretize ) where
 
 import           Control.Monad.IO.Class ( MonadIO )
+import qualified Control.Monad.State as S
 import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import qualified Data.Map as M
@@ -56,7 +57,6 @@ concretize :: (MonadIO m, T.Traversable t, InstructionConstraints arch)
 concretize strat startAddr blocks injectedCode blockInfo = do
   -- First, build up a mapping of symbolic address to new concrete
   -- address
-  isa <- askISA
   symmap <- askSymbolMap
   layout <- layoutBlocks strat startAddr blocks injectedCode (biCFG blockInfo)
   let concreteAddresses = programBlockLayout layout
@@ -79,7 +79,7 @@ concretize strat startAddr blocks injectedCode blockInfo = do
   -- Now go through and fix up all of the jumps to symbolic addresses (which
   -- happen to occur at the end of basic blocks).  Note that we only traverse
   -- the concrete blocks here, not the injected blocks.
-  v <- T.traverse (concretizeJumps isa concToSymAddrMap) concreteAddresses
+  v <- T.traverse (concretizeJumps concToSymAddrMap) concreteAddresses
   return Layout { programBlockLayout = v
                 , layoutPaddingBlocks = layoutPaddingBlocks layout
                 , injectedBlockLayout = injectedBlockLayout layout
@@ -118,20 +118,58 @@ these could be sentinels that require translation back to IP relative
 -- height and gets rid of the extra value.  We wouldn't change that in
 -- this transformation, but the idea might be worth considering.
 concretizeJumps :: (Monad m, InstructionConstraints arch)
-                => ISA arch
-                -> M.Map (SymbolicAddress arch) (ConcreteAddress arch)
+                => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
                 -> AddressAssignedPair arch
                 -> RewriterT arch m (ConcretePair arch)
-concretizeJumps isa concreteAddressMap (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock sb baddr) Modified)) = do
-  mem <- askMem
-  let insnAddrs = instructionAddresses' isa (isaConcretizeAddresses isa mem baddr . projectInstruction) baddr (basicBlockInstructions sb)
-  concretizedInstrs <- T.traverse (mapJumpAddress concreteAddressMap) insnAddrs
+concretizeJumps concreteAddressMap (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock sb baddr) Modified)) = do
+  let insnAddrs = basicBlockInstructions sb
+  concretizedInstrs <- S.evalStateT (T.traverse (mapJumpAddressDriver concreteAddressMap) insnAddrs) baddr
   let sb' = sb { basicBlockAddress = baddr
-               , basicBlockInstructions = concretizedInstrs
+               , basicBlockInstructions = concat concretizedInstrs
                }
   return (ConcretePair (LayoutPair cb sb' Modified))
-concretizeJumps _isa _concreteAddressMap (AddressAssignedPair (LayoutPair cb _ Unmodified)) =
+concretizeJumps _concreteAddressMap (AddressAssignedPair (LayoutPair cb _ Unmodified)) =
   return (ConcretePair (LayoutPair cb cb Unmodified))
+
+mapJumpAddressDriver ::
+  forall m arch.
+  (Monad m, InstructionConstraints arch) =>
+  M.Map (SymbolicAddress arch) (ConcreteAddress arch) ->
+  SymbolicFallthrough arch (InstructionAnnotation arch) ->
+  S.StateT (ConcreteAddress arch) (RewriterT arch m) [Instruction arch ()]
+mapJumpAddressDriver concreteAddressMap sf = do
+  addr <- S.get
+  isa <- S.lift askISA
+  insns <- S.lift $ mapJumpAddress concreteAddressMap (sf, addr)
+  S.put . addressAddOffset addr . fromIntegral . sum . map (isaInstructionSize isa) $ insns
+  return insns
+
+resolveSymbolicAddr
+  :: forall m arch.
+  (Monad m, InstructionConstraints arch) =>
+  M.Map (SymbolicAddress arch) (ConcreteAddress arch) ->
+  ConcreteAddress arch ->
+  SymbolicAddress arch ->
+  RewriterT arch m (ConcreteAddress arch)
+resolveSymbolicAddr _concreteAddressMap _insnAddr (StableAddress concAddr) = return concAddr
+resolveSymbolicAddr concreteAddressMap insnAddr symAddr = case M.lookup symAddr concreteAddressMap of
+  Nothing -> do
+    let err :: Diagnostic
+        err = NoConcreteAddressForSymbolicTarget insnAddr symAddr "concretizeJumps"
+    logDiagnostic err
+    throwError err
+  Just concAddr -> return concAddr
+
+resolveSymbolicFallthrough
+  :: forall m arch a.
+  (Monad m, InstructionConstraints arch) =>
+  M.Map (SymbolicAddress arch) (ConcreteAddress arch) ->
+  ConcreteAddress arch ->
+  SymbolicFallthrough arch a ->
+  RewriterT arch m (ConcreteFallthrough arch a)
+resolveSymbolicFallthrough concreteAddressMap insnAddr sf = do
+  ftTag' <- traverse (resolveSymbolicAddr concreteAddressMap insnAddr) (ftTag sf)
+  return sf { ftTag = ftTag' }
 
 -- | We need the address of the instruction, so we need to pre-compute
 -- all instruction addresses above.
@@ -143,35 +181,21 @@ concretizeJumps _isa _concreteAddressMap (AddressAssignedPair (LayoutPair cb _ U
 mapJumpAddress :: forall m arch
                 . (Monad m, InstructionConstraints arch)
                => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
-               -> (TaggedInstruction arch (InstructionAnnotation arch), ConcreteAddress arch)
-               -> RewriterT arch m (Instruction arch ())
-mapJumpAddress concreteAddressMap (tagged, insnAddr) = do
+               -> (SymbolicFallthrough arch (InstructionAnnotation arch), ConcreteAddress arch)
+               -> RewriterT arch m [Instruction arch ()]
+mapJumpAddress concreteAddressMap (sf, insnAddr) = do
   isa <- askISA
   mem <- askMem
-  case symbolicTarget tagged of
-    Just (StableAddress concAddr) ->
-      case isaModifyJumpTarget isa (isaConcretizeAddresses isa mem insnAddr i) insnAddr concAddr of
-        Nothing -> do
-          let err :: Diagnostic
-              err = InstructionIsNotJump (show i)
-          logDiagnostic err
-          throwError err
-        Just insn -> return insn
-    Just symAddr@(SymbolicAddress _)
-      | Just concAddr <- M.lookup symAddr concreteAddressMap ->
-        case isaModifyJumpTarget isa (isaConcretizeAddresses isa mem insnAddr i) insnAddr concAddr of
-          Nothing -> do
-            let err :: Diagnostic
-                err = InstructionIsNotJump (show i)
-            logDiagnostic err
-            throwError err
-          Just insn -> return insn
-      | otherwise -> do
-          let err :: Diagnostic
-              err = NoConcreteAddressForSymbolicTarget insnAddr symAddr "concretizeJumps"
-          logDiagnostic err
-          throwError err
-    Nothing -> return (isaConcretizeAddresses isa mem insnAddr i)
+  cf_ <- resolveSymbolicFallthrough concreteAddressMap insnAddr sf
+  let cf = cf_ { ftInstruction = isaConcretizeAddresses isa mem insnAddr (ftInstruction cf_) }
+  case (ftTag cf, isaModifyJumpTarget isa insnAddr cf) of
+    (FallthroughTag Nothing Nothing, _) -> return [ftInstruction cf]
+    (_, Nothing) -> do
+      let err :: Diagnostic
+          err = InstructionIsNotJump (show i)
+      logDiagnostic err
+      throwError err
+    (_, Just insns) -> return insns
   where
-    i = projectInstruction tagged
+    i = ftInstruction sf
 

@@ -59,8 +59,6 @@ config32 analysis = R.RenovateConfig
   , R.rcFunctionCallback = Nothing
   , R.rcAnalysis = analysis
   , R.rcUpdateSymbolTable = False
-  -- See Note [Jump Size]
-  , R.rcMaxUnconditionalJumpSize = 2^(25 :: Int)-1
   -- See Note [Layout Addresses]
   , R.rcDataLayoutBase = 0x20000000
   }
@@ -86,8 +84,6 @@ config64 analysis = R.RenovateConfig
   , R.rcFunctionCallback = Nothing
   , R.rcAnalysis = analysis
   , R.rcUpdateSymbolTable = False
-  -- See Note [Jump Size]
-  , R.rcMaxUnconditionalJumpSize = 2^(25 :: Int) -1
   -- See Note [Layout Addresses]
   , R.rcDataLayoutBase = 0x20000000
   }
@@ -99,9 +95,4 @@ around address 0x10000000.  We choose addresses far from there for our new code
 and data.  Note that we can't go too far, as we need to be able to jump with a
 single branch where we only have 24 bits of offset available.
 
--}
-{- Note [Jump Size]
-There are 24 bits of offset in the branch instruction, plus 2 zero bits are
-added for you at the end -- but it's signed, so lose one bit for that for a
-total of 25 bits in either direction.
 -}

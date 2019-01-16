@@ -12,6 +12,7 @@ module Renovate.Arch.X86_64.ISA (
 import qualified GHC.Err.Located as L
 
 import qualified Control.Monad.Catch as C
+import           Data.Bits ( bit )
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy.Builder as B
 import qualified Data.ByteString.Lazy as LB
@@ -60,6 +61,7 @@ isa = R.ISA
   { R.isaInstructionSize = x64Size
   , R.isaJumpType = x64JumpType
   , R.isaMakeRelativeJumpTo = x64MakeRelativeJumpTo
+  , R.isaMaxRelativeJumpSize = bit 31 - 1
   , R.isaModifyJumpTarget = x64ModifyJumpTarget
   , R.isaMakePadding = x64MakePadding
   , R.isaSymbolizeAddresses = x64SymbolizeAddresses
@@ -173,13 +175,18 @@ x86OpSPImmediate op_bytes imm = do
     ++ (map fromFlexInst $
         mapMaybe D.disInstruction $ D.disassembleBuffer op_bytes)
 
+-- | Simple adapter for 'x64JumpTypeRaw' with the right type to be used in an
+-- ISA.
+x64JumpType :: Instruction t -> MM.Memory 64 -> R.ConcreteAddress X86.X86_64 -> R.JumpType X86.X86_64
+x64JumpType insn _ = x64JumpTypeRaw insn
+
 -- | Classify different kinds of jump instructions.
 --
 -- Fortunately, all of the conditional jumps start with 'j', and no
 -- other instructions start with 'j'.  This lets us have an easy case
 -- to handle all of them.
-x64JumpType :: Instruction t -> MM.Memory 64 -> R.ConcreteAddress X86.X86_64 -> R.JumpType X86.X86_64
-x64JumpType xi@(XI ii) _mem addr =
+x64JumpTypeRaw :: Instruction t -> R.ConcreteAddress X86.X86_64 -> R.JumpType X86.X86_64
+x64JumpTypeRaw xi@(XI ii) addr =
   case (D.iiOp ii, map (fst . aoOperand) (D.iiArgs ii)) of
     ("jmp", [D.JumpOffset _ off]) -> R.RelativeJump R.Unconditional addr (fixJumpOffset sz off)
     ("jmp", _) -> R.IndirectJump R.Unconditional
@@ -272,36 +279,56 @@ x64MakeSymbolicJumpOrCall op_code sym_addr =
   R.tagInstruction (Just sym_addr) $
     noAddr $ makeInstr op_code [D.JumpOffset D.JSize32 $ D.FixedOffset 0]
 
-x64ModifyJumpTarget :: Instruction () -> R.ConcreteAddress X86.X86_64 -> R.ConcreteAddress X86.X86_64 -> Maybe (Instruction ())
-x64ModifyJumpTarget (XI ii) srcAddr targetAddr
-  | abs jmpOffset > i32Max =
-    L.error ("Relative branch is out of range: from " ++ show srcAddr ++
-             " to " ++ show targetAddr)
-  | jmpInstrSizeGuess /= jmpInstrSize =
-    L.error ("BUG! The 'jmp' instruction size is not as expected! " ++
-             "Expected " ++ show jmpInstrSizeGuess ++ " but got " ++
-             show jmpInstrSize)
-  | 'j' : _ <- D.iiOp ii = Just extendDirectJump
-  | 'c' : 'a' : 'l' : 'l' : _ <- D.iiOp ii = Just extendDirectJump
-  | otherwise = Nothing
-  where jmpOffset :: Integer
-        jmpOffset = fromIntegral $ (targetAddr `R.addressDiff` srcAddr) - fromIntegral jmpInstrSizeGuess
+x64ModifyJumpTarget :: R.ConcreteAddress X86.X86_64 -> R.ConcreteFallthrough X86.X86_64 () -> Maybe [Instruction ()]
+x64ModifyJumpTarget srcAddr (R.FallthroughInstruction insn@(XI ii) tag) = case tag of
+  R.FallthroughTag Nothing Nothing
+    | R.NoJump <- x64JumpTypeRaw insn srcAddr -> Just [insn]
+    | otherwise ->
+      L.error ("Possible bug: x64ModifyJumpTarget was given a jump but no modified target. " ++
+               "What should it do in that case?\n" ++
+               "Address: " ++ show srcAddr ++ "\nInstruction: " ++ show insn)
+  R.FallthroughTag Nothing (Just fallthroughAddr) ->
+    Just [insn, jmpInstr "jmp" (x64Size insn) fallthroughAddr]
+  R.FallthroughTag (Just targetAddr) Nothing
+    | 'j' : _ <- D.iiOp ii -> Just [extendDirectJump targetAddr]
+    | otherwise -> Nothing
+  R.FallthroughTag (Just targetAddr) (Just fallthroughAddr) -> case D.iiOp ii of
+    "jmp" -> L.error "BUG! Unconditional jump given both a target and a fallthrough."
+    'j':_ -> let insn' = extendDirectJump targetAddr in
+      Just [insn', jmpInstr "jmp" (x64Size insn') fallthroughAddr]
+    'c' : 'a' : 'l' : 'l' : _ -> let insn' = extendDirectJump targetAddr in
+      Just [insn', jmpInstr "jmp" (x64Size insn') fallthroughAddr]
+    _ -> Nothing
+  where extendDirectJump targetAddr = case aoOperand <$> D.iiArgs ii of
+          [(D.JumpOffset D.JSize32 _, _)] -> jmpInstr (D.iiOp ii) 0 targetAddr
+          [(D.JumpOffset _ _, _)] -> L.error ("Expected a 4-byte jump offset: " ++ show ii)
+          _ -> XI ii
+
+        jmpOffsetUnsafe :: String -> Word8 -> R.ConcreteAddress X86.X86_64 -> Integer
+        jmpOffsetUnsafe opcode offset targetAddr = fromIntegral $ (targetAddr `R.addressDiff` srcAddr) - fromIntegral (jmpInstrSizeGuess opcode + offset)
         i32Max :: Integer
         i32Max = fromIntegral (maxBound :: Int32)
+        jmpOffset opcode offset targetAddr
+          | abs off > i32Max =
+            L.error ("Relative branch is out of range: from " ++ show srcAddr ++
+                     " to " ++ show targetAddr)
+          | otherwise = off
+          where off = jmpOffsetUnsafe opcode offset targetAddr
 
         -- Make a dummy instruction of the correct type to get a size
         -- guess.  This should never fail the size check.  We have to
         -- generate an instruction and check its size because some jumps
         -- could be 5 bytes, while others could be 6.
-        dummyJumpInstr = makeInstr (D.iiOp ii) [D.JumpOffset D.JSize32 (D.FixedOffset 0)]
-        jmpInstrSizeGuess = x64Size dummyJumpInstr
-        jmpInstr = makeInstr (D.iiOp ii) [D.JumpOffset D.JSize32 (D.FixedOffset (fromIntegral jmpOffset))]
-        jmpInstrSize = fromIntegral $ x64Size jmpInstr
-
-        extendDirectJump = case aoOperand <$> D.iiArgs ii of
-          [(D.JumpOffset D.JSize32 _, _)] -> jmpInstr
-          [(D.JumpOffset _ _, _)] -> error ("Expected a 4-byte jump offset: " ++ show ii)
-          _ -> XI ii
+        dummyJumpInstr opcode = makeInstr opcode [D.JumpOffset D.JSize32 (D.FixedOffset 0)]
+        jmpInstrSizeGuess opcode = x64Size (dummyJumpInstr opcode)
+        jmpInstrUnsafe opcode offset targetAddr = makeInstr opcode [D.JumpOffset D.JSize32 (D.FixedOffset (fromIntegral (jmpOffset opcode offset targetAddr)))]
+        jmpInstr opcode offset targetAddr
+          | jmpInstrSizeGuess opcode /= x64Size jmp =
+            L.error ("BUG! The 'jmp' instruction size is not as expected! " ++
+                     "Expected " ++ show (jmpInstrSizeGuess opcode) ++ " but got " ++
+                     show (x64Size jmp))
+          | otherwise = jmp
+          where jmp = jmpInstrUnsafe opcode offset targetAddr
 
 -- | Make @n@ bytes of @int 3@ instructions.  If executed, these
 -- generate an interrupt that drops the application into a debugger

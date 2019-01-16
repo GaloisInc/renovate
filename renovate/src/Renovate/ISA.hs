@@ -21,7 +21,7 @@ import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.Types as MT
 
 import Renovate.Address
-import Renovate.BasicBlock.Types ( Instruction, InstructionAnnotation, RegisterType, TaggedInstruction )
+import Renovate.BasicBlock.Types ( ConcreteFallthrough, Instruction, InstructionAnnotation, RegisterType, TaggedInstruction )
 
 -- | The variety of a jump: either conditional or unconditional.  This
 -- is used as a tag for 'JumpType's.  One day, we could model the type
@@ -84,17 +84,17 @@ data ISA arch = ISA
                           -> Maybe (SymbolicAddress arch)
                           -> Instruction arch ()
                           -> [TaggedInstruction arch (InstructionAnnotation arch)]
-    -- ^ Abstract instructions and annotate them. The contract is that this
-    -- function can change the opcode, but the selected instruction must
-    -- never change sizes later (during concretization). That is, for all
-    -- concrete addresses, the chosen instruction must have the same size.
+    -- ^ Abstract instructions and annotate them.
     --
     -- * The 'ConcreteAddress' is the address of the instruction
     --
     -- * The 'SymbolicAddress' (if any) is the direct jump target (possibly conditional) if any
     --
     -- NOTE: This function is allowed to return larger instructions now and,
-    -- in fact, may return extra instructions.
+    -- in fact, may return extra instructions. We also now allow the
+    -- concretization phase to increase the size of the instructions, provided
+    -- that concretizing to targets that are 'isaMaxRelativeJumpSize' far away
+    -- has the worst case size behavior.
   , isaConcretizeAddresses :: MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> Instruction arch (InstructionAnnotation arch) -> Instruction arch ()
     -- ^ Remove the annotation, with possible post-processing.
   , isaJumpType :: forall t . Instruction arch t -> MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> JumpType arch
@@ -111,16 +111,21 @@ data ISA arch = ISA
   , isaMakeRelativeJumpTo :: ConcreteAddress arch -> ConcreteAddress arch -> [Instruction arch ()]
     -- ^ Create a relative jump from the first 'ConcreteAddress'
     -- to the second.  This will call error if the range is too
-    -- far (probably more than 2GB).
-  , isaModifyJumpTarget :: Instruction arch () -> ConcreteAddress arch -> ConcreteAddress arch -> Maybe (Instruction arch ())
+    -- far (see 'isaMaxRelativeJumpSize').
+  , isaMaxRelativeJumpSize :: Word64
+    -- ^ How far can this architecture's unconditional relative jumps reach?
+    -- New code blocks will be laid out in virtual address space within this
+    -- many bytes of the original code blocks, so that the two can jump to each
+    -- other as necessary.
+  , isaModifyJumpTarget :: ConcreteAddress arch -> ConcreteFallthrough arch () -> Maybe [Instruction arch ()]
     -- ^ Modify the given jump instruction, rather than creating
     -- an entirely new one.  This differs from
     -- 'isaMakeRelativeJumpTo' in that it preserves the jump type
     -- (e.g., the type of conditional jump).
     --
-    -- NOTE: This function must not change the size of the instruction, as
-    -- it is called after code layout is done, so we cannot re-arrange
-    -- anything.
+    -- This function may change the size of the instruction, but should never
+    -- make a bigger set of instructions than what it produces if the concrete
+    -- addresses are 'isaMaxRelativeJumpSize' away.
   , isaMakePadding :: Word64 -> [Instruction arch ()]
     -- ^ Make the given number of bytes of padding instructions.
     -- The semantics of the instruction stream should either be

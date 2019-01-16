@@ -93,6 +93,7 @@ import           Renovate.BinaryFormat.ELF.BSS ( expandBSS )
 import           Renovate.BinaryFormat.ELF.Rewriter
 import           Renovate.Config
 import qualified Renovate.Diagnostic as RD
+import qualified Renovate.ISA as RI
 import qualified Renovate.Recovery as R
 import qualified Renovate.Redirect as RE
 import qualified Renovate.Redirect.Symbolize as RS
@@ -358,7 +359,7 @@ withinJumpRange cfg text =
   where
   start = E.elfSectionAddr text
   end = start + E.elfSectionSize text - 1
-  range = fromIntegral (rcMaxUnconditionalJumpSize cfg)
+  range = fromIntegral (RI.isaMaxRelativeJumpSize (rcISA cfg))
 
 -- | Choose a virtual address for extratext (and report how many bytes are
 -- available at that address).
