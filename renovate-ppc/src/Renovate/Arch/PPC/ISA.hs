@@ -303,14 +303,48 @@ ppcModifyJumpTarget srcAddr (R.FallthroughInstruction i tag) =
             Just [I (D.Instruction opc (D.Annotated a (D.Directbrtarget off) D.:< D.Nil))]
           _ -> die "Unexpected unconditional jump in ppcModifyJumpTarget"
       R.FallthroughTag (Just targetAddr) (Just fallthroughAddr) -> case operands of
-        D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< rest -> do
-          ftB <- b 1 fallthroughAddr
-          tgtB <- b 2 targetAddr
-          Just
-            [ I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT 2)) D.:< rest))
-            , ftB
-            , tgtB
-            ]
+        D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< rest -> case newJumpOffset 16 srcAddr targetAddr of
+          Right tgtOff4 -> do
+            ftB <- b 2 fallthroughAddr
+            -- Why put a nop? Because we have reserved the space for three
+            -- instructions, and we want ftB to be a nop in case the
+            -- fallthrough block is laid out next.
+            --
+            -- With a bit more effort, we could consider testing whether that's
+            -- the case to choose between [i, nop, nop] and [i, ftB] (thus
+            -- getting one extra attn instruction to catch bugs).
+            Just
+              [ I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (tgtOff4 `shiftR` 2))) D.:< rest))
+              , nop
+              , ftB
+              ]
+          Left _ -> case rest of
+            crbitrc D.:< D.Annotated a' (D.U5imm condition) D.:< D.Nil
+              -- Try inverting the condition. Maybe the fallthrough address is
+              -- nearby but the target address is far.
+              | Just condition' <- negateCondition condition
+              , Right ftOff4 <- newJumpOffset 16 srcAddr fallthroughAddr
+              -> do
+                -- No sense putting a nop and hoping tgtB becomes a nop as we
+                -- did above: we know by the time we get to this address that
+                -- targetAddr is far away from srcAddr.
+                tgtB <- b 1 targetAddr
+                Just
+                  [ I . D.Instruction opc
+                    $    D.Annotated a (D.Condbrtarget (D.CBT (ftOff4 `shiftR` 2)))
+                    D.:< crbitrc
+                    D.:< D.Annotated a' (D.U5imm condition')
+                    D.:< D.Nil
+                  , tgtB
+                  ]
+            _ -> do -- Worst case. Use unconditional branches for everything.
+              ftB <- b 1 fallthroughAddr
+              tgtB <- b 2 targetAddr
+              Just
+                [ I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT 2)) D.:< rest))
+                , ftB
+                , tgtB
+                ]
         D.Annotated a (D.Calltarget _) D.:< D.Nil -> do
           tgtOff <- absoluteOff 0 targetAddr
           ftB <- b 1 fallthroughAddr
@@ -329,8 +363,27 @@ ppcModifyJumpTarget srcAddr (R.FallthroughInstruction i tag) =
     ]
   absoluteOff n addr = case newJumpOffset 26 (R.addressAddOffset srcAddr (4*n)) addr of
     Left err -> die err
-    Right off -> Just (D.BT (off `shiftR` 2))
-  b n addr = (\off -> I (D.Instruction D.B (D.Annotated () (D.Directbrtarget off) D.:< D.Nil))) <$> absoluteOff n addr
+    Right off4 -> Just (D.BT (off4 `shiftR` 2))
+  b n addr
+    | addr == R.addressAddOffset srcAddr (4*(n+1)) = return nop
+    | otherwise = (\off -> I (D.Instruction D.B (D.Annotated () (D.Directbrtarget off) D.:< D.Nil))) <$> absoluteOff n addr
+  nop = I . D.Instruction D.ORI
+    $    D.Annotated () (D.Gprc (D.GPR 0))
+    D.:< D.Annotated () (D.U16imm 0)
+    D.:< D.Annotated () (D.Gprc (D.GPR 0))
+    D.:< D.Nil
+
+  negateCondition w = case map (testBit w) [4,3,2,1,0] of
+    [False, False, True , a    , t    ] -> Just (12 + negateBranchHint 2 a t)
+    [False, True , True , a    , t    ] -> Just ( 4 + negateBranchHint 2 a t)
+    [True , a    , False, False, t    ] -> Just (18 + negateBranchHint 8 a t)
+    [True , a    , False, True , t    ] -> Just (16 + negateBranchHint 8 a t)
+    _ -> Nothing
+
+  negateBranchHint aBit = f where
+    f False _ = 0
+    f True False = aBit + 1
+    f True True  = aBit
 
 -- | Compute a new jump offset between the @srcAddr@ and @targetAddr@.
 --
