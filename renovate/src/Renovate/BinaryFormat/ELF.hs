@@ -1088,6 +1088,7 @@ withAnalysisEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
   let archInfo = rcArchInfo cfg loadedBinary
   let recovery = R.Recovery { R.recoveryISA = isa
                             , R.recoveryDis = rcDisassembler cfg
+                            , R.recoveryAsm = rcAssembler cfg
                             , R.recoveryArchInfo = archInfo
                             , R.recoveryHandleAllocator = hdlAlloc
                             , R.recoveryBlockCallback = rcBlockCallback cfg

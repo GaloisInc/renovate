@@ -33,7 +33,7 @@ import qualified Data.Foldable as F
 import qualified Data.IORef as IO
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as M
-import           Data.Maybe ( catMaybes, fromMaybe, mapMaybe )
+import           Data.Maybe ( catMaybes, fromMaybe, isJust, mapMaybe )
 import           Data.Proxy ( Proxy(..) )
 import qualified Data.Set as S
 import qualified Data.Text.Encoding as T
@@ -213,7 +213,7 @@ blockInfo :: (MS.SymArchConstraints arch)
           -> MC.DiscoveryState arch
           -> IO (BlockInfo arch)
 blockInfo recovery mem textAddrRange di = do
-  let blockBuilder = buildBlock (recoveryDis recovery) mem
+  let blockBuilder = buildBlock (recoveryDis recovery) (recoveryAsm recovery) mem
   let macawBlocks = F.foldl' accumulateBlocks M.empty [ PU.Some pb
                                                       | PU.Some dfi <- validFuncs
                                                       , pb <- M.elems (dfi L.^. MC.parsedBlocks)
@@ -274,6 +274,7 @@ blockInfo recovery mem textAddrRange di = do
 data Recovery arch =
   Recovery { recoveryISA :: ISA arch
            , recoveryDis :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, Instruction arch ())
+           , recoveryAsm :: forall m . (C.MonadThrow m) => Instruction arch () -> m B.ByteString
            , recoveryArchInfo :: MC.ArchitectureInfo arch
            , recoveryHandleAllocator :: C.HandleAllocator RealWorld
            , recoveryBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
@@ -310,6 +311,10 @@ recoverBlocks recovery mem symmap entries textAddrRange = do
   di <- cfgFromAddrsWith recovery mem textAddrRange sam (F.toList entries) []
   blockInfo recovery mem textAddrRange di
 
+canAssemble :: (t -> Maybe a) -> t -> Bool
+canAssemble asm1 i =
+  isJust (asm1 i)
+
 -- | Build our representation of a basic block from a provided block
 -- start address
 --
@@ -320,6 +325,7 @@ recoverBlocks recovery mem symmap entries textAddrRange = do
 -- FIXME: Keep a record of which macaw blocks we can't translate (for whatever reason)
 buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow m)
            => (B.ByteString -> Maybe (Int, Instruction arch ()))
+           -> (Instruction arch () -> Maybe B.ByteString)
            -- ^ The function to pull a single instruction off of the
            -- byte stream; it returns the number of bytes consumed and
            -- the new instruction.
@@ -327,14 +333,17 @@ buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow
            -> PU.Some (MC.ParsedBlock arch)
            -- ^ The macaw block to re-disassemble
            -> m (Maybe (ConcreteBlock arch))
-buildBlock dis1 mem (PU.Some pb)
+buildBlock dis1 asm1 mem (PU.Some pb)
   | MC.blockSize pb == 0 = return Nothing
   | Just concAddr <- concreteFromSegmentOff mem segAddr = do
       case MC.addrContentsAfter mem (MC.segoffAddr segAddr) of
         Left err -> C.throwM (MemoryError err)
         Right [MC.ByteRegion bs] -> do
           let stopAddr = concAddr `addressAddOffset` fromIntegral (MC.blockSize pb)
-          Just <$> go concAddr concAddr stopAddr bs []
+          bb <- go concAddr concAddr stopAddr bs []
+          case all (canAssemble asm1) (basicBlockInstructions bb) of
+            True -> return (Just bb)
+            False -> return Nothing
         _ -> C.throwM (NoByteRegionAtAddress (MC.segoffAddr segAddr))
   | otherwise = return Nothing
   where
