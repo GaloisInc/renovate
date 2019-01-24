@@ -277,7 +277,9 @@ checkedOverlappingAssemble c overlays = do
             let overlayEnd = blockEndAddress isa overlayBlock
             assertM (basicBlockAddress overlayBlock > basicBlockAddress b)
             assertM (overlayEnd == blockEnd)
-            assertM (reverse (basicBlockInstructions overlayBlock) `L.isPrefixOf` reversedInstructions)
+            bytesB <- bytesFor b
+            bytesOverlay <- bytesFor overlayBlock
+            assertM (bytesOverlay `B.isSuffixOf` bytesB)
   bytes <- assembleBlock c
   appendTextBytes bytes
 
@@ -402,14 +404,17 @@ padLastBlock = do
                             }
      else return ()
 
+bytesFor :: (C.MonadThrow m) => ConcreteBlock arch -> Assembler arch m B.ByteString
+bytesFor b = do
+  asm1 <- St.gets asAssemble
+  case mapM asm1 (basicBlockInstructions b) of
+    Left err -> C.throwM (AssemblyError err)
+    Right strs -> return (mconcat strs)
+
 assembleBlock :: (L.HasCallStack, C.MonadThrow m) => Chunk arch -> Assembler arch m (B.ByteString)
 assembleBlock c =
   case c of
-    BlockChunk b -> do
-      assembler <- St.gets asAssemble
-      case mapM assembler (basicBlockInstructions b) of
-        Left err -> C.throwM (AssemblyError err)
-        Right strs -> return (mconcat strs)
+    BlockChunk b -> bytesFor b
     RawChunk _ b -> return b
 
 -- | Helper function for taking the next block.
