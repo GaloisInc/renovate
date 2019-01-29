@@ -105,11 +105,17 @@ main = X.catches (O.execParser optParser >>= mainWithOptions) handlers
                        <> O.header "refurbish - A trivial binary rewriter"
                        )
     handlers = [ X.Handler blockAssemblyExceptionHandler
+               , X.Handler diagnosticHandler
                ]
 
 blockAssemblyExceptionHandler :: R.BlockAssemblyException -> IO ()
 blockAssemblyExceptionHandler x = do
   print (PD.pretty x)
+  IO.exitFailure
+
+diagnosticHandler :: R.Diagnostic -> IO ()
+diagnosticHandler d = do
+  print (PD.pretty d)
   IO.exitFailure
 
 mainWithOptions :: Options -> IO ()

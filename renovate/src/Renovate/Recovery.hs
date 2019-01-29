@@ -2,6 +2,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -219,7 +220,11 @@ blockInfo recovery mem textAddrRange di = do
                                                       , pb <- M.elems (dfi L.^. MC.parsedBlocks)
                                                       , addrInRange textAddrRange (MC.pblockAddr pb)
                                                       ]
-  blocks <- catMaybes <$> mapM blockBuilder (M.elems macawBlocks)
+  let blockStarts = M.fromList [ (baddr, baddr `addressAddOffset` fromIntegral (MC.blockSize b))
+                               | (archSegOff, PU.Some b) <- M.toList macawBlocks
+                               , Just baddr <- return (concreteFromSegmentOff mem archSegOff)
+                               ]
+  blocks <- catMaybes <$> mapM (blockBuilder blockStarts) (M.elems macawBlocks)
   let addBlock m b = M.insert (basicBlockAddress b) b m
   let blockIndex = F.foldl' addBlock M.empty blocks
   let funcBlocks = M.fromList [ (funcAddr, (mapMaybe (\a -> M.lookup a blockIndex) blockAddrs, PU.Some dfi))
@@ -315,6 +320,21 @@ canAssemble :: (t -> Maybe a) -> t -> Bool
 canAssemble asm1 i =
   isJust (asm1 i)
 
+-- | Compute the address we should stop assembling at for the block
+blockStopAddress :: (MC.MemWidth (MC.ArchAddrWidth arch))
+                 => M.Map (ConcreteAddress arch) (ConcreteAddress arch)
+                 -- ^ Block starts mapped to block ends (derived from macaw discovery info)
+                 -> MC.ParsedBlock arch s
+                 -> ConcreteAddress arch
+                 -> ConcreteAddress arch
+blockStopAddress blockStarts pb startAddr
+  | Just (nextStart, nextEnd) <- M.lookupGT startAddr blockStarts =
+    if | nextEnd == naturalEnd -> naturalEnd
+       | otherwise -> nextStart
+  | otherwise = naturalEnd
+  where
+    naturalEnd = startAddr `addressAddOffset` fromIntegral (MC.blockSize pb)
+
 -- | Build our representation of a basic block from a provided block
 -- start address
 --
@@ -330,16 +350,21 @@ buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow
            -- byte stream; it returns the number of bytes consumed and
            -- the new instruction.
            -> MC.Memory (MC.ArchAddrWidth arch)
+           -> M.Map (ConcreteAddress arch) (ConcreteAddress arch)
+           -- ^ Block starts
            -> PU.Some (MC.ParsedBlock arch)
            -- ^ The macaw block to re-disassemble
            -> m (Maybe (ConcreteBlock arch))
-buildBlock dis1 asm1 mem (PU.Some pb)
+buildBlock dis1 asm1 mem blockStarts (PU.Some pb)
   | MC.blockSize pb == 0 = return Nothing
   | Just concAddr <- concreteFromSegmentOff mem segAddr = do
       case MC.addrContentsAfter mem (MC.segoffAddr segAddr) of
         Left err -> C.throwM (MemoryError err)
         Right [MC.ByteRegion bs] -> do
-          let stopAddr = concAddr `addressAddOffset` fromIntegral (MC.blockSize pb)
+          let stopAddr = blockStopAddress blockStarts pb concAddr
+          -- let blockEnd = concAddr `addressAddOffset` fromIntegral (MC.blockSize pb)
+          -- -- FIXME: Unless the next block and this block have the same stop address (meaning they share a suffix)
+          -- let stopAddr = maybe blockEnd (min blockEnd) (S.lookupGT concAddr blockStarts)
           bb <- go concAddr concAddr stopAddr bs []
           case all (canAssemble asm1) (basicBlockInstructions bb) of
             True -> return (Just bb)
