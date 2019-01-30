@@ -330,6 +330,7 @@ blockStopAddress :: (MC.MemWidth (MC.ArchAddrWidth arch))
 blockStopAddress blockStarts pb startAddr
   | Just (nextStart, nextEnd) <- M.lookupGT startAddr blockStarts =
     if | nextEnd == naturalEnd -> naturalEnd
+       | naturalEnd < nextStart -> naturalEnd
        | otherwise -> nextStart
   | otherwise = naturalEnd
   where
