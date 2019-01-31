@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -22,7 +23,9 @@ module Renovate.Rewrite (
   getABI,
   getISA,
   injectFunction,
-  recordRewrite
+  recordRewrite,
+  Metric,
+  recordMetric
   ) where
 
 import qualified Control.Monad.Identity as I
@@ -45,6 +48,19 @@ import qualified Renovate.ABI as ABI
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as RR
 import qualified Renovate.Redirect.Symbolize as RS
+
+-- | Type of metrics (arbitrary data logged by a transformation).
+--
+-- It might not really make sense to make this a function of @arch@,
+-- in that the same arch could use different metrics in different
+-- applications. Other, more flexible approaches include:
+--
+-- - make this a type parameter of the 'RewriteM' type. Downsides: the
+--   type parameter might propagate to lots of places.
+--
+-- - use dynamic typing and allow anything 'Typeable'. E.g.  define
+--   @data Metric = Typeable a => Metric a@.
+type family Metric arch :: *
 
 data RewriteSite arch =
   RewriteSite { siteDescriptor :: (B.SymbolicInfo arch, Word)
@@ -71,6 +87,7 @@ data RewriteInfo arch =
               -- injection API provided by 'RewriteM'
               , injectedFunctions :: M.Map (A.SymbolicAddress arch) (String, BS.ByteString)
               -- ^ Functions injected (most likely during the setup phase, but not necessarily)
+              , metrics :: [Metric arch]
               }
 
 class HasInjectedFunctions m arch where
@@ -188,6 +205,7 @@ runRewriteMT env newGlobalBase symAlloc i = do
                             , nextGlobalAddress = newGlobalBase
                             , symAddrAlloc = symAlloc
                             , injectedFunctions = M.empty
+                            , metrics = []
                             }
 
 -- | Allow the caller to inject new code into the binary
@@ -215,6 +233,11 @@ recordRewrite ty baddr off =
     site = RewriteSite { siteDescriptor = (baddr, off)
                        , siteType = ty
                        }
+
+-- | Log a metric.
+recordMetric :: Metric arch -> RewriteM arch ()
+recordMetric metric =
+  RWS.modify $ \s -> s { metrics = metric : metrics s }
 
 -- | Get the ABI from environment.
 getABI :: RewriteM arch (ABI.ABI arch)

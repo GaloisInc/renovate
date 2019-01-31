@@ -19,6 +19,7 @@ module Renovate.BinaryFormat.ELF.Rewriter (
   riEntryPointAddress,
   riSectionBaseAddress,
   riInstrumentationSites,
+  riMetrics,
   riSegmentVirtualAddress,
   riOverwrittenRegions,
   riAppendedSegments,
@@ -77,6 +78,7 @@ data RewriterInfo arch =
                , _riRedirectionDiagnostics :: [RD.Diagnostic]
                , _riRecoveredBlocks :: Maybe SomeBlocks
                , _riInstrumentationSites :: [RW.RewriteSite arch]
+               , _riMetrics :: [RW.Metric arch]
                , _riELF :: E.Elf (MM.ArchAddrWidth arch)
                , _riSmallBlockCount :: Int
                -- ^ The number of blocks that were too small to rewrite
@@ -127,6 +129,7 @@ emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
                                    , _riRedirectionDiagnostics   = []
                                    , _riRecoveredBlocks          = Nothing
                                    , _riInstrumentationSites     = []
+                                   , _riMetrics                  = []
                                    , _riELF                      = e
                                    , _riSmallBlockCount          = 0
                                    , _riReusedByteCount          = 0
@@ -175,6 +178,13 @@ riRecoveredBlocks = GL.field @"_riRecoveredBlocks"
 
 riInstrumentationSites :: L.Simple L.Lens (RewriterInfo arch) [RW.RewriteSite arch]
 riInstrumentationSites = GL.field @"_riInstrumentationSites"
+
+riMetrics :: L.Simple L.Lens (RewriterInfo arch) [RW.Metric arch]
+-- Using 'GL.field @"_riMetrics"' here causes confusing type errors,
+-- presumably related to there being no generic info associated with
+-- the type family 'RW.Metric arch'.
+riMetrics f info =
+  fmap (\m -> info { _riMetrics = m }) (f (_riMetrics info))
 
 riSmallBlockCount :: L.Simple L.Lens (RewriterInfo arch) Int
 riSmallBlockCount = GL.field @"_riSmallBlockCount"
