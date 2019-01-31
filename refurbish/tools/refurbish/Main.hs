@@ -10,6 +10,7 @@
 module Main ( main ) where
 
 import           Control.Applicative ( (<|>) )
+import qualified Control.Exception as X
 import           Control.Lens ( (^.) )
 import           Control.Monad ( when )
 import qualified Data.ByteString as BS
@@ -96,13 +97,26 @@ optionsParser = Options <$> O.strArgument (  O.metavar "FILE"
                                      )
 
 main :: IO ()
-main = O.execParser optParser >>= mainWithOptions
+main = X.catches (O.execParser optParser >>= mainWithOptions) handlers
   where
     optParser = O.info ( optionsParser O.<**> O.helper )
                        ( O.fullDesc
                        <> O.progDesc "A tool to apply a trivial rewriting to PowerPC and X86_64 binaries"
                        <> O.header "refurbish - A trivial binary rewriter"
                        )
+    handlers = [ X.Handler blockAssemblyExceptionHandler
+               , X.Handler diagnosticHandler
+               ]
+
+blockAssemblyExceptionHandler :: R.BlockAssemblyException -> IO ()
+blockAssemblyExceptionHandler x = do
+  print (PD.pretty x)
+  IO.exitFailure
+
+diagnosticHandler :: R.Diagnostic -> IO ()
+diagnosticHandler d = do
+  print (PD.pretty d)
+  IO.exitFailure
 
 mainWithOptions :: Options -> IO ()
 mainWithOptions o = do

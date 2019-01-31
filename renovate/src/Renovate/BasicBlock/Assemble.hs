@@ -58,7 +58,7 @@ data BlockAssemblyException where
 
   OverlayBlockNotContained    :: forall arch
                                . (InstructionConstraints arch)
-                              => Chunk arch -> BlockAssemblyException
+                              => Chunk arch -> Chunk arch -> BlockAssemblyException
 
 deriving instance Show BlockAssemblyException
 
@@ -70,8 +70,13 @@ instance PD.Pretty BlockAssemblyException where
   pretty (AssemblyError e) = PD.pretty $ "AssemblyError: " ++ show e
   pretty (BlockOverlappingRedirection cb) =
     PD.pretty "BlockOverlappingRedirection:" PD.<+> PD.pretty cb
-  pretty (OverlayBlockNotContained cb) =
-    PD.pretty "OverlayBlockNotContained:" PD.<+> PD.pretty cb
+  pretty (OverlayBlockNotContained orig overlay) =
+    PD.vsep [ PD.pretty "OverlayBlockNotContained:"
+            , PD.indent 2 (PD.pretty "Base block:")
+            , PD.indent 4 (PD.pretty orig)
+            , PD.indent 2 (PD.pretty "Overlay block:")
+            , PD.indent 4 (PD.pretty overlay)
+            ]
 
 instance (InstructionConstraints arch) => PD.Pretty (Chunk arch) where
   pretty (BlockChunk b) = PD.pretty b
@@ -272,7 +277,9 @@ checkedOverlappingAssemble c overlays = do
             let overlayEnd = blockEndAddress isa overlayBlock
             assertM (basicBlockAddress overlayBlock > basicBlockAddress b)
             assertM (overlayEnd == blockEnd)
-            assertM (reverse (basicBlockInstructions overlayBlock) `L.isPrefixOf` reversedInstructions)
+            bytesB <- bytesFor b
+            bytesOverlay <- bytesFor overlayBlock
+            assertM (bytesOverlay `B.isSuffixOf` bytesB)
   bytes <- assembleBlock c
   appendTextBytes bytes
 
@@ -321,7 +328,7 @@ lookupOverlappingBlocks b = do
                 -- at the same instruction.  If that isn't the case, it kind of
                 -- indicates an inconsistent set of blocks coming from macaw or
                 -- the rewriter.
-                  C.throwM (OverlayBlockNotContained b')
+                  C.throwM (OverlayBlockNotContained b b')
               | otherwise -> do
                   (b':) <$> go isa blockEnd
 
@@ -397,14 +404,17 @@ padLastBlock = do
                             }
      else return ()
 
+bytesFor :: (C.MonadThrow m) => ConcreteBlock arch -> Assembler arch m B.ByteString
+bytesFor b = do
+  asm1 <- St.gets asAssemble
+  case mapM asm1 (basicBlockInstructions b) of
+    Left err -> C.throwM (AssemblyError err)
+    Right strs -> return (mconcat strs)
+
 assembleBlock :: (L.HasCallStack, C.MonadThrow m) => Chunk arch -> Assembler arch m (B.ByteString)
 assembleBlock c =
   case c of
-    BlockChunk b -> do
-      assembler <- St.gets asAssemble
-      case mapM assembler (basicBlockInstructions b) of
-        Left err -> C.throwM (AssemblyError err)
-        Right strs -> return (mconcat strs)
+    BlockChunk b -> bytesFor b
     RawChunk _ b -> return b
 
 -- | Helper function for taking the next block.

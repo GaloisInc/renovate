@@ -2,6 +2,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -29,11 +30,12 @@ import           Control.Monad ( guard )
 import qualified Control.Monad.Catch as C
 import           Control.Monad.ST ( stToIO, ST, RealWorld )
 import qualified Data.ByteString as B
+import           Data.Either ( partitionEithers )
 import qualified Data.Foldable as F
 import qualified Data.IORef as IO
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as M
-import           Data.Maybe ( catMaybes, fromMaybe, mapMaybe )
+import           Data.Maybe ( catMaybes, fromMaybe, isJust, mapMaybe )
 import           Data.Proxy ( Proxy(..) )
 import qualified Data.Set as S
 import qualified Data.Text.Encoding as T
@@ -188,13 +190,13 @@ cfgFromAddrsWith recovery mem textAddrRange symbols initAddrs memWords = do
 -- We deduplicate identical blocks in this function.  We deal with overlapping
 -- blocks by just never instrumenting them.
 accumulateBlocks :: (MC.MemWidth (MC.ArchAddrWidth arch))
-                 => M.Map (MC.ArchSegmentOff arch) (PU.Some (MC.ParsedBlock arch))
-                 -> PU.Some (MC.ParsedBlock arch)
-                 -> M.Map (MC.ArchSegmentOff arch) (PU.Some (MC.ParsedBlock arch))
-accumulateBlocks m (PU.Some pb0)
-  | Just (PU.Some pb) <- M.lookup (MC.pblockAddr pb0) m
-  , MC.blockSize pb0 == MC.blockSize pb = m
-  | otherwise = M.insert (MC.pblockAddr pb0) (PU.Some pb0) m
+                 => M.Map (MC.ArchSegmentOff arch) (MC.ArchSegmentOff arch, (PU.Some (MC.ParsedBlock arch)))
+                 -> (MC.ArchSegmentOff arch, PU.Some (MC.ParsedBlock arch))
+                 -> M.Map (MC.ArchSegmentOff arch) (MC.ArchSegmentOff arch, (PU.Some (MC.ParsedBlock arch)))
+accumulateBlocks m v@(faddr0, (PU.Some pb0))
+  | Just (faddr, (PU.Some pb)) <- M.lookup (MC.pblockAddr pb0) m
+  , MC.blockSize pb0 == MC.blockSize pb && faddr0 == faddr = m
+  | otherwise = M.insert (MC.pblockAddr pb0) v m
 
 addrInRange :: (MC.MemWidth (MC.ArchAddrWidth arch))
             => (ConcreteAddress arch, ConcreteAddress arch)
@@ -213,13 +215,19 @@ blockInfo :: (MS.SymArchConstraints arch)
           -> MC.DiscoveryState arch
           -> IO (BlockInfo arch)
 blockInfo recovery mem textAddrRange di = do
-  let blockBuilder = buildBlock (recoveryDis recovery) mem
-  let macawBlocks = F.foldl' accumulateBlocks M.empty [ PU.Some pb
+  let blockBuilder = buildBlock (recoveryDis recovery) (recoveryAsm recovery) mem
+  let macawBlocks = F.foldl' accumulateBlocks M.empty [ (MC.discoveredFunAddr dfi, PU.Some pb)
                                                       | PU.Some dfi <- validFuncs
                                                       , pb <- M.elems (dfi L.^. MC.parsedBlocks)
                                                       , addrInRange textAddrRange (MC.pblockAddr pb)
                                                       ]
-  blocks <- catMaybes <$> mapM blockBuilder (M.elems macawBlocks)
+  let blockStarts = M.fromList [ (baddr, baddr `addressAddOffset` fromIntegral (MC.blockSize b))
+                               | (archSegOff, (_, PU.Some b)) <- M.toList macawBlocks
+                               , Just baddr <- return (concreteFromSegmentOff mem archSegOff)
+                               ]
+  -- We collect not only the blocks, but also the addresses of functions
+  -- containing untranslatable blocks so that they can be marked as incomplete.
+  (incomp, blocks) <- partitionEithers <$> mapM (blockBuilder blockStarts) (M.elems macawBlocks)
   let addBlock m b = M.insert (basicBlockAddress b) b m
   let blockIndex = F.foldl' addBlock M.empty blocks
   let funcBlocks = M.fromList [ (funcAddr, (mapMaybe (\a -> M.lookup a blockIndex) blockAddrs, PU.Some dfi))
@@ -256,7 +264,7 @@ blockInfo recovery mem textAddrRange di = do
   return BlockInfo { biBlocks = blocks
                    , biFunctionEntries = mapMaybe (concreteFromSegmentOff mem) funcEntries
                    , biFunctions = funcBlocks
-                   , biIncomplete = indexIncompleteBlocks mem infos
+                   , biIncomplete = indexIncompleteBlocks (S.fromList incomp) mem infos
                    , biCFG = M.map fst cfgPairs
                    , biRegCFG = M.map snd cfgPairs
                    , biOverlap = blockRegions mem di
@@ -274,6 +282,7 @@ blockInfo recovery mem textAddrRange di = do
 data Recovery arch =
   Recovery { recoveryISA :: ISA arch
            , recoveryDis :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, Instruction arch ())
+           , recoveryAsm :: forall m . (C.MonadThrow m) => Instruction arch () -> m B.ByteString
            , recoveryArchInfo :: MC.ArchitectureInfo arch
            , recoveryHandleAllocator :: C.HandleAllocator RealWorld
            , recoveryBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
@@ -310,6 +319,58 @@ recoverBlocks recovery mem symmap entries textAddrRange = do
   di <- cfgFromAddrsWith recovery mem textAddrRange sam (F.toList entries) []
   blockInfo recovery mem textAddrRange di
 
+canAssemble :: (t -> Maybe a) -> t -> Bool
+canAssemble asm1 i =
+  isJust (asm1 i)
+
+-- | Compute the address we should stop assembling at for the block
+--
+-- This is more complicated than we would like - ideally, we would treat macaw
+-- blocks as ground truth in this.  Unfortunately, there are a number of cases
+-- where macaw returns overlapping blocks that we do not want to have in
+-- renovate:
+--
+-- * If macaw builds a block, but later decides to split it, it doesn't
+--   remove/replace the first block.  It adds a new block that is the second
+--   portion of the block, but the original block is unmodified and overlaps.
+--   In this case, it might even be the case that the blocks coming back from
+--   macaw overlap but do *not* share a suffix
+--
+-- * Some code (usually hand-written) legitimately creates blocks that must
+--   overlap where they share a suffix.  One case here is where x86 code has an
+--   instruction with a lock prefix for atomic memory updates, but where that
+--   prefix is conditionally not necessary.  Sometimes, such code will jump past
+--   the lock prefix into the middle of an instruction.
+--
+-- To deal with this, we look at the next block after the current one.  If the
+-- next block shares a suffix with the current block, we treat them as
+-- necessarily overlapping and just make one block to cover both regions.
+-- Otherwise, we stop disassembling at the start of the next block (assuming
+-- that macaw *should* have split the current block, but did not).
+--
+-- Note that macaw can identify some code as trivially unreachable, leaving gaps
+-- in discovered code.  The second case in the multiway if covers that case.
+--
+-- Note also that renovate makes the assumption that all renovate blocks either
+-- do not overlap OR, if they do overlap, share a suffix (i.e., end at the same
+-- instruction).
+blockStopAddress :: (MC.MemWidth (MC.ArchAddrWidth arch))
+                 => M.Map (ConcreteAddress arch) (ConcreteAddress arch)
+                 -- ^ Block starts mapped to block ends (derived from macaw discovery info)
+                 -> MC.ParsedBlock arch s
+                 -- ^ Block being translated
+                 -> ConcreteAddress arch
+                 -- ^ Block start address
+                 -> ConcreteAddress arch
+blockStopAddress blockStarts pb startAddr
+  | Just (nextStart, nextEnd) <- M.lookupGT startAddr blockStarts =
+    if | nextEnd == naturalEnd -> naturalEnd
+       | naturalEnd < nextStart -> naturalEnd
+       | otherwise -> nextStart
+  | otherwise = naturalEnd
+  where
+    naturalEnd = startAddr `addressAddOffset` fromIntegral (MC.blockSize pb)
+
 -- | Build our representation of a basic block from a provided block
 -- start address
 --
@@ -317,26 +378,41 @@ recoverBlocks recovery mem symmap entries textAddrRange = do
 -- start address until we hit a terminator instruction or the start of
 -- another basic block.
 --
--- FIXME: Keep a record of which macaw blocks we can't translate (for whatever reason)
+-- For each block, it is either translated (Right), or we report the address of
+-- the function containing the untranslatable block (Left).  We need this list
+-- to mark functions as incomplete.
 buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow m)
            => (B.ByteString -> Maybe (Int, Instruction arch ()))
+           -> (Instruction arch () -> Maybe B.ByteString)
            -- ^ The function to pull a single instruction off of the
            -- byte stream; it returns the number of bytes consumed and
            -- the new instruction.
            -> MC.Memory (MC.ArchAddrWidth arch)
-           -> PU.Some (MC.ParsedBlock arch)
+           -> M.Map (ConcreteAddress arch) (ConcreteAddress arch)
+           -- ^ Block starts
+           -> (MC.ArchSegmentOff arch, PU.Some (MC.ParsedBlock arch))
            -- ^ The macaw block to re-disassemble
-           -> m (Maybe (ConcreteBlock arch))
-buildBlock dis1 mem (PU.Some pb)
-  | MC.blockSize pb == 0 = return Nothing
+           -> m (Either (MC.ArchSegmentOff arch) (ConcreteBlock arch))
+buildBlock dis1 asm1 mem blockStarts (funcAddr, (PU.Some pb))
+  | MC.blockSize pb == 0 = return (Left funcAddr)
   | Just concAddr <- concreteFromSegmentOff mem segAddr = do
       case MC.addrContentsAfter mem (MC.segoffAddr segAddr) of
         Left err -> C.throwM (MemoryError err)
         Right [MC.ByteRegion bs] -> do
-          let stopAddr = concAddr `addressAddOffset` fromIntegral (MC.blockSize pb)
-          Just <$> go concAddr concAddr stopAddr bs []
+          let stopAddr = blockStopAddress blockStarts pb concAddr
+          bb <- go concAddr concAddr stopAddr bs []
+          -- If we can't re-assemble all of the instructions we have found,
+          -- pretend we never saw this block.  Note that the caller will have to
+          -- remember this to note that the function containing this block is
+          -- incomplete.
+          --
+          -- We do this to avoid re-assembly errors later, where we can't do
+          -- anything about it.
+          case all (canAssemble asm1) (basicBlockInstructions bb) of
+            True -> return (Right bb)
+            False -> return (Left funcAddr)
         _ -> C.throwM (NoByteRegionAtAddress (MC.segoffAddr segAddr))
-  | otherwise = return Nothing
+  | otherwise = return (Left funcAddr)
   where
     segAddr = MC.pblockAddr pb
     addOff       = addressAddOffset
@@ -373,19 +449,25 @@ buildBlock dis1 mem (PU.Some pb)
 -- error or classify failure).  We can't rewrite these blocks, as we don't know
 -- if we have a safe view of them.  Rewriting them could introduce runtime
 -- failures.
+--
+-- We include an extra set of functions that are known to be incomplete due to
+-- translation errors in renovate (vs translation errors in macaw).
 indexIncompleteBlocks :: (MC.MemWidth (MC.ArchAddrWidth arch))
-                      => MC.Memory (MC.ArchAddrWidth arch)
+                      => S.Set (MC.ArchSegmentOff arch)
+                      -> MC.Memory (MC.ArchAddrWidth arch)
                       -> M.Map (ConcreteAddress arch) (PU.Some (MC.DiscoveryFunInfo arch))
                       -> S.Set (ConcreteAddress arch)
-indexIncompleteBlocks mem = foldr (addFunInfoIfIncomplete mem) S.empty
+indexIncompleteBlocks incompAddrs mem = foldr (addFunInfoIfIncomplete incompAddrs mem) S.empty
 
 addFunInfoIfIncomplete :: (MC.MemWidth (MC.ArchAddrWidth arch))
-                       => MC.Memory (MC.ArchAddrWidth arch)
+                       => S.Set (MC.ArchSegmentOff arch)
+                       -> MC.Memory (MC.ArchAddrWidth arch)
                        -> PU.Some (MC.DiscoveryFunInfo arch)
                        -> S.Set (ConcreteAddress arch)
                        -> S.Set (ConcreteAddress arch)
-addFunInfoIfIncomplete mem (PU.Some fi) s
-  | isIncompleteFunction fi = S.union s (S.fromList blockAddrs)
+addFunInfoIfIncomplete incompAddrs mem (PU.Some fi) s
+  | isIncompleteFunction fi || S.member (MC.discoveredFunAddr fi) incompAddrs =
+    S.union s (S.fromList blockAddrs)
   | otherwise = s
   where
     pbs = fi L.^. MC.parsedBlocks

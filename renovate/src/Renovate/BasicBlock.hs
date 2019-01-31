@@ -32,6 +32,7 @@ module Renovate.BasicBlock (
   hasNoAddresses,
   FallthroughTag(..),
   FallthroughBlock,
+  prettyBasicBlock,
   -- * Constraints
   InstructionConstraints
   ) where
@@ -39,6 +40,7 @@ module Renovate.BasicBlock (
 import qualified GHC.Err.Located as L
 
 import qualified Data.List as L
+import qualified Data.Text.Prettyprint.Doc as PD
 import qualified Data.Traversable as T
 import           Data.Word ( Word64 )
 
@@ -105,7 +107,8 @@ symbolicBlockSize :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch))
                   -> Word64
 symbolicBlockSize isa mem addr fb = basicInstSize + fromIntegral jumpSizes
   where
-    jumpSizes = sum $ map (computeRewrittenJumpSize isa mem addr) jumpsToRewrite
+    origAddr = concreteAddress (basicBlockAddress fb)
+    jumpSizes = sum $ map (computeRewrittenJumpSize isa mem origAddr addr) jumpsToRewrite
     basicInstSize = sum (map (fromIntegral . isaInstructionSize isa . isaConcretizeAddresses isa mem addr . ftInstruction) standardInstructions)
     (standardInstructions, jumpsToRewrite) = L.partition hasNoAddresses (basicBlockInstructions fb)
 
@@ -114,12 +117,13 @@ computeRewrittenJumpSize ::
   ISA arch ->
   MC.Memory (MC.ArchAddrWidth arch) ->
   ConcreteAddress arch ->
+  ConcreteAddress arch ->
   SymbolicFallthrough arch (InstructionAnnotation arch) ->
   Int
-computeRewrittenJumpSize isa mem addr ftJmp = case rewrittenSize of
+computeRewrittenJumpSize isa mem origAddr addr ftJmp = case rewrittenSize of
   Just size -> size
   Nothing ->
-      error ("computeRewrittenJumpSize: Jump cannot be modified: " ++ isaPrettyInstruction isa jmp)
+      error ("computeRewrittenJumpSize: Jump cannot be modified: " ++ isaPrettyInstruction isa jmp ++ " at " ++ show addr ++ " at original address " ++ show origAddr)
   where
     instrSize = fromIntegral . isaInstructionSize isa
     jmp = isaConcretizeAddresses isa mem addr (ftInstruction ftJmp)
@@ -140,3 +144,9 @@ terminatorType isa mem b =
     insns ->
       let (termInsn, addr) = last insns
       in isaJumpType isa termInsn mem addr
+
+prettyBasicBlock :: (PD.Pretty addr) => ISA arch -> BasicBlock addr (Instruction arch) a -> PD.Doc ann
+prettyBasicBlock isa b =
+  PD.vsep [ PD.pretty (basicBlockAddress b) PD.<> PD.pretty ":"
+          , PD.indent 2 (PD.vsep (map (PD.pretty . isaPrettyInstruction isa) (basicBlockInstructions b)))
+          ]

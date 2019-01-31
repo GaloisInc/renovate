@@ -199,7 +199,7 @@ mapJumpAddress concreteAddressMap (sf, insnAddr) = do
     (FallthroughTag Nothing Nothing, _) -> return [ftInstruction cf]
     (_, Nothing) -> do
       let err :: Diagnostic
-          err = InstructionIsNotJump (show i)
+          err = InstructionIsNotJump isa i
       logDiagnostic err
       throwError err
     (_, Just insns) -> return insns
