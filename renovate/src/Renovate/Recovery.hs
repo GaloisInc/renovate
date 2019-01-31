@@ -324,11 +324,43 @@ canAssemble asm1 i =
   isJust (asm1 i)
 
 -- | Compute the address we should stop assembling at for the block
+--
+-- This is more complicated than we would like - ideally, we would treat macaw
+-- blocks as ground truth in this.  Unfortunately, there are a number of cases
+-- where macaw returns overlapping blocks that we do not want to have in
+-- renovate:
+--
+-- * If macaw builds a block, but later decides to split it, it doesn't
+--   remove/replace the first block.  It adds a new block that is the second
+--   portion of the block, but the original block is unmodified and overlaps.
+--   In this case, it might even be the case that the blocks coming back from
+--   macaw overlap but do *not* share a suffix
+--
+-- * Some code (usually hand-written) legitimately creates blocks that must
+--   overlap where they share a suffix.  One case here is where x86 code has an
+--   instruction with a lock prefix for atomic memory updates, but where that
+--   prefix is conditionally not necessary.  Sometimes, such code will jump past
+--   the lock prefix into the middle of an instruction.
+--
+-- To deal with this, we look at the next block after the current one.  If the
+-- next block shares a suffix with the current block, we treat them as
+-- necessarily overlapping and just make one block to cover both regions.
+-- Otherwise, we stop disassembling at the start of the next block (assuming
+-- that macaw *should* have split the current block, but did not).
+--
+-- Note that macaw can identify some code as trivially unreachable, leaving gaps
+-- in discovered code.  The second case in the multiway if covers that case.
+--
+-- Note also that renovate makes the assumption that all renovate blocks either
+-- do not overlap OR, if they do overlap, share a suffix (i.e., end at the same
+-- instruction).
 blockStopAddress :: (MC.MemWidth (MC.ArchAddrWidth arch))
                  => M.Map (ConcreteAddress arch) (ConcreteAddress arch)
                  -- ^ Block starts mapped to block ends (derived from macaw discovery info)
                  -> MC.ParsedBlock arch s
+                 -- ^ Block being translated
                  -> ConcreteAddress arch
+                 -- ^ Block start address
                  -> ConcreteAddress arch
 blockStopAddress blockStarts pb startAddr
   | Just (nextStart, nextEnd) <- M.lookupGT startAddr blockStarts =
