@@ -52,8 +52,6 @@ redirectBlock input@(ConcretePair (LayoutPair origBlock instrBlock Modified)) = 
     True -> do
       recordUnrelocatableSize
       logDiagnostic $ BlockTooSmallForRedirection isa jmpSize origBlock instrBlock
-      -- origBlockSize jmpSize (basicBlockAddress origBlock)
-      --                   (show origBlock ++ " |-> " ++ show instrBlock)
       return input
     False -> do
       let origBlock' = origBlock { basicBlockInstructions = jmpInsns }
