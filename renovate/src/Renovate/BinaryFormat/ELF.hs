@@ -1043,6 +1043,7 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
         let newSyms = RE.rwsNewSymbolsMap s1
         riRedirectionDiagnostics L..= F.toList (RD.diagnosticMessages $ RE.rrDiagnostics r1)
         riInstrumentationSites L..= RW.infoSites info
+        riMetrics L..= RW.metrics info
         riReusedByteCount L..= RE.rwsReusedByteCount s1
         riSmallBlockCount L..= RE.rwsSmallBlockCount s1
         riUnrelocatableTerm L..= RE.rwsUnrelocatableTerm s1
