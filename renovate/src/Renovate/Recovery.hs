@@ -116,7 +116,7 @@ data BlockInfo arch = BlockInfo
   , biRegCFG           :: M.Map (ConcreteAddress arch) (SymbolicRegCFG arch)
   , biOverlap          :: BlockRegions arch
   -- ^ A structure that lets us determine which blocks in the program overlap
-  -- other blocks in the program (so that we can avoid every trying to rewrite them)
+  -- other blocks in the program (so that we can avoid ever trying to rewrite them)
   }
 
 isIncompleteBlockAddress :: BlockInfo arch -> ConcreteAddress arch -> Bool
