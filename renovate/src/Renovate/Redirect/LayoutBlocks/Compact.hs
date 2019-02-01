@@ -404,7 +404,7 @@ addExplicitFallthrough mem symSucIdx (SymbolicPair (LayoutPair cb sb Modified)) 
   -- relative jumps.  We just need the type of jump.
   let lift = if isUnconditionalJT (isaJumpType isa lastInsn mem fakeAddress)
         then noFallthrough
-        else addFallthrough (lookupSuccessor symSucIdx cb sb)
+        else addFallthrough (lookupSuccessor isa symSucIdx cb sb)
   return (FallthroughPair (LayoutPair cb (lastInstructionFallthrough lift sb) Modified))
   where
     -- We explicitly match on all constructor patterns so that if/when new ones
@@ -438,17 +438,36 @@ lastInstructionFallthrough fallthrough sb = sb { basicBlockInstructions = insns 
     [] -> []
     is -> map noFallthrough (init is) ++ [fallthrough (last is)]
 
+-- | Find the symbolic address of the successor to the input block
+--
+-- The lookup is done through the 'SuccessorMap', but note that the construction
+-- of the 'SuccessorMap' is not quite right.  It builds the map by zipping the
+-- list of blocks with their successors in block order (that is, in the order of
+-- blocks discovered by renovate).  If there are gaps where renovate could not
+-- decode a block for some reason, the successor map is off.
+--
+-- As a temporary measure to deal with that, if the successor from the map is
+-- not the immediate successor (in concrete address terms) of the target block,
+-- we force the successor to be a concrete address using the 'StableAddress'
+-- form of 'SymbolicAddress'.
+--
+-- FIXME: Compute the successor map more robustly.
 lookupSuccessor         :: (MM.MemWidth (MM.ArchAddrWidth arch))
-                        => SuccessorMap arch
+                        => ISA arch
+                        -> SuccessorMap arch
                         -> ConcreteBlock arch
                         -> SymbolicBlock arch
                         -> SymbolicAddress arch
-lookupSuccessor symSucIdx cb sb =
+lookupSuccessor isa symSucIdx cb sb =
   case M.lookup (basicBlockAddress sb) symSucIdx of
     Nothing -> L.error (printf "Expected a successor block for symbolic block %s (derived from block %s)"
                                (show (basicBlockAddress sb))
                                (show (basicBlockAddress cb)))
-    Just symSucc -> symbolicAddress symSucc
+    Just symSucc
+      | nextAbsoluteAddr == concreteAddress symSucc -> symbolicAddress symSucc
+      | otherwise -> StableAddress nextAbsoluteAddr
+      where
+        nextAbsoluteAddr = basicBlockAddress cb `addressAddOffset` fromIntegral (concreteBlockSize isa cb)
 
 
 buildAddressHeap :: (MM.MemWidth (MM.ArchAddrWidth arch), Foldable t, Monad m)
