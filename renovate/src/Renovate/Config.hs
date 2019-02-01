@@ -136,12 +136,12 @@ data AnalyzeOnly arch binFmt b =
 -- allocating global variables and injecting code in the rewriting context.
 --
 -- Note that the analysis is still in IO.
-data AnalyzeAndRewrite arch binFmt b =
+data AnalyzeAndRewrite lm arch binFmt b =
   forall preAnalyzeState rewriterState .
-  AnalyzeAndRewrite { arPreAnalyze :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> RW.RewriteM arch (preAnalyzeState arch)
+  AnalyzeAndRewrite { arPreAnalyze :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> RW.RewriteM lm arch (preAnalyzeState arch)
                     , arAnalyze :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> preAnalyzeState arch -> IO (b arch)
-                    , arPreRewrite :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> b arch -> RW.RewriteM arch (rewriterState arch)
-                    , arRewrite :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+                    , arPreRewrite :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> b arch -> RW.RewriteM lm arch (rewriterState arch)
+                    , arRewrite :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
                     }
 
 -- | The configuration required for a run of the binary rewriter.
@@ -209,10 +209,10 @@ compose funcs = go funcs
 
 -- | An identity rewriter (i.e., a rewriter that makes no changes, but forces
 -- everything to be redirected).
-identity :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+identity :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
 identity _ _ _ sb = return $! Just (B.basicBlockInstructions sb)
 
 -- | A basic block rewriter that leaves a block untouched, preventing the
 -- rewriter from trying to relocate it.
-nop :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+nop :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
 nop _ _ _ _ = return Nothing

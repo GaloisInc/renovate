@@ -19,7 +19,7 @@ module Renovate.BinaryFormat.ELF.Rewriter (
   riEntryPointAddress,
   riSectionBaseAddress,
   riInstrumentationSites,
-  riMetrics,
+  riLogMsgs,
   riSegmentVirtualAddress,
   riOverwrittenRegions,
   riAppendedSegments,
@@ -62,7 +62,9 @@ assertM b = X.assert b (return ())
 
 -- | Statistics gathered and diagnostics generated during the
 -- rewriting phase.
-data RewriterInfo arch =
+--
+-- Here @lm@ is the user controlled type of log msgs.
+data RewriterInfo lm arch =
   RewriterInfo { _riSegmentVirtualAddress :: Maybe Word64
                , _riOverwrittenRegions :: [(String, Word64)]
                -- ^ The name of a data region and its length (which is
@@ -78,7 +80,7 @@ data RewriterInfo arch =
                , _riRedirectionDiagnostics :: [RD.Diagnostic]
                , _riRecoveredBlocks :: Maybe SomeBlocks
                , _riInstrumentationSites :: [RW.RewriteSite arch]
-               , _riMetrics :: [RW.Metric arch]
+               , _riLogMsgs :: [lm]
                , _riELF :: E.Elf (MM.ArchAddrWidth arch)
                , _riSmallBlockCount :: Int
                -- ^ The number of blocks that were too small to rewrite
@@ -104,21 +106,21 @@ data SomeBlocks = forall arch
                 . (B.InstructionConstraints arch)
                 => SomeBlocks (ISA.ISA arch) [B.ConcreteBlock arch]
 
-newtype ElfRewriter arch a = ElfRewriter { unElfRewrite :: S.StateT (RewriterInfo arch) IO a }
+newtype ElfRewriter lm arch a = ElfRewriter { unElfRewrite :: S.StateT (RewriterInfo lm arch) IO a }
                           deriving (Monad,
                                     Functor,
                                     Applicative,
                                     IO.MonadIO,
                                     P.MonadThrow,
-                                    S.MonadState (RewriterInfo arch))
+                                    S.MonadState (RewriterInfo lm arch))
 
 runElfRewriter :: E.Elf (MM.ArchAddrWidth arch)
-               -> ElfRewriter arch a
-               -> IO (a, RewriterInfo arch)
+               -> ElfRewriter lm arch a
+               -> IO (a, RewriterInfo lm arch)
 runElfRewriter e a =
   S.runStateT (unElfRewrite a) (emptyRewriterInfo e)
 
-emptyRewriterInfo :: E.Elf (MM.ArchAddrWidth arch) -> RewriterInfo arch
+emptyRewriterInfo :: E.Elf (MM.ArchAddrWidth arch) -> RewriterInfo lm arch
 emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
                                    , _riOverwrittenRegions       = []
                                    , _riAppendedSegments         = []
@@ -129,7 +131,7 @@ emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
                                    , _riRedirectionDiagnostics   = []
                                    , _riRecoveredBlocks          = Nothing
                                    , _riInstrumentationSites     = []
-                                   , _riMetrics                  = []
+                                   , _riLogMsgs                  = []
                                    , _riELF                      = e
                                    , _riSmallBlockCount          = 0
                                    , _riReusedByteCount          = 0
@@ -140,63 +142,59 @@ emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
                                    , _riBlockMapping             = []
                                    , _riOutputBlocks             = Nothing
                                    }
-riOriginalTextSize :: L.Simple L.Lens (RewriterInfo arch) Int
+riOriginalTextSize :: L.Simple L.Lens (RewriterInfo lm arch) Int
 riOriginalTextSize = GL.field @"_riOriginalTextSize"
 
-riNewTextSize :: L.Simple L.Lens (RewriterInfo arch) Int
+riNewTextSize :: L.Simple L.Lens (RewriterInfo lm arch) Int
 riNewTextSize = GL.field @"_riNewTextSize"
 
-riIncompleteBlocks :: L.Simple L.Lens (RewriterInfo arch) Int
+riIncompleteBlocks :: L.Simple L.Lens (RewriterInfo lm arch) Int
 riIncompleteBlocks = GL.field @"_riIncompleteBlocks"
 
-riSegmentVirtualAddress :: L.Simple L.Lens (RewriterInfo arch) (Maybe Word64)
+riSegmentVirtualAddress :: L.Simple L.Lens (RewriterInfo lm arch) (Maybe Word64)
 riSegmentVirtualAddress = GL.field @"_riSegmentVirtualAddress"
 
-riOverwrittenRegions :: L.Simple L.Lens (RewriterInfo arch) [(String, Word64)]
+riOverwrittenRegions :: L.Simple L.Lens (RewriterInfo lm arch) [(String, Word64)]
 riOverwrittenRegions = GL.field @"_riOverwrittenRegions"
 
-riAppendedSegments :: L.Simple L.Lens (RewriterInfo arch) [(E.ElfSegmentType, Word16, Word64, Word64)]
+riAppendedSegments :: L.Simple L.Lens (RewriterInfo lm arch) [(E.ElfSegmentType, Word16, Word64, Word64)]
 riAppendedSegments = GL.field @"_riAppendedSegments"
 
-riEntryPointAddress :: L.Simple L.Lens (RewriterInfo arch) (Maybe Word64)
+riEntryPointAddress :: L.Simple L.Lens (RewriterInfo lm arch) (Maybe Word64)
 riEntryPointAddress = GL.field @"_riEntryPointAddress"
 
-riSectionBaseAddress :: L.Simple L.Lens (RewriterInfo arch) (Maybe Word64)
+riSectionBaseAddress :: L.Simple L.Lens (RewriterInfo lm arch) (Maybe Word64)
 riSectionBaseAddress = GL.field @"_riSectionBaseAddress"
 
-riInitialBytes :: L.Simple L.Lens (RewriterInfo arch) (Maybe B.ByteString)
+riInitialBytes :: L.Simple L.Lens (RewriterInfo lm arch) (Maybe B.ByteString)
 riInitialBytes = GL.field @"_riInitialBytes"
 
-riBlockRecoveryDiagnostics :: L.Simple L.Lens (RewriterInfo arch) [RD.Diagnostic]
+riBlockRecoveryDiagnostics :: L.Simple L.Lens (RewriterInfo lm arch) [RD.Diagnostic]
 riBlockRecoveryDiagnostics = GL.field @"_riBlockRecoveryDiagnostics"
 
-riRedirectionDiagnostics :: L.Simple L.Lens (RewriterInfo arch) [RD.Diagnostic]
+riRedirectionDiagnostics :: L.Simple L.Lens (RewriterInfo lm arch) [RD.Diagnostic]
 riRedirectionDiagnostics = GL.field @"_riRedirectionDiagnostics"
 
-riRecoveredBlocks :: L.Simple L.Lens (RewriterInfo arch) (Maybe SomeBlocks)
+riRecoveredBlocks :: L.Simple L.Lens (RewriterInfo lm arch) (Maybe SomeBlocks)
 riRecoveredBlocks = GL.field @"_riRecoveredBlocks"
 
-riInstrumentationSites :: L.Simple L.Lens (RewriterInfo arch) [RW.RewriteSite arch]
+riInstrumentationSites :: L.Simple L.Lens (RewriterInfo lm arch) [RW.RewriteSite arch]
 riInstrumentationSites = GL.field @"_riInstrumentationSites"
 
-riMetrics :: L.Simple L.Lens (RewriterInfo arch) [RW.Metric arch]
--- Using 'GL.field @"_riMetrics"' here causes confusing type errors,
--- presumably related to there being no generic info associated with
--- the type family 'RW.Metric arch'.
-riMetrics f info =
-  fmap (\m -> info { _riMetrics = m }) (f (_riMetrics info))
+riLogMsgs :: L.Simple L.Lens (RewriterInfo lm arch) [lm]
+riLogMsgs = GL.field @"_riLogMsgs"
 
-riSmallBlockCount :: L.Simple L.Lens (RewriterInfo arch) Int
+riSmallBlockCount :: L.Simple L.Lens (RewriterInfo lm arch) Int
 riSmallBlockCount = GL.field @"_riSmallBlockCount"
 
-riReusedByteCount :: L.Simple L.Lens (RewriterInfo arch) Int
+riReusedByteCount :: L.Simple L.Lens (RewriterInfo lm arch) Int
 riReusedByteCount = GL.field @"_riReusedByteCount"
 
-riUnrelocatableTerm :: L.Simple L.Lens (RewriterInfo arch) Int
+riUnrelocatableTerm :: L.Simple L.Lens (RewriterInfo lm arch) Int
 riUnrelocatableTerm = GL.field @"_riUnrelocatableTerm"
 
-riBlockMapping :: L.Simple L.Lens (RewriterInfo arch) [(RA.ConcreteAddress arch, RA.ConcreteAddress arch)]
+riBlockMapping :: L.Simple L.Lens (RewriterInfo lm arch) [(RA.ConcreteAddress arch, RA.ConcreteAddress arch)]
 riBlockMapping = GL.field @"_riBlockMapping"
 
-riOutputBlocks :: L.Simple L.Lens (RewriterInfo arch) (Maybe SomeBlocks)
+riOutputBlocks :: L.Simple L.Lens (RewriterInfo lm arch) (Maybe SomeBlocks)
 riOutputBlocks = GL.field @"_riOutputBlocks"

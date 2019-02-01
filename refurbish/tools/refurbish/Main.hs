@@ -121,7 +121,7 @@ diagnosticHandler d = do
 mainWithOptions :: Options -> IO ()
 mainWithOptions o = do
   bytes <- BS.readFile (oInput o)
-  let configs :: [(R.Architecture, R.SomeConfig R.AnalyzeAndRewrite (Const ()))]
+  let configs :: [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite ()) (Const ()))]
       configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analysis))
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))
@@ -153,7 +153,7 @@ mainWithOptions o = do
         when (oRunREPL o) (runREPL ri)
 
 data REPLInfo =
-  REPLInfo { rewriterInfo :: Some R.RewriterInfo
+  REPLInfo { rewriterInfo :: Some (R.RewriterInfo ())
            , discoveredIndex :: Maybe SomeBlockIndex
            , outputIndex :: Maybe SomeBlockIndex
            , blockMapping :: Some BlockMapping
@@ -168,7 +168,7 @@ data SomeBlockIndex =
                  , _blockISA :: R.ISA arch
                  }
 
-runREPL :: R.RewriterInfo arch -> IO ()
+runREPL :: R.RewriterInfo () arch -> IO ()
 runREPL ri = H.runInputT settings' (repl hdlrs)
   where
     ws = [' ', '\t']
@@ -383,7 +383,7 @@ invalidArguments cmd =
 -- Factored out so that we can call it once for both 32 and 64 bits
 printInfo :: (MM.MemWidth (MM.ArchAddrWidth arch))
           => Options
-          -> R.RewriterInfo arch
+          -> R.RewriterInfo () arch
           -> IO ()
 printInfo o ri = do
   withHandleWhen (oBlockMappingFile o) (printBlockMapping (ri ^. R.riBlockMapping))
@@ -426,7 +426,7 @@ withHandleWhen mf k =
       | fn == "-" -> k IO.stdout
       | otherwise -> IO.withFile fn IO.WriteMode k
 
-analysis :: R.AnalyzeAndRewrite arch binFmt (Const ())
+analysis :: R.AnalyzeAndRewrite () arch binFmt (Const ())
 analysis =
   R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
                       , R.arAnalyze = \_ _ -> return (Const ())

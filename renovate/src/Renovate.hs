@@ -111,6 +111,7 @@ module Renovate
   E.riReusedByteCount,
   E.riUnrelocatableTerm,
   E.riInstrumentationSites,
+  E.riLogMsgs,
   E.riInitialBytes,
   E.riAppendedSegments,
   E.riRedirectionDiagnostics,

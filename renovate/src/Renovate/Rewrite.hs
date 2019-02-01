@@ -24,8 +24,7 @@ module Renovate.Rewrite (
   getISA,
   injectFunction,
   recordRewrite,
-  Metric,
-  recordMetric
+  recordLogMsg,
   ) where
 
 import qualified Control.Monad.Identity as I
@@ -49,19 +48,6 @@ import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as RR
 import qualified Renovate.Redirect.Symbolize as RS
 
--- | Type of metrics (arbitrary data logged by a transformation).
---
--- It might not really make sense to make this a function of @arch@,
--- in that the same arch could use different metrics in different
--- applications. Other, more flexible approaches include:
---
--- - make this a type parameter of the 'RewriteM' type. Downsides: the
---   type parameter might propagate to lots of places.
---
--- - use dynamic typing and allow anything 'Typeable'. E.g.  define
---   @data Metric = Typeable a => Metric a@.
-type family Metric arch :: *
-
 data RewriteSite arch =
   RewriteSite { siteDescriptor :: (B.SymbolicInfo arch, Word)
               -- ^ The basic block modified and the instruction offset into that
@@ -73,7 +59,11 @@ data RewriteSite arch =
 
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (RewriteSite arch)
 
-data RewriteInfo arch =
+-- | The state for the 'RewriteM' monad.
+--
+-- The @lm@ type is an arbitrary user controlled type that can be
+-- logged during rewriting using 'recordLogMsg'.
+data RewriteInfo lm arch =
   RewriteInfo { infoSites :: [RewriteSite arch]
               -- ^ A collection of all of the rewritings applied so far
               , newGlobals :: M.Map String (A.ConcreteAddress arch)
@@ -87,7 +77,8 @@ data RewriteInfo arch =
               -- injection API provided by 'RewriteM'
               , injectedFunctions :: M.Map (A.SymbolicAddress arch) (String, BS.ByteString)
               -- ^ Functions injected (most likely during the setup phase, but not necessarily)
-              , metrics :: [Metric arch]
+              , logMsgs :: [lm]
+              -- ^ A collection of msgs logged during rewriting.
               }
 
 class HasInjectedFunctions m arch where
@@ -124,25 +115,25 @@ data RewriteEnv arch = RewriteEnv
 type BlockCFGIndex arch = M.Map (A.ConcreteAddress arch) (S.Set (FR.FunctionCFG arch))
 
 -- | A monadic environment for binary rewriting
-newtype RewriteMT arch m a = RewriteM { unRewriteM :: RWS.RWST (RewriteEnv arch) () (RewriteInfo arch) m a }
+newtype RewriteMT lm arch m a = RewriteM { unRewriteM :: RWS.RWST (RewriteEnv arch) () (RewriteInfo lm arch) m a }
   deriving (Applicative,
             Functor,
             Monad,
             RWS.MonadReader (RewriteEnv arch),
-            RWS.MonadState (RewriteInfo arch),
+            RWS.MonadState (RewriteInfo lm arch),
             RWS.MonadIO)
 
-type RewriteM arch = RewriteMT arch I.Identity
+type RewriteM lm arch = RewriteMT lm arch I.Identity
 
-instance Monad m => HasInjectedFunctions (RewriteMT arch m) arch where
+instance Monad m => HasInjectedFunctions (RewriteMT lm arch m) arch where
   getInjectedFunctions = getInj
 
-getInj :: Monad m => RewriteMT arch m [(A.SymbolicAddress arch, BS.ByteString)]
+getInj :: Monad m => RewriteMT lm arch m [(A.SymbolicAddress arch, BS.ByteString)]
 getInj = do
   m <- RWS.gets injectedFunctions
   return [ (a, bs) | (a, (_, bs)) <- M.toList m ]
 
-hoist :: Monad m => RewriteM arch a -> RewriteMT arch m a
+hoist :: Monad m => RewriteM lm arch a -> RewriteMT lm arch m a
 hoist (RewriteM act) = RewriteM (RWS.mapRWST (return . I.runIdentity) act)
 
 -- | Make a mapping from block addresses to their CFGs.
@@ -182,9 +173,9 @@ runRewriteM :: RewriteEnv arch
             -- ^ The address to start allocating new global variables at
             -> RS.SymbolicAddressAllocator arch
             -- ^ A symbolic address allocator for injected functions
-            -> RewriteM arch a
+            -> RewriteM lm arch a
             -- ^ The rewriting action to run
-            -> (a, RewriteInfo arch)
+            -> (a, RewriteInfo lm arch)
 runRewriteM env newGlobalBase symAlloc = I.runIdentity . runRewriteMT env newGlobalBase symAlloc
 
 runRewriteMT :: Monad m
@@ -193,9 +184,9 @@ runRewriteMT :: Monad m
              -- ^ The address to start allocating new global variables at
              -> RS.SymbolicAddressAllocator arch
              -- ^ A symbolic address allocator for injected functions
-             -> RewriteMT arch m a
+             -> RewriteMT lm arch m a
              -- ^ The rewriting action to run
-             -> m (a, RewriteInfo arch)
+             -> m (a, RewriteInfo lm arch)
 runRewriteMT env newGlobalBase symAlloc i = do
   (res, st, _) <- RWS.runRWST (unRewriteM i) env emptyInfo
   return (res, st)
@@ -205,7 +196,7 @@ runRewriteMT env newGlobalBase symAlloc i = do
                             , nextGlobalAddress = newGlobalBase
                             , symAddrAlloc = symAlloc
                             , injectedFunctions = M.empty
-                            , metrics = []
+                            , logMsgs = []
                             }
 
 -- | Allow the caller to inject new code into the binary
@@ -215,7 +206,7 @@ runRewriteMT env newGlobalBase symAlloc i = do
 -- They can then store that information in the caller-specified info type and
 -- pass the mapping (presumably from @'String' -> 'A.SymbolicAddress' arch@) to
 -- the actual rewriting pass.
-injectFunction :: String -> BS.ByteString -> RewriteM arch (A.SymbolicAddress arch)
+injectFunction :: String -> BS.ByteString -> RewriteM lm arch (A.SymbolicAddress arch)
 injectFunction funcName bytes = do
   alloc0 <- RWS.gets symAddrAlloc
   let (addr, alloc1) = RS.nextSymbolicAddress alloc0
@@ -226,7 +217,7 @@ injectFunction funcName bytes = do
 
 -- | A function for instrumentors to call when they add
 -- instrumentation to a binary.
-recordRewrite :: String -> B.SymbolicInfo arch -> Word -> RewriteM arch ()
+recordRewrite :: String -> B.SymbolicInfo arch -> Word -> RewriteM lm arch ()
 recordRewrite ty baddr off =
   RWS.modify $ \s -> s { infoSites = site : infoSites s }
   where
@@ -234,20 +225,20 @@ recordRewrite ty baddr off =
                        , siteType = ty
                        }
 
--- | Log a metric.
-recordMetric :: Metric arch -> RewriteM arch ()
-recordMetric metric =
-  RWS.modify $ \s -> s { metrics = metric : metrics s }
+-- | Log a msg.
+recordLogMsg :: lm -> RewriteM lm arch ()
+recordLogMsg msg =
+  RWS.modify $ \s -> s { logMsgs = msg : logMsgs s }
 
 -- | Get the ABI from environment.
-getABI :: RewriteM arch (ABI.ABI arch)
+getABI :: RewriteM lm arch (ABI.ABI arch)
 getABI = RWS.asks envABI
 
 -- | Get the ISA from environment.
-getISA :: RewriteM arch (ISA.ISA arch)
+getISA :: RewriteM lm arch (ISA.ISA arch)
 getISA = RWS.asks envISA
 
-getBlockIndex :: RewriteM arch (BlockCFGIndex arch)
+getBlockIndex :: RewriteM lm arch (BlockCFGIndex arch)
 getBlockIndex = RWS.asks envBlockCFGIndex
 
 
@@ -255,7 +246,7 @@ getBlockIndex = RWS.asks envBlockCFGIndex
 --
 -- The block might not be assigned to a CFG, or assigned to multiple
 -- CFGs, in which cases the function returns 'Nothing'.
-lookupBlockCFG :: B.SymbolicBlock arch -> RewriteM arch (Maybe (FR.FunctionCFG arch))
+lookupBlockCFG :: B.SymbolicBlock arch -> RewriteM lm arch (Maybe (FR.FunctionCFG arch))
 lookupBlockCFG sb = do
   idx <- RWS.asks envBlockCFGIndex
   let mcfgs = M.lookup (B.concreteAddress (B.basicBlockAddress sb)) idx
@@ -264,7 +255,7 @@ lookupBlockCFG sb = do
     Just cfg
 
 -- | Get the address of the entry point of the program
-lookupEntryAddress :: RewriteM arch (A.ConcreteAddress arch)
+lookupEntryAddress :: RewriteM lm arch (A.ConcreteAddress arch)
 lookupEntryAddress = RWS.asks envEntryAddress
 
 -- | Allocate space for a global variable (occupying the given number
@@ -273,7 +264,7 @@ lookupEntryAddress = RWS.asks envEntryAddress
 --
 -- FIXME: The caller of runInstrument has to allocate a new data
 -- segment for globals allocated here.
-newGlobalVar :: (MM.MemWidth (MM.ArchAddrWidth arch)) => String -> Word32 -> RewriteM arch (A.ConcreteAddress arch)
+newGlobalVar :: (MM.MemWidth (MM.ArchAddrWidth arch)) => String -> Word32 -> RewriteM lm arch (A.ConcreteAddress arch)
 newGlobalVar name size = do
   addr <- RWS.gets nextGlobalAddress
   RWS.modify' $ \s -> s { nextGlobalAddress = addr `A.addressAddOffset` fromIntegral size

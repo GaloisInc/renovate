@@ -46,7 +46,7 @@ expandBSS :: ( w ~ MM.ArchAddrWidth arch
              , E.ElfWidthConstraints w
              )
           => E.Elf w
-          -> ElfRewriter arch ((), E.Elf w)
+          -> ElfRewriter lm arch ((), E.Elf w)
 expandBSS e0 = do
   -- First, discard all of the existing BSS sections in each segment and fix the
   -- segment size to be 'E.ElfRelativeSize'.  It isn't clear if that is
@@ -83,7 +83,7 @@ expandPreBSSDataSection :: ( w ~ MM.ArchAddrWidth arch
                            )
                         => [E.ElfSection (E.ElfWordType w)]
                         -> E.Elf w
-                        -> ElfRewriter arch (E.Elf w)
+                        -> ElfRewriter lm arch (E.Elf w)
 expandPreBSSDataSection (L.sortOn E.elfSectionIndex -> nobitsSections) e0 = do
   assertM (sequential (map E.elfSectionIndex nobitsSections))
   case nobitsSections of
@@ -126,7 +126,7 @@ expandIfPrev maxPostBSSAlign prevSecId nobitsSections sec
 
 fixPostBSSSectionIds :: [E.ElfSection (E.ElfWordType w)]
                      -> E.Elf w
-                     -> ElfRewriter arch (E.Elf w)
+                     -> ElfRewriter lm arch (E.Elf w)
 fixPostBSSSectionIds nobitsSections e0
   | null nobitsSections = return e0
   | otherwise = do
