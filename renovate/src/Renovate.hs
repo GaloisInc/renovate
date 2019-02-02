@@ -86,6 +86,7 @@ module Renovate
   RW.BlockCFGIndex,
   RW.mkRewriteEnv,
   RW.recordRewrite,
+  RW.recordLogMsg,
   RW.injectFunction,
   RW.newGlobalVar,
   RW.getBlockIndex,
