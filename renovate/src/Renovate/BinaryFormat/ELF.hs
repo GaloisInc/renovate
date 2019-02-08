@@ -1048,7 +1048,9 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
         riReusedByteCount L..= RE.rwsReusedByteCount s1
         riSmallBlockCount L..= RE.rwsSmallBlockCount s1
         riUnrelocatableTerm L..= RE.rwsUnrelocatableTerm s1
+        riIncompleteBlocks L..= RE.rwsIncompleteBlocks s1
         riBlockMapping L..= RE.rwsBlockMapping s1
+        riRecoveredBlocks L..= Just (SomeBlocks isa blocks)
         riOutputBlocks L..= Just (SomeBlocks isa allBlocks)
         case cfg of
           RenovateConfig { rcAssembler = asm } -> do
