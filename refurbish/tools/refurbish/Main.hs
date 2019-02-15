@@ -57,6 +57,8 @@ data Options = Options { oInput :: FilePath
                        , oPrintDiscoveredBlocks :: [Word64]
                        , oDiscoveredBlockFile :: Maybe FilePath
                        , oRunREPL :: Bool
+                       , oCompact :: Bool
+                       , oPreserveLoops :: Bool
                        }
 
 optionsParser :: O.Parser Options
@@ -95,6 +97,14 @@ optionsParser = Options <$> O.strArgument (  O.metavar "FILE"
                         <*> O.switch ( O.long "repl"
                                      <> O.help "Start a REPL after processing all other options"
                                      )
+                        <*> O.switch ( O.long "compact"
+                                     <> O.short 'C'
+                                     <> O.help "Produce smaller (but slower) binaries"
+                                     )
+                        <*> O.switch ( O.long "keep-loops-together"
+                                     <> O.short 'k'
+                                     <> O.help "Group together blocks that form a loop, relocating the whole group as a single entity"
+                                     )
 
 main :: IO ()
 main = X.catches (O.execParser optParser >>= mainWithOptions) handlers
@@ -126,6 +136,8 @@ mainWithOptions o = do
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))
                 ]
+      layout = (if oCompact o then R.Compact R.SortedOrder else R.Parallel)
+               (if oPreserveLoops o then R.KeepLoopBlocksTogether else R.IgnoreLoops)
   hdlAlloc <- C.newHandleAllocator
   case E.parseElf bytes of
     E.ElfHeaderError _ err -> do
@@ -137,7 +149,7 @@ mainWithOptions o = do
         _ -> print errs
       R.withElfConfig (E.Elf32 e32) configs $ \rc e loadedBinary -> do
         let rc' = rc { R.rcUpdateSymbolTable = True }
-        (e', _, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary (R.Parallel R.IgnoreLoops)
+        (e', _, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary layout
         printInfo o ri
         LBS.writeFile (oOutput o) (E.renderElf e')
         when (oRunREPL o) (runREPL ri)
@@ -147,7 +159,7 @@ mainWithOptions o = do
         _ -> print errs
       R.withElfConfig (E.Elf64 e64) configs $ \rc e loadedBinary -> do
         let rc' = rc { R.rcUpdateSymbolTable = True }
-        (e', _, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary (R.Parallel R.IgnoreLoops)
+        (e', _, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary layout
         printInfo o ri
         LBS.writeFile (oOutput o) (E.renderElf e')
         when (oRunREPL o) (runREPL ri)
