@@ -20,8 +20,8 @@ import qualified Renovate as R
 import qualified Renovate.Arch.PPC as RP
 
 injectionAnalysis :: BS.ByteString
-                  -> (forall env . (R.HasAnalysisEnv env) => env arch binFmt -> Const () arch -> InjectedAddr arch -> R.SymbolicBlock arch -> R.RewriteM arch (Maybe ([R.TaggedInstruction arch (R.InstructionAnnotation arch)])))
-                  -> R.AnalyzeAndRewrite arch binFmt (Const ())
+                  -> (forall env . (R.HasAnalysisEnv env) => env arch binFmt -> Const () arch -> InjectedAddr arch -> R.SymbolicBlock arch -> R.RewriteM lm arch (Maybe ([R.TaggedInstruction arch (R.InstructionAnnotation arch)])))
+                  -> R.AnalyzeAndRewrite lm arch binFmt (Const ())
 injectionAnalysis injCode injRewrite =
   R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
                       , R.arAnalyze = \_ _ -> return (Const ())
@@ -31,7 +31,7 @@ injectionAnalysis injCode injRewrite =
 
 data InjectedAddr arch = InjectedAddr (R.SymbolicAddress arch)
 
-injectPreRewrite :: (R.HasAnalysisEnv env) => BS.ByteString -> env arch binFmt -> b arch -> R.RewriteM arch (InjectedAddr arch)
+injectPreRewrite :: (R.HasAnalysisEnv env) => BS.ByteString -> env arch binFmt -> b arch -> R.RewriteM lm arch (InjectedAddr arch)
 injectPreRewrite injCode _ _ = do
   InjectedAddr <$> R.injectFunction "newExit" injCode
 
@@ -43,7 +43,7 @@ ppc64Inject :: (R.HasAnalysisEnv env)
             -> b RP.PPC64
             -> InjectedAddr RP.PPC64
             -> R.SymbolicBlock RP.PPC64
-            -> R.RewriteM RP.PPC64 (Maybe ([R.TaggedInstruction RP.PPC64 (R.InstructionAnnotation RP.PPC64)]))
+            -> R.RewriteM lm RP.PPC64 (Maybe ([R.TaggedInstruction RP.PPC64 (R.InstructionAnnotation RP.PPC64)]))
 ppc64Inject env _ (InjectedAddr addr) sb = do
   return (Just (newCall ++ R.basicBlockInstructions sb))
   where

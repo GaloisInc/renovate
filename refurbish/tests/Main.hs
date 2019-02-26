@@ -128,7 +128,7 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
              -> R.LayoutStrategy
              -> FilePath
              -> ((E.ExitCode, E.ExitCode) -> (String, String) -> (String, String) -> IO ())
-             -> R.RenovateConfig arch (E.Elf w) R.AnalyzeAndRewrite (Const ())
+             -> R.RenovateConfig arch (E.Elf w) (R.AnalyzeAndRewrite lm) (Const ())
              -> E.Elf w
              -> MBL.LoadedBinary arch (E.Elf w)
              -> IO ()
@@ -178,13 +178,13 @@ readTestArguments exePath = do
 -- ELF handling
 
 withELF :: FilePath
-        -> [(R.Architecture, R.SomeConfig R.AnalyzeAndRewrite a)]
+        -> [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite lm) a)]
         -> (forall arch . ( MS.SymArchConstraints arch
                           , MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch))
                           , E.ElfWidthConstraints (MM.ArchAddrWidth arch)
                           , R.InstructionConstraints arch
                           ) =>
-               R.RenovateConfig arch (E.Elf (MM.ArchAddrWidth arch)) R.AnalyzeAndRewrite a
+               R.RenovateConfig arch (E.Elf (MM.ArchAddrWidth arch)) (R.AnalyzeAndRewrite lm) a
             -> E.Elf (MM.ArchAddrWidth arch)
             -> MBL.LoadedBinary arch (E.Elf (MM.ArchAddrWidth arch))
             -> IO ())

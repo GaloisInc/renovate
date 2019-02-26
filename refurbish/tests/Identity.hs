@@ -9,7 +9,7 @@ import qualified Test.Tasty.HUnit as T
 
 import qualified Renovate as R
 
-analysis :: R.AnalyzeAndRewrite arch binFmt (Const ())
+analysis :: R.AnalyzeAndRewrite lm arch binFmt (Const ())
 analysis =
   R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
                       , R.arAnalyze = \_ _ -> return (Const ())
