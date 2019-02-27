@@ -61,6 +61,7 @@ config32 analysis = R.RenovateConfig
   , R.rcUpdateSymbolTable = False
   -- See Note [Layout Addresses]
   , R.rcDataLayoutBase = 0x20000000
+  , R.rcExtratextOffset = 0
   }
 
 -- | A renovate configuration for 64 bit PowerPC
@@ -86,6 +87,7 @@ config64 analysis = R.RenovateConfig
   , R.rcUpdateSymbolTable = False
   -- See Note [Layout Addresses]
   , R.rcDataLayoutBase = 0x20000000
+  , R.rcExtratextOffset = 0
   }
 
 {- Note [Layout Addresses]

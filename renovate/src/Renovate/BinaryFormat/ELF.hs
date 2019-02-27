@@ -362,6 +362,19 @@ withinJumpRange cfg text =
   end = start + E.elfSectionSize text - 1
   range = fromIntegral (RI.isaMaxRelativeJumpSize (rcISA cfg))
 
+-- | Like allocatedVAddrs, but throw an error in the ElfRewriter monad instead
+-- of returning it purely.
+allocatedVAddrsM ::
+  E.ElfWidthConstraints w =>
+  E.Elf w ->
+  ElfRewriter lm arch (Map.Map (E.ElfWordType w) (E.ElfWordType w))
+allocatedVAddrsM e = case allocatedVAddrs e of
+  Left seg -> fail
+    $  "Could not compute free virtual addresses: segment "
+    ++ show (E.elfSegmentIndex seg)
+    ++ " has relative size"
+  Right m -> return m
+
 -- | Choose a virtual address for extratext (and report how many bytes are
 -- available at that address).
 selectLayoutAddr ::
@@ -372,16 +385,25 @@ selectLayoutAddr ::
   E.Elf w ->
   ElfRewriter lm arch (E.ElfWordType w, E.ElfWordType w)
 selectLayoutAddr lo hi alignment e = do
-  allocated <- case allocatedVAddrs e of
-    Left seg -> fail
-      $  "Could not compute free virtual addresses: segment "
-      ++ show (E.elfSegmentIndex seg)
-      ++ " has relative size"
-    Right m -> return m
+  allocated <- allocatedVAddrsM e
   case availableAddrs lo hi alignment allocated of
     [] -> fail "No unallocated virtual address space within jumping range of the text section is available for use as a new extratext section."
     available -> do
       return $ L.maximumBy (O.comparing snd) available
+
+computeSizeOfLayoutAddr ::
+  (E.ElfWidthConstraints w, MM.ArchAddrWidth arch ~ w) =>
+  E.ElfWordType w ->
+  E.ElfWordType w ->
+  E.Elf w ->
+  ElfRewriter lm arch (E.ElfWordType w, E.ElfWordType w)
+computeSizeOfLayoutAddr addr alignment e = do
+  allocated <- allocatedVAddrsM e
+  case availableAddrs addr maxBound alignment allocated of
+    (result@(addr',_)):_
+      | addr == addr' -> return result
+      | addr' < addr + alignment -> fail $ "Requested layout address " ++ show addr ++ " not aligned to " ++ show alignment ++ "-byte boundary."
+    _ -> fail $ "Requested layout address " ++ show addr ++ " overlaps existing segments."
 
 -- | The rewriter driver
 --
@@ -445,7 +467,11 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- from elf-edit.  Once we start modifying segments, however, we start
   -- generating segments with relative sizes.
   let (lo, hi) = withinJumpRange cfg textSection
-  (newTextAddr, newTextSize) <- withCurrentELF (selectLayoutAddr lo hi (fromIntegral newTextAlign))
+      layoutChoiceFunction = case rcExtratextOffset cfg of
+        0 -> selectLayoutAddr lo hi
+        n | n < 0 -> computeSizeOfLayoutAddr (E.elfSectionAddr textSection - fromIntegral n)
+          | otherwise -> computeSizeOfLayoutAddr (E.elfSectionAddr textSection + E.elfSectionSize textSection + fromIntegral n)
+  (newTextAddr, newTextSize) <- withCurrentELF (layoutChoiceFunction (fromIntegral newTextAlign))
   riSegmentVirtualAddress L..= Just (fromIntegral newTextAddr)
 
   -- Remove (and pad out) the sections whose size could change if we

@@ -187,6 +187,12 @@ data RenovateConfig arch binFmt callbacks (b :: * -> *) = RenovateConfig
   -- symbol table does not work for PowerPC, so we don't want to
   -- do it there.  Long term, we want to figure out how to update
   -- PowerPC safely.
+  , rcExtratextOffset :: Int
+  -- ^ Guides the location of the new extratext section for relocated code
+  -- blocks. Negative @n@ means start @n@ bytes before the beginning of the
+  -- text section, @0@ means choose the largest chunk of otherwise unused
+  -- addresses within jumping range of the text section, and positive @n@ means
+  -- start @n@ bytes after the end of the text section.
   }
 
 -- | Compose a list of instrumentation functions into a single

@@ -66,6 +66,7 @@ config analysis = R.RenovateConfig
   , R.rcUpdateSymbolTable = True
   -- See Note [Layout Addresses]
   , R.rcDataLayoutBase = 0xa00000
+  , R.rcExtratextOffset = 0
   }
 
 {- Note [Layout Addresses]
