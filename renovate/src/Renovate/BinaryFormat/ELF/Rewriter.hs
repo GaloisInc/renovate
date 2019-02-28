@@ -27,6 +27,8 @@ module Renovate.BinaryFormat.ELF.Rewriter (
   riOriginalTextSize,
   riNewTextSize,
   riIncompleteBlocks,
+  riTransitivelyIncompleteBlocks,
+  riIncompleteFunctions,
   riRedirectionDiagnostics,
   riBlockRecoveryDiagnostics,
   riBlockMapping,
@@ -44,6 +46,8 @@ import qualified Control.Monad.IO.Class as IO
 import qualified Control.Monad.State.Strict as S
 import qualified Data.ByteString as B
 import qualified Data.Generics.Product as GL
+import qualified Data.Map as M
+import qualified Data.Set as S
 import           Data.Word ( Word16, Word64 )
 
 import           Prelude
@@ -95,6 +99,10 @@ data RewriterInfo lm arch =
                -- ^ The number of bytes allocated in the new text section
                , _riIncompleteBlocks :: Int
                -- ^ The number of blocks in incomplete functions
+               , _riTransitivelyIncompleteBlocks :: S.Set (RA.ConcreteAddress arch)
+               -- ^ The number of blocks that reside in incomplete functions
+               , _riIncompleteFunctions :: M.Map (RA.ConcreteAddress arch) (S.Set (RA.ConcreteAddress arch))
+               -- ^ For each function, the set of blocks that are incomplete due to translation errors or classify failures
                , _riBlockMapping :: [(RA.ConcreteAddress arch, RA.ConcreteAddress arch)]
                -- ^ A mapping of original block addresses to rewritten block addresses
                , _riOutputBlocks :: Maybe SomeBlocks
@@ -138,6 +146,8 @@ emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
                                    , _riUnrelocatableTerm        = 0
                                    , _riOriginalTextSize         = 0
                                    , _riIncompleteBlocks         = 0
+                                   , _riTransitivelyIncompleteBlocks = S.empty
+                                   , _riIncompleteFunctions      = M.empty
                                    , _riNewTextSize              = 0
                                    , _riBlockMapping             = []
                                    , _riOutputBlocks             = Nothing
@@ -150,6 +160,12 @@ riNewTextSize = GL.field @"_riNewTextSize"
 
 riIncompleteBlocks :: L.Simple L.Lens (RewriterInfo lm arch) Int
 riIncompleteBlocks = GL.field @"_riIncompleteBlocks"
+
+riTransitivelyIncompleteBlocks :: L.Simple L.Lens (RewriterInfo lm arch) (S.Set (RA.ConcreteAddress arch))
+riTransitivelyIncompleteBlocks = GL.field @"_riTransitivelyIncompleteBlocks"
+
+riIncompleteFunctions :: L.Simple L.Lens (RewriterInfo lm arch) (M.Map (RA.ConcreteAddress arch) (S.Set (RA.ConcreteAddress arch)))
+riIncompleteFunctions = GL.field @"_riIncompleteFunctions"
 
 riSegmentVirtualAddress :: L.Simple L.Lens (RewriterInfo lm arch) (Maybe Word64)
 riSegmentVirtualAddress = GL.field @"_riSegmentVirtualAddress"

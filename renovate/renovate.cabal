@@ -24,6 +24,7 @@ library
                        Renovate.BasicBlock.Types
                        Renovate.Config
                        Renovate.Diagnostic
+                       Renovate.Metrics
                        Renovate.Redirect.Concretize
                        Renovate.Redirect.Internal
                        Renovate.Redirect.LayoutBlocks

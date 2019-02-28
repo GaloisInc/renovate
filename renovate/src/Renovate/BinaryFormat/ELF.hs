@@ -95,6 +95,7 @@ import           Renovate.BinaryFormat.ELF.Rewriter
 import           Renovate.Config
 import qualified Renovate.Diagnostic as RD
 import qualified Renovate.ISA as RI
+import qualified Renovate.Metrics as RM
 import qualified Renovate.Recovery as R
 import qualified Renovate.Redirect as RE
 import qualified Renovate.Redirect.Symbolize as RS
@@ -1068,6 +1069,8 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
         (analysisResult, (allBlocks, injected)) <- extractOrThrowRewriterResult eBlocks r1
         let s1 = RE.rrState r1
         let newSyms = RE.rwsNewSymbolsMap s1
+
+        -- Record some metrics for later analysis
         riRedirectionDiagnostics L..= F.toList (RD.diagnosticMessages $ RE.rrDiagnostics r1)
         riInstrumentationSites L..= RW.infoSites info
         riLogMsgs L..= RW.logMsgs info
@@ -1078,11 +1081,14 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
         riBlockMapping L..= RE.rwsBlockMapping s1
         riRecoveredBlocks L..= Just (SomeBlocks isa blocks)
         riOutputBlocks L..= Just (SomeBlocks isa allBlocks)
+        riIncompleteFunctions L..= RM.incompleteFunctions mem blockInfo
+        riTransitivelyIncompleteBlocks L..= RM.transitivelyIncompleteBlocks blockInfo
         case cfg of
           RenovateConfig { rcAssembler = asm } -> do
             (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks injected
             let newDataBytes = mkNewDataSection newGlobalBase info
             return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms, RE.rwsBlockMapping s1)
+
 
 -- | Helper for handling the error case of `RewriterT`.
 extractOrThrowRewriterResult :: Either P.SomeException a
