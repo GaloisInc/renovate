@@ -64,6 +64,7 @@ executable refurbish
                        macaw-loader-x86,
                        macaw-x86-symbolic,
                        macaw-ppc-symbolic,
+                       mwc-random,
                        renovate,
                        renovate-ppc,
                        renovate-x86

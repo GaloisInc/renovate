@@ -27,12 +27,13 @@ import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Text.IO as T
 import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Word ( Word64 )
-import qualified Fmt as Fmt
 import           Fmt ( (+|), (|+), (+||), (||+) )
+import qualified Fmt as Fmt
 import qualified Options.Applicative as O
 import qualified System.Console.Haskeline as H
 import qualified System.Exit as IO
 import qualified System.IO as IO
+import qualified System.Random.MWC as MWC
 import           Text.Read ( readMaybe )
 
 import qualified Data.Macaw.CFG as MM
@@ -58,6 +59,7 @@ data Options = Options { oInput :: FilePath
                        , oDiscoveredBlockFile :: Maybe FilePath
                        , oRunREPL :: Bool
                        , oCompact :: Bool
+                       , oLayoutRandom :: Bool
                        , oPreserveLoops :: Bool
                        }
 
@@ -101,6 +103,9 @@ optionsParser = Options <$> O.strArgument (  O.metavar "FILE"
                                      <> O.short 'C'
                                      <> O.help "Produce smaller (but slower) binaries"
                                      )
+                        <*> O.switch ( O.long "layout-random"
+                                     <> O.help "Randomize the compact layout. Has no effect on non compact layout. The default is to sort blocks deterministically in the compact layout strategy."
+                                     )
                         <*> O.switch ( O.long "keep-loops-together"
                                      <> O.short 'k'
                                      <> O.help "Group together blocks that form a loop, relocating the whole group as a single entity"
@@ -136,8 +141,17 @@ mainWithOptions o = do
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))
                 ]
-      layout = (if oCompact o then R.Compact R.SortedOrder else R.Parallel)
-               (if oPreserveLoops o then R.KeepLoopBlocksTogether else R.IgnoreLoops)
+      loopStrategy = if oPreserveLoops o then R.KeepLoopBlocksTogether else R.IgnoreLoops
+  layout <-
+    if oCompact o
+    then if oLayoutRandom o
+         then do
+           gen <- MWC.createSystemRandom
+           seed <- MWC.fromSeed <$> MWC.save gen
+           return $ R.Compact (R.RandomOrder seed) loopStrategy
+         else return $ R.Compact R.SortedOrder loopStrategy
+    else return $ R.Parallel loopStrategy
+
   hdlAlloc <- C.newHandleAllocator
   case E.parseElf bytes of
     E.ElfHeaderError _ err -> do
