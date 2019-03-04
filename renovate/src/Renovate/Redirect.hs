@@ -16,8 +16,10 @@ module Renovate.Redirect (
   RM.Diagnostic(..),
   RM.RewriterResult(..),
   RM.RewriterState(..),
+  RM.RewriterStats(..),
   RM.SymbolMap,
-  RM.NewSymbolsMap
+  RM.NewSymbolsMap,
+  RM.emptyRewriterStats
   ) where
 
 import           Control.Monad ( when )
@@ -98,10 +100,14 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
              , disjoint isa (biOverlap blockInfo) cb
              ] of
      True ->  do
+       let blockSize :: Int
+           blockSize = sum . map (fromIntegral . isaInstructionSize isa) . basicBlockInstructions $ cb
+       RM.recordDiscoveredBytes blockSize
        insns' <- lift $ instrumentor sb
        case insns' of
+         Just insns'' -> RM.recordInstrumentedBytes blockSize
+                      >> return (SymbolicPair (LayoutPair cb sb { basicBlockInstructions = insns'' } Modified))
          Nothing      -> return (SymbolicPair (LayoutPair cb sb Unmodified))
-         Just insns'' -> return (SymbolicPair (LayoutPair cb sb { basicBlockInstructions = insns'' } Modified))
      False -> do
        when (not (isRelocatableTerminatorType (terminatorType isa mem cb))) $ do
          RM.recordUnrelocatableTermBlock

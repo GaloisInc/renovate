@@ -43,6 +43,8 @@ module Renovate.BinaryFormat.ELF (
   riIncompleteBlocks,
   riRedirectionDiagnostics,
   riBlockRecoveryDiagnostics,
+  riDiscoveredBytes,
+  riInstrumentedBytes,
   riBlockMapping,
   riOutputBlocks
   ) where
@@ -1074,11 +1076,7 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
         riRedirectionDiagnostics L..= F.toList (RD.diagnosticMessages $ RE.rrDiagnostics r1)
         riInstrumentationSites L..= RW.infoSites info
         riLogMsgs L..= RW.logMsgs info
-        riReusedByteCount L..= RE.rwsReusedByteCount s1
-        riSmallBlockCount L..= RE.rwsSmallBlockCount s1
-        riUnrelocatableTerm L..= RE.rwsUnrelocatableTerm s1
-        riIncompleteBlocks L..= RE.rwsIncompleteBlocks s1
-        riBlockMapping L..= RE.rwsBlockMapping s1
+        riStats L..= RE.rwsStats s1
         riRecoveredBlocks L..= Just (SomeBlocks isa blocks)
         riOutputBlocks L..= Just (SomeBlocks isa allBlocks)
         riIncompleteFunctions L..= RM.incompleteFunctions mem blockInfo
@@ -1087,7 +1085,7 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
           RenovateConfig { rcAssembler = asm } -> do
             (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks injected
             let newDataBytes = mkNewDataSection newGlobalBase info
-            return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms, RE.rwsBlockMapping s1)
+            return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms, RE.blockMapping (RE.rwsStats s1))
 
 
 -- | Helper for handling the error case of `RewriterT`.

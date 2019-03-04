@@ -6,6 +6,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DeriveGeneric #-}
 -- | This module defines a 'Monad' for the binary rewriter.
 --
 -- The monad basically provides facilities to allocate symbolic
@@ -19,6 +20,7 @@ module Renovate.Redirect.Monad (
   SymbolMap,
   NewSymbolsMap,
   RewriterState(..),
+  RewriterStats(..),
   Diagnostics,
   RewriterResult(..),
   runRewriterT,
@@ -29,10 +31,13 @@ module Renovate.Redirect.Monad (
   askSymbolMap,
   putNewSymbolsMap,
   getNewSymbolsMap,
+  emptyRewriterStats,
   recordUnrelocatableTermBlock,
   recordIncompleteBlock,
   recordUnrelocatableSize,
   recordReusedBytes,
+  recordDiscoveredBytes,
+  recordInstrumentedBytes,
   recordBlockMap,
   ) where
 
@@ -44,6 +49,7 @@ import qualified Control.Monad.Trans as T
 import qualified Data.Functor.Identity as I
 import           Data.Monoid
 import qualified Data.Sequence as Seq
+import           GHC.Generics ( Generic )
 
 import           Prelude
 
@@ -72,18 +78,39 @@ data RewriterEnv arch = RewriterEnv
 -- | State data for 'RewriterT'.
 data RewriterState arch = RewriterState
   { rwsNewSymbolsMap         :: !(NewSymbolsMap arch)
-  , rwsUnrelocatableTerm     :: !Int
-  -- ^ Count of blocks unrelocatable due to ending in an IP-relative indirect jump
-  , rwsSmallBlockCount       :: !Int
-  -- ^ Count of blocks unrelocatable due to being too small to redirect
-  , rwsReusedByteCount       :: !Int
-  -- ^ Count of bytes re-used by the compact layout strategy
-  , rwsIncompleteBlocks      :: !Int
-  -- ^ Count of blocks that are in incomplete functions
-  , rwsBlockMapping          :: [(ConcreteAddress arch, ConcreteAddress arch)]
-  -- ^ A mapping of original block addresses to the address they were redirected to
+  , rwsStats                 :: !(RewriterStats arch)
   }
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (RewriterState arch)
+
+-- | Some statistics about a rewrite that it might be interesting to report to the user.
+data RewriterStats arch = RewriterStats
+  { unrelocatableTerm     :: !Int
+  -- ^ Count of blocks unrelocatable due to ending in an IP-relative indirect jump
+  , smallBlockCount       :: !Int
+  -- ^ Count of blocks unrelocatable due to being too small to redirect
+  , reusedByteCount       :: !Int
+  -- ^ Count of bytes re-used by the compact layout strategy
+  , incompleteBlocks      :: !Int
+  -- ^ Count of blocks that are in incomplete functions
+  , discoveredBytes       :: !Int
+  -- ^ A count of the bytes in blocks found by the discovery process
+  , instrumentedBytes     :: !Int
+  -- ^ A count of the bytes in blocks that were modified by the instrumentor
+  , blockMapping          :: [(ConcreteAddress arch, ConcreteAddress arch)]
+  -- ^ A mapping of original block addresses to the address they were redirected to
+  } deriving (Generic)
+deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (RewriterStats arch)
+
+emptyRewriterStats :: RewriterStats arch
+emptyRewriterStats = RewriterStats
+  { unrelocatableTerm = 0
+  , smallBlockCount   = 0
+  , reusedByteCount   = 0
+  , incompleteBlocks  = 0
+  , discoveredBytes   = 0
+  , instrumentedBytes = 0
+  , blockMapping      = []
+  }
 
 -- | Result data of 'RewriterT', the combination of state and writer results.
 data RewriterResult arch = RewriterResult
@@ -128,11 +155,7 @@ instance T.MonadTrans (RewriterT arch) where
 initialState :: RewriterState arch
 initialState =  RewriterState
   { rwsNewSymbolsMap         = mempty
-  , rwsUnrelocatableTerm     = 0
-  , rwsSmallBlockCount       = 0
-  , rwsReusedByteCount       = 0
-  , rwsIncompleteBlocks      = 0
-  , rwsBlockMapping          = []
+  , rwsStats                 = emptyRewriterStats
   }
 
 -- | Run a 'RewriterT' computation.
@@ -180,27 +203,26 @@ getNewSymbolsMap = do
   s <- RWS.get
   return $! rwsNewSymbolsMap s
 
+onStats :: Monad m => (RewriterStats arch -> RewriterStats arch) -> RewriterT arch m ()
+onStats f = RWS.modify $! \s -> s { rwsStats = f (rwsStats s) }
+
 recordUnrelocatableTermBlock :: (Monad m) => RewriterT arch m ()
-recordUnrelocatableTermBlock = do
-  s <- RWS.get
-  RWS.put $! s { rwsUnrelocatableTerm = rwsUnrelocatableTerm s + 1 }
+recordUnrelocatableTermBlock = onStats $ \s -> s { unrelocatableTerm = unrelocatableTerm s + 1 }
 
 recordUnrelocatableSize :: (Monad m) => RewriterT arch m ()
-recordUnrelocatableSize = do
-  s <- RWS.get
-  RWS.put $! s { rwsSmallBlockCount = rwsSmallBlockCount s + 1 }
+recordUnrelocatableSize = onStats $ \s -> s { smallBlockCount = smallBlockCount s + 1 }
 
 recordReusedBytes :: (Monad m) => Int -> RewriterT arch m ()
-recordReusedBytes nBytes = do
-  s <- RWS.get
-  RWS.put $! s { rwsReusedByteCount = rwsReusedByteCount s + nBytes }
+recordReusedBytes nBytes = onStats $ \s -> s { reusedByteCount = reusedByteCount s + nBytes }
 
 recordBlockMap :: (Monad m) => [(ConcreteAddress arch, ConcreteAddress arch)] -> RewriterT arch m ()
-recordBlockMap m = do
-  s <- RWS.get
-  RWS.put $! s { rwsBlockMapping = m }
+recordBlockMap m = onStats $ \s -> s { blockMapping = m }
 
 recordIncompleteBlock :: (Monad m) => RewriterT arch m ()
-recordIncompleteBlock = do
-  s <- RWS.get
-  RWS.put $! s { rwsIncompleteBlocks = rwsIncompleteBlocks s + 1 }
+recordIncompleteBlock = onStats $ \s -> s { incompleteBlocks = incompleteBlocks s + 1 }
+
+recordDiscoveredBytes :: Monad m => Int -> RewriterT arch m ()
+recordDiscoveredBytes nBytes = onStats $ \s -> s { discoveredBytes = discoveredBytes s + nBytes }
+
+recordInstrumentedBytes :: Monad m => Int -> RewriterT arch m ()
+recordInstrumentedBytes nBytes = onStats $ \s -> s { instrumentedBytes = instrumentedBytes s + nBytes }

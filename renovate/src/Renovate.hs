@@ -125,6 +125,8 @@ module Renovate
   E.riOriginalTextSize,
   E.riNewTextSize,
   E.riIncompleteBlocks,
+  E.riDiscoveredBytes,
+  E.riInstrumentedBytes,
   E.riBlockMapping,
   E.riOutputBlocks,
   D.Diagnostic(..),
