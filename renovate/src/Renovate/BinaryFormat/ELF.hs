@@ -300,10 +300,7 @@ allocatedVAddrs e = F.foldl' (Map.unionWith max) Map.empty <$> traverse processR
 -- hi)@ (i.e., in range of a jump from the text section) and correctly aligned
 -- w.r.t. the passed-in alignment.
 availableAddrs :: (Ord w, Integral w) => w -> w -> w -> Map.Map w w -> [(w, w)]
-availableAddrs lo hi alignment allocated =
-  -- Note that we aren't considering the space between lo and the first region.
-  -- We could, but it tends to be hard to put data before something else.
-  go lo (Map.toAscList allocated)
+availableAddrs lo hi alignment allocated = go lo (Map.toAscList allocated)
   where
     -- This function scans the list of already-allocated address ranges and puts
     -- together a list of pairs representing unallocated ranges.  The @addr@
@@ -318,34 +315,20 @@ availableAddrs lo hi alignment allocated =
         (_, 0) : rest ->
           -- In this case, we hit a zero-sized range.  Just skip it
           go addr rest
-        (allocatedStart, allocatedSize) : []
-          | allocatedStart >= hi ->
-            -- If the last region is beyond the high watermark, just throw it away
-            []
-          | otherwise ->
-            -- Otherwise, we have the last allocated region and want to make a
-            -- range between it and the high watermark
-            buildAlignedRange (allocatedStart + allocatedSize) hi
-        r1@(r1Base, r1Size) : r2 : rest ->
-          -- We have a pair of allocated regions: generate a free region between
-          -- them, as long as the alignment correction doesn't run it into the
-          -- next allocated region.
-          buildAlignedRangeBetween r1 r2 ++ go (r1Base + r1Size) (r2 : rest)
+        (allocatedStart, allocatedSize) : rest
+          -- If we reach a region beyond the high watermark, just throw the rest away
+          | allocatedStart >= hi -> []
+          | addr < allocatedStart ->
+            buildAlignedRange addr allocatedStart ++ go (allocatedStart + allocatedSize) rest
+          -- Should never happen, but just in case...
+          | otherwise -> go addr rest
 
-    buildAlignedRange base0 end
-      | base >= hi || end <= lo = []
-      | end == -1 = []
+    buildAlignedRange base0 end0
+      | base >= hi || end <= lo || base >= end = []
       | otherwise = [(base, end - base)]
       where
-        base = base0 + (alignment - (base0 `mod` alignment))
-
-    buildAlignedRangeBetween (r1Start, r1Size) (r2Start, _r2Size)
-      | base >= hi || end <= lo || base >= r2Start = []
-      | otherwise = [(base, end - base)]
-      where
-        base0 = r1Start + r1Size
-        base = base0 + (alignment - (base0 `mod` alignment))
-        end = r2Start - 1
+        base = (base0-1) + alignment - ((base0-1) `mod` alignment)
+        end = min end0 hi
 
 
 -- | Given an existing section, find the range of addresses where we could lay
@@ -472,7 +455,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   let (lo, hi) = withinJumpRange cfg textSection
       layoutChoiceFunction = case rcExtratextOffset cfg of
         0 -> selectLayoutAddr lo hi
-        n | n < 0 -> computeSizeOfLayoutAddr (E.elfSectionAddr textSection - fromIntegral n)
+        n | n < 0 -> computeSizeOfLayoutAddr (E.elfSectionAddr textSection + fromIntegral n)
           | otherwise -> computeSizeOfLayoutAddr (E.elfSectionAddr textSection + E.elfSectionSize textSection + fromIntegral n)
   (newTextAddr, newTextSize) <- withCurrentELF (layoutChoiceFunction (fromIntegral newTextAlign))
   riSegmentVirtualAddress L..= Just (fromIntegral newTextAddr)
