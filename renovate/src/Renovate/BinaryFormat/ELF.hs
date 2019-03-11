@@ -377,6 +377,10 @@ selectLayoutAddr lo hi alignment e = do
     available -> do
       return $ L.maximumBy (O.comparing snd) available
 
+-- | Find a region suitable for the requested layout address
+--
+-- Note that the caller cannot easily tell what address to request that actually respects alignment
+-- constraints, so this code aligns the address before looking for an allocation site.
 computeSizeOfLayoutAddr ::
   (E.ElfWidthConstraints w, MM.ArchAddrWidth arch ~ w) =>
   E.ElfWordType w ->
@@ -384,12 +388,13 @@ computeSizeOfLayoutAddr ::
   E.Elf w ->
   ElfRewriter lm arch (E.ElfWordType w, E.ElfWordType w)
 computeSizeOfLayoutAddr addr alignment e = do
+  let alignedAddr = alignValue addr alignment
   allocated <- allocatedVAddrsM e
-  case availableAddrs addr maxBound alignment allocated of
+  case availableAddrs alignedAddr maxBound alignment allocated of
     (result@(addr',_)):_
-      | addr == addr' -> return result
-      | addr' < addr + alignment -> fail $ "Requested layout address " ++ show addr ++ " not aligned to " ++ show alignment ++ "-byte boundary."
-    _ -> fail $ "Requested layout address " ++ show addr ++ " overlaps existing segments."
+      | alignedAddr == addr' -> return result
+      | addr' < alignedAddr + alignment -> fail $ "Requested layout address " ++ show alignedAddr ++ " not aligned to " ++ show alignment ++ "-byte boundary."
+    _ -> fail $ "Requested layout address " ++ show alignedAddr ++ " overlaps existing segments."
 
 -- | The rewriter driver
 --
