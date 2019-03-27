@@ -32,10 +32,11 @@ module Renovate.BinaryFormat.ELF.Rewriter (
   riIncompleteFunctions,
   riRedirectionDiagnostics,
   riBlockRecoveryDiagnostics,
-  riDiscoveredBytes,
+  riDiscoveredBlocks,
   riInstrumentedBytes,
   riBlockMapping,
-  riOutputBlocks
+  riOutputBlocks,
+  riFunctionBlocks,
   ) where
 
 import           GHC.Generics ( Generic )
@@ -202,8 +203,8 @@ riReusedByteCount = riStats . GL.field @"reusedByteCount"
 riUnrelocatableTerm :: L.Simple L.Lens (RewriterInfo lm arch) Int
 riUnrelocatableTerm = riStats . GL.field @"unrelocatableTerm"
 
-riDiscoveredBytes :: L.Simple L.Lens (RewriterInfo lm arch) Int
-riDiscoveredBytes = riStats . GL.field @"discoveredBytes"
+riDiscoveredBlocks :: L.Simple L.Lens (RewriterInfo lm arch) (M.Map (RA.ConcreteAddress arch) Int)
+riDiscoveredBlocks = riStats . GL.field @"discoveredBlocks"
 
 riInstrumentedBytes :: L.Simple L.Lens (RewriterInfo lm arch) Int
 riInstrumentedBytes = riStats . GL.field @"instrumentedBytes"
@@ -213,3 +214,6 @@ riBlockMapping = riStats . GL.field @"blockMapping"
 
 riOutputBlocks :: L.Simple L.Lens (RewriterInfo lm arch) (Maybe SomeBlocks)
 riOutputBlocks = GL.field @"_riOutputBlocks"
+
+riFunctionBlocks :: L.Simple L.Lens (RewriterInfo lm arch) (M.Map (RA.ConcreteAddress arch) [RA.ConcreteAddress arch])
+riFunctionBlocks = riStats . GL.field @"functionBlocks"

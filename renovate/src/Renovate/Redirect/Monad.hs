@@ -36,9 +36,10 @@ module Renovate.Redirect.Monad (
   recordIncompleteBlock,
   recordUnrelocatableSize,
   recordReusedBytes,
-  recordDiscoveredBytes,
+  recordDiscoveredBlock,
   recordInstrumentedBytes,
   recordBlockMap,
+  recordFunctionBlocks,
   ) where
 
 
@@ -47,6 +48,8 @@ import qualified Control.Monad.Except as ET
 import qualified Control.Monad.RWS.Strict as RWS
 import qualified Control.Monad.Trans as T
 import qualified Data.Functor.Identity as I
+import           Data.Map (Map)
+import qualified Data.Map as M
 import           Data.Monoid
 import qualified Data.Sequence as Seq
 import           GHC.Generics ( Generic )
@@ -92,12 +95,14 @@ data RewriterStats arch = RewriterStats
   -- ^ Count of bytes re-used by the compact layout strategy
   , incompleteBlocks      :: !Int
   -- ^ Count of blocks that are in incomplete functions
-  , discoveredBytes       :: !Int
-  -- ^ A count of the bytes in blocks found by the discovery process
+  , discoveredBlocks      :: !(Map (ConcreteAddress arch) Int)
+  -- ^ The addresses and byte counts of each block discovered
   , instrumentedBytes     :: !Int
   -- ^ A count of the bytes in blocks that were modified by the instrumentor
   , blockMapping          :: [(ConcreteAddress arch, ConcreteAddress arch)]
   -- ^ A mapping of original block addresses to the address they were redirected to
+  , functionBlocks        :: !(Map (ConcreteAddress arch) [ConcreteAddress arch])
+  -- ^ Keys are the addresses of function entry points; values are the addresses of all blocks contained in that function
   } deriving (Generic)
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (RewriterStats arch)
 
@@ -107,9 +112,10 @@ emptyRewriterStats = RewriterStats
   , smallBlockCount   = 0
   , reusedByteCount   = 0
   , incompleteBlocks  = 0
-  , discoveredBytes   = 0
+  , discoveredBlocks  = M.empty
   , instrumentedBytes = 0
   , blockMapping      = []
+  , functionBlocks    = M.empty
   }
 
 -- | Result data of 'RewriterT', the combination of state and writer results.
@@ -221,8 +227,11 @@ recordBlockMap m = onStats $ \s -> s { blockMapping = m }
 recordIncompleteBlock :: (Monad m) => RewriterT arch m ()
 recordIncompleteBlock = onStats $ \s -> s { incompleteBlocks = incompleteBlocks s + 1 }
 
-recordDiscoveredBytes :: Monad m => Int -> RewriterT arch m ()
-recordDiscoveredBytes nBytes = onStats $ \s -> s { discoveredBytes = discoveredBytes s + nBytes }
+recordDiscoveredBlock :: Monad m => ConcreteAddress arch -> Int -> RewriterT arch m ()
+recordDiscoveredBlock addr nBytes = onStats $ \s -> s { discoveredBlocks = M.insert addr nBytes (discoveredBlocks s) }
 
 recordInstrumentedBytes :: Monad m => Int -> RewriterT arch m ()
 recordInstrumentedBytes nBytes = onStats $ \s -> s { instrumentedBytes = instrumentedBytes s + nBytes }
+
+recordFunctionBlocks :: Monad m => Map (ConcreteAddress arch) [ConcreteAddress arch] -> RewriterT arch m ()
+recordFunctionBlocks m = onStats $ \s -> s { functionBlocks = m }

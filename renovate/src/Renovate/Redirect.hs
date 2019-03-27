@@ -37,7 +37,7 @@ import qualified Data.Macaw.CFG as MM
 import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
-import           Renovate.Recovery ( BlockInfo, isIncompleteBlockAddress, biOverlap )
+import           Renovate.Recovery ( BlockInfo, isIncompleteBlockAddress, biFunctions, biOverlap )
 import           Renovate.Recovery.Overlap ( disjoint )
 import           Renovate.Redirect.Concretize
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
@@ -84,7 +84,11 @@ redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch
          -> RM.RewriterT arch m ([ConcreteBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)])
 redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr baseSymBlocks = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
+  RM.recordFunctionBlocks (map basicBlockAddress . fst <$> biFunctions blockInfo)
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
+    let blockSize :: Int
+        blockSize = sum . map (fromIntegral . isaInstructionSize isa) . basicBlockInstructions $ cb
+    RM.recordDiscoveredBlock (basicBlockAddress cb) blockSize
     -- We only want to instrument blocks that:
     --
     -- 1. Live in the .text
@@ -100,9 +104,6 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
              , disjoint isa (biOverlap blockInfo) cb
              ] of
      True ->  do
-       let blockSize :: Int
-           blockSize = sum . map (fromIntegral . isaInstructionSize isa) . basicBlockInstructions $ cb
-       RM.recordDiscoveredBytes blockSize
        insns' <- lift $ instrumentor sb
        case insns' of
          Just insns'' -> RM.recordInstrumentedBytes blockSize

@@ -43,10 +43,11 @@ module Renovate.BinaryFormat.ELF (
   riIncompleteBlocks,
   riRedirectionDiagnostics,
   riBlockRecoveryDiagnostics,
-  riDiscoveredBytes,
+  riDiscoveredBlocks,
   riInstrumentedBytes,
   riBlockMapping,
-  riOutputBlocks
+  riOutputBlocks,
+  riFunctionBlocks,
   ) where
 
 import           Control.Applicative
