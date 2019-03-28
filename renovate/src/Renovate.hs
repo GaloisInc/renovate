@@ -108,6 +108,7 @@ module Renovate
   RW.RewriteSite(..),
   E.SomeBlocks(..),
   E.RewriterInfo,
+  E.SectionInfo(..),
   E.riSmallBlockCount,
   E.riReusedByteCount,
   E.riUnrelocatableTerm,
@@ -130,6 +131,7 @@ module Renovate
   E.riBlockMapping,
   E.riOutputBlocks,
   E.riFunctionBlocks,
+  E.riSections,
   D.Diagnostic(..),
   D.Diagnostics(..),
   -- * Constraints

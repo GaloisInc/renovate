@@ -37,6 +37,7 @@ module Renovate.BinaryFormat.ELF.Rewriter (
   riBlockMapping,
   riOutputBlocks,
   riFunctionBlocks,
+  riSections,
   ) where
 
 import           GHC.Generics ( Generic )
@@ -217,3 +218,6 @@ riOutputBlocks = GL.field @"_riOutputBlocks"
 
 riFunctionBlocks :: L.Simple L.Lens (RewriterInfo lm arch) (M.Map (RA.ConcreteAddress arch) [RA.ConcreteAddress arch])
 riFunctionBlocks = riStats . GL.field @"functionBlocks"
+
+riSections :: L.Simple L.Lens (RewriterInfo lm arch) (M.Map String (RM.SectionInfo arch))
+riSections = riStats . GL.field @"sections"

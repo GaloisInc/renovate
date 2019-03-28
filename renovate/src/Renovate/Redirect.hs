@@ -17,6 +17,7 @@ module Renovate.Redirect (
   RM.RewriterResult(..),
   RM.RewriterState(..),
   RM.RewriterStats(..),
+  RM.SectionInfo(..),
   RM.SymbolMap,
   RM.NewSymbolsMap,
   RM.emptyRewriterStats
@@ -84,6 +85,7 @@ redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch
          -> RM.RewriterT arch m ([ConcreteBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)])
 redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr baseSymBlocks = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
+  RM.recordSection "text" (RM.SectionInfo textStart textEnd)
   RM.recordFunctionBlocks (map basicBlockAddress . fst <$> biFunctions blockInfo)
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
     let blockSize :: Int

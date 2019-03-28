@@ -25,6 +25,7 @@ module Renovate.BinaryFormat.ELF (
   analyzeElf,
   RewriterInfo,
   SomeBlocks(..),
+  RE.SectionInfo(..),
   -- * Lenses
   riInitialBytes,
   riSmallBlockCount,
@@ -48,6 +49,7 @@ module Renovate.BinaryFormat.ELF (
   riBlockMapping,
   riOutputBlocks,
   riFunctionBlocks,
+  riSections,
   ) where
 
 import           Control.Applicative

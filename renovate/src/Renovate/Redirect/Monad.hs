@@ -21,6 +21,7 @@ module Renovate.Redirect.Monad (
   NewSymbolsMap,
   RewriterState(..),
   RewriterStats(..),
+  SectionInfo(..),
   Diagnostics,
   RewriterResult(..),
   runRewriterT,
@@ -40,6 +41,7 @@ module Renovate.Redirect.Monad (
   recordInstrumentedBytes,
   recordBlockMap,
   recordFunctionBlocks,
+  recordSection,
   ) where
 
 
@@ -85,6 +87,10 @@ data RewriterState arch = RewriterState
   }
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (RewriterState arch)
 
+data SectionInfo arch = SectionInfo { sectionStart, sectionEnd :: ConcreteAddress arch }
+  deriving (Eq, Ord)
+deriving instance MM.MemWidth (MM.ArchAddrWidth arch) => Show (SectionInfo arch)
+
 -- | Some statistics about a rewrite that it might be interesting to report to the user.
 data RewriterStats arch = RewriterStats
   { unrelocatableTerm     :: !Int
@@ -103,6 +109,8 @@ data RewriterStats arch = RewriterStats
   -- ^ A mapping of original block addresses to the address they were redirected to
   , functionBlocks        :: !(Map (ConcreteAddress arch) [ConcreteAddress arch])
   -- ^ Keys are the addresses of function entry points; values are the addresses of all blocks contained in that function
+  , sections              :: !(Map String (SectionInfo arch))
+  -- ^ Information about the sections we inspected or produced
   } deriving (Generic)
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (RewriterStats arch)
 
@@ -116,6 +124,7 @@ emptyRewriterStats = RewriterStats
   , instrumentedBytes = 0
   , blockMapping      = []
   , functionBlocks    = M.empty
+  , sections          = M.empty
   }
 
 -- | Result data of 'RewriterT', the combination of state and writer results.
@@ -235,3 +244,6 @@ recordInstrumentedBytes nBytes = onStats $ \s -> s { instrumentedBytes = instrum
 
 recordFunctionBlocks :: Monad m => Map (ConcreteAddress arch) [ConcreteAddress arch] -> RewriterT arch m ()
 recordFunctionBlocks m = onStats $ \s -> s { functionBlocks = m }
+
+recordSection :: Monad m => String -> SectionInfo arch -> RewriterT arch m ()
+recordSection name info = onStats $ \s -> s { sections = M.insert name info (sections s) }
