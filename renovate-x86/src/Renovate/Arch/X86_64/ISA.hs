@@ -18,6 +18,7 @@ import qualified Data.ByteString.Lazy.Builder as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Functor.Identity as I
 import           Data.Int ( Int32 )
+import           Data.List ( genericReplicate )
 import           Data.Maybe
 import           Data.Parameterized.Some
 import           Data.Parameterized.NatRepr
@@ -288,16 +289,16 @@ x64ModifyJumpTarget srcAddr (R.FallthroughInstruction insn@(XI ii) tag) = case t
                "What should it do in that case?\n" ++
                "Address: " ++ show srcAddr ++ "\nInstruction: " ++ show insn)
   R.FallthroughTag Nothing (Just fallthroughAddr) ->
-    Just [insn, jmpInstr "jmp" (x64Size insn) fallthroughAddr]
+    Just (insn : jmpOrNop insn fallthroughAddr)
   R.FallthroughTag (Just targetAddr) Nothing
     | 'j' : _ <- D.iiOp ii -> Just [extendDirectJump targetAddr]
     | otherwise -> Nothing
   R.FallthroughTag (Just targetAddr) (Just fallthroughAddr) -> case D.iiOp ii of
     "jmp" -> L.error "BUG! Unconditional jump given both a target and a fallthrough."
     'j':_ -> let insn' = extendDirectJump targetAddr in
-      Just [insn', jmpInstr "jmp" (x64Size insn') fallthroughAddr]
+      Just (insn' : jmpOrNop insn' fallthroughAddr)
     'c' : 'a' : 'l' : 'l' : _ -> let insn' = extendDirectJump targetAddr in
-      Just [insn', jmpInstr "jmp" (x64Size insn') fallthroughAddr]
+      Just (insn' : jmpOrNop insn' fallthroughAddr)
     _ -> Nothing
   where extendDirectJump targetAddr = case aoOperand <$> D.iiArgs ii of
           [(D.JumpOffset D.JSize32 _, _)] -> jmpInstr (D.iiOp ii) 0 targetAddr
@@ -329,6 +330,35 @@ x64ModifyJumpTarget srcAddr (R.FallthroughInstruction insn@(XI ii) tag) = case t
                      show (x64Size jmp))
           | otherwise = jmp
           where jmp = jmpInstrUnsafe opcode offset targetAddr
+
+        jmpOrNop prefix targetAddr
+          | targetAddr == R.addressAddOffset srcAddr (fromIntegral (prefixSize + jmpSize))
+            = x64Nops (fromIntegral jmpSize)
+          | otherwise = [jmp]
+          where
+          prefixSize = x64Size prefix
+          jmpSize = x64Size jmp
+          jmp = jmpInstrUnsafe "jmp" (x64Size prefix) targetAddr
+
+-- | Make @n@ bytes of no-ops. Prefer 'x64MakePadding' where possible; nop
+-- slides make ROP attacks easier.
+x64Nops :: Word64 -> [Instruction ()]
+x64Nops n
+  =  [nops !! fromIntegral (sizeOfLittleNop-1) | sizeOfLittleNop /= 0]
+  ++ genericReplicate bigNops (last nops)
+  where
+  (bigNops, sizeOfLittleNop) = quotRem n (fromIntegral (length nops))
+  nops = map fromFlexInst . fromJust . mapM (snd . D.tryDisassemble . B.pack) $
+    [ [0x90]
+    , [0x66,0x90]
+    , [0x0F,0x1F,0x00]
+    , [0x0F,0x1F,0x40,0x00]
+    , [0x0F,0x1F,0x44,0x00,0x00]
+    , [0x66,0x0F,0x1F,0x44,0x00,0x00]
+    , [0x0F,0x1F,0x80,0x00,0x00,0x00,0x00]
+    , [0x0F,0x1F,0x84,0x00,0x00,0x00,0x00,0x00]
+    , [0x66,0x0F,0x1F,0x84,0x00,0x00,0x00,0x00,0x00]
+    ]
 
 -- | Make @n@ bytes of @int 3@ instructions.  If executed, these
 -- generate an interrupt that drops the application into a debugger
