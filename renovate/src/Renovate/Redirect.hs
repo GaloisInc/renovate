@@ -3,8 +3,8 @@
 module Renovate.Redirect (
   redirect,
   LayoutStrategy(..),
-  LoopStrategy(..),
-  loopStrategy,
+  Grouping(..),
+  grouping,
   ConcreteBlock,
   SymbolicBlock,
   BasicBlock(..),
@@ -42,8 +42,8 @@ import           Renovate.Recovery ( BlockInfo, isIncompleteBlockAddress, biFunc
 import           Renovate.Recovery.Overlap ( disjoint )
 import           Renovate.Redirect.Concretize
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
-                                                      , LoopStrategy(..)
-                                                      , loopStrategy
+                                                      , Grouping(..)
+                                                      , grouping
                                                       , Status(..)
                                                       , Layout(..)
                                                       , ConcretePair(..)

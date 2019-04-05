@@ -4,8 +4,8 @@ module Renovate.Redirect.LayoutBlocks (
   Layout(..),
   layoutBlocks,
   LayoutStrategy(..),
-  LoopStrategy(..),
-  loopStrategy,
+  Grouping(..),
+  grouping,
   CompactOrdering(..)
   ) where
 
@@ -20,8 +20,8 @@ import           Renovate.Recovery ( SymbolicCFG )
 import           Renovate.Redirect.Monad
 import           Renovate.Redirect.LayoutBlocks.Compact ( Layout(..), compactLayout )
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
-                                                      , LoopStrategy(..)
-                                                      , loopStrategy
+                                                      , Grouping(..)
+                                                      , grouping
                                                       , CompactOrdering(..)
                                                       , SymbolicPair
                                                       , AddressAssignedPair )

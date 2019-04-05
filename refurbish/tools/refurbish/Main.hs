@@ -60,7 +60,7 @@ data Options = Options { oInput :: FilePath
                        , oRunREPL :: Bool
                        , oCompact :: Bool
                        , oLayoutRandom :: Bool
-                       , oPreserveLoops :: Bool
+                       , oGrouping :: R.Grouping
                        }
 
 optionsParser :: O.Parser Options
@@ -106,10 +106,21 @@ optionsParser = Options <$> O.strArgument (  O.metavar "FILE"
                         <*> O.switch ( O.long "layout-random"
                                      <> O.help "Randomize the compact layout. Has no effect on non compact layout. The default is to sort blocks deterministically in the compact layout strategy."
                                      )
-                        <*> O.switch ( O.long "keep-loops-together"
-                                     <> O.short 'k'
-                                     <> O.help "Group together blocks that form a loop, relocating the whole group as a single entity"
-                                     )
+                        <*> ( O.flag R.BlockGrouping R.LoopGrouping
+                                ( O.long "keep-loops-together"
+                               <> O.short 'k'
+                               <> O.help "Lay out blocks that are part of the same loop adjacent to each other"
+                                )
+                          <|> O.flag R.BlockGrouping R.FunctionGrouping
+                                ( O.long "keep-functions-together"
+                               <> O.help "Lay out blocks that are part of the same function adjacent to each other"
+                                )
+                            -- This next flag isn't really needed. It's only included for uniformity.
+                          <|> O.flag R.BlockGrouping R.BlockGrouping
+                                ( O.long "keep-blocks-together"
+                               <> O.help "Lay out instructions that are part of the same block adjacent to each other (DEFAULT)"
+                                )
+                            )
 
 main :: IO ()
 main = X.catches (O.execParser optParser >>= mainWithOptions) handlers
@@ -141,16 +152,15 @@ mainWithOptions o = do
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))
                 ]
-      loopStrategy = if oPreserveLoops o then R.KeepLoopBlocksTogether else R.IgnoreLoops
   layout <-
     if oCompact o
     then if oLayoutRandom o
          then do
            gen <- MWC.createSystemRandom
            seed <- MWC.fromSeed <$> MWC.save gen
-           return $ R.Compact (R.RandomOrder seed) loopStrategy
-         else return $ R.Compact R.SortedOrder loopStrategy
-    else return $ R.Parallel loopStrategy
+           return $ R.Compact (R.RandomOrder seed) (oGrouping o)
+         else return $ R.Compact R.SortedOrder (oGrouping o)
+    else return $ R.Parallel (oGrouping o)
 
   hdlAlloc <- C.newHandleAllocator
   case E.parseElf bytes of

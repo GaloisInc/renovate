@@ -8,6 +8,8 @@ module Renovate.Redirect.LayoutBlocks.Compact (
 
 import qualified GHC.Err.Located as L
 
+import           Control.Monad.State ( gets )
+
 import qualified Data.ByteString as BS
 import           Data.Maybe ( catMaybes )
 import           Data.Ord ( Down(..) )
@@ -65,41 +67,12 @@ compactLayout :: forall m t arch
               -> t (SymbolicAddress arch, BS.ByteString)
               -> M.Map (ConcreteAddress arch) (SymbolicCFG arch)
               -> RewriterT arch m (Layout AddressAssignedPair arch)
-compactLayout startAddr strat blocks injectedCode cfgs_ = do
+compactLayout startAddr strat blocks injectedCode cfgs = do
   h0 <- case strat of
     -- the parallel strategy is now a special case of compact. In particular,
     -- we avoid allocating the heap and we avoid sorting the input blocklist.
     Parallel _ -> return mempty
     _ -> buildAddressHeap startAddr blocks
-
-  -- Only materialize the CFGs if we absolutely have to.
-  let keepLoops :: Bool
-      keepLoops = loopStrategy strat == KeepLoopBlocksTogether
-  cfgs <- if keepLoops then traverse (liftIO . getSymbolicCFG) cfgs_ else return M.empty
-
-  -- We want to keep together blocks that are part of loops. Consequently we
-  -- want a way to map each block that's part of a loop to a canonical
-  -- representative block of that loop, and check properties of all the blocks
-  -- with the same canonical representative. First we build the mapping.
-  --
-  -- We won't rule out the possibility that some block is part of multiple
-  -- loops yet, though that seems pretty preposterous to me (dmwit) right now.
-  let repMap :: M.Map (ConcreteAddress arch) (ConcreteAddress arch)
-      repMap = cfgHeads cfgs
-
-  -- Which loops (as represented by their canonical block) contain blocks which
-  -- have been modified?
-      modifiedLoops :: S.Set (ConcreteAddress arch)
-      modifiedLoops = S.fromList . catMaybes $
-        [ M.lookup (basicBlockAddress (lpOrig b)) repMap
-        | SymbolicPair b <- F.toList blocks
-        , lpStatus b == Modified
-        ]
-
-      isPartOfModifiedLoop :: LayoutPair a arch -> Bool
-      isPartOfModifiedLoop b = case M.lookup (basicBlockAddress (lpOrig b)) repMap of
-        Just rep -> rep `S.member` modifiedLoops
-        Nothing -> False
 
   -- Augment all symbolic blocks such that fallthrough behavior is explicitly
   -- represented with symbolic unconditional jumps.
@@ -107,12 +80,13 @@ compactLayout startAddr strat blocks injectedCode cfgs_ = do
   -- We need this so that we can re-arrange them and preserve the fallthrough
   -- behavior of blocks ending in conditional jumps (or non-jumps).
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . lpOrig) (F.toList blocks)))))
-  mem     <- askMem
-  let (modifiedBlocks, unmodifiedBlocks_) = L.partition
-        (\(SymbolicPair b) -> lpStatus b == Modified || (keepLoops && isPartOfModifiedLoop b))
-        (F.toList blocks)
-      unmodifiedBlocks = map noFallthroughPair unmodifiedBlocks_
-  blocks' <- reifyFallthroughSuccessors mem modifiedBlocks blocks
+  blockChunks <- groupBlocks (grouping strat) cfgs blocks
+  let (modifiedBlockChunks, unmodifiedBlockChunks_) = L.partition
+        (any (\(SymbolicPair b) -> lpStatus b == Modified))
+        blockChunks
+      unmodifiedBlockChunks = map (map noFallthroughPair) unmodifiedBlockChunks_
+  mem <- askMem
+  blockChunks' <- reifyFallthroughSuccessors mem modifiedBlockChunks blocks
 
   -- Either, a) Sort all of the instrumented blocks by size
   --         b) Randomize the order of the blocks.
@@ -122,12 +96,8 @@ compactLayout startAddr strat blocks injectedCode cfgs_ = do
   -- the parallel layout as a special case of compact.
   isa <- askISA
 
-  let newBlocksList = F.toList ((lpNew . unFallthroughPair) <$> blocks')
-      newBlocksMap = groupByRep repMap blocks'
-      newBlocks | keepLoops = M.elems newBlocksMap
-                | otherwise = map (:[]) newBlocksList
-
-  let sortedBlocks = case strat of
+  let newBlocks = map (map (lpNew . unFallthroughPair)) blockChunks'
+      sortedBlocks = case strat of
         Compact SortedOrder        _ -> L.sortOn    (bySize isa mem) newBlocks
         Compact (RandomOrder seed) _ -> randomOrder seed             newBlocks
         Parallel                   _ -> newBlocks
@@ -159,7 +129,9 @@ compactLayout startAddr strat blocks injectedCode cfgs_ = do
   -- Note that we are assigning addresses to blocks', which has augmented the
   -- symbolic blocks with additional jumps to preserve fallthrough behavior.
   -- That is critical.
-  assignedPairs <- T.traverse (assignConcreteAddress symBlockAddrs) (F.toList blocks' ++ unmodifiedBlocks)
+  assignedPairs <- T.traverse
+    (assignConcreteAddress symBlockAddrs)
+    (concat (blockChunks' ++ unmodifiedBlockChunks))
 
   return Layout { programBlockLayout = assignedPairs
                 , layoutPaddingBlocks = paddingBlocks
@@ -167,6 +139,28 @@ compactLayout startAddr strat blocks injectedCode cfgs_ = do
                 }
   where
     bySize isa mem = Down . sum . map (symbolicBlockSize isa mem startAddr)
+
+-- | Group together blocks into chunks which the allocator will keep together
+-- when computing the layout.
+groupBlocks :: forall arch f m. (MM.MemWidth (MM.ArchAddrWidth arch), F.Foldable f, MonadIO m) =>
+  Grouping ->
+  M.Map (ConcreteAddress arch) (SymbolicCFG arch) ->
+  f (SymbolicPair arch) ->
+  RewriterT arch m [[SymbolicPair arch]]
+groupBlocks BlockGrouping _cfgs blocks = return (foldMap (\block -> [[block]]) blocks)
+groupBlocks LoopGrouping cfgs_ blocks = do
+  cfgs <- traverse (liftIO . getSymbolicCFG) cfgs_
+  -- We want to keep together blocks that are part of loops. Consequently we
+  -- want a way to map each block that's part of a loop to a canonical
+  -- representative block of that loop, and check properties of all the blocks
+  -- with the same canonical representative. First we build the mapping.
+  --
+  -- We won't rule out the possibility that some block is part of multiple
+  -- loops yet, though that seems pretty preposterous to me (dmwit) right now.
+  return . M.elems . groupByRep (cfgHeads cfgs) $ blocks
+groupBlocks FunctionGrouping _cfgs blocks = do
+  functions <- gets (functionBlocks . rwsStats)
+  return . M.elems . groupByRep (functionHeads functions) $ blocks
 
 -- | Lift a 'SymbolicPair' to a 'FallthroughPair' by marking each instruction
 -- with 'noFallthrough' -- that is, as not a conditional jump. This is safe if
@@ -193,17 +187,26 @@ noFallthroughPair (SymbolicPair lp) = FallthroughPair lp
 groupByRep ::
   Foldable t =>
   M.Map (ConcreteAddress arch) (ConcreteAddress arch) ->
-  t (FallthroughPair arch) ->
-  M.Map (ConcreteAddress arch) [FallthroughBlock arch]
-groupByRep repMap blocks = id
-  . map lpNew
-  . L.sortOn (basicBlockAddress . lpOrig)
+  t (SymbolicPair arch) ->
+  M.Map (ConcreteAddress arch) [SymbolicPair arch]
+groupByRep repMap blocks = L.sortOn origAddr
   <$> M.fromListWith (++)
       [ (rep, [b])
-      | FallthroughPair b <- F.toList blocks
-      , let addr = basicBlockAddress (lpOrig b)
+      | b <- F.toList blocks
+      , let addr = origAddr b
             rep = M.findWithDefault addr addr repMap
       ]
+  where
+  origAddr = basicBlockAddress . lpOrig . unSymbolicPair
+
+functionHeads :: forall arch.
+  MM.MemWidth (MM.ArchAddrWidth arch) =>
+  M.Map (ConcreteAddress arch) [ConcreteAddress arch] ->
+  M.Map (ConcreteAddress arch) (ConcreteAddress arch)
+functionHeads functions = runST $ do
+  rel <- discrete
+  M.traverseWithKey (F.traverse_ . equate rel) functions
+  freeze rel
 
 cfgHeads :: forall arch pairs.
   ( pairs ~ [(ConcreteAddress arch, ConcreteAddress arch)]
@@ -373,17 +376,19 @@ allocateBlockGroupAddresses itemSize itemKey itemVal (newTextAddr, h, m) items =
 -- unconditional jumps).
 --
 -- A block has fallthrough behavior if it does not end in an unconditional jump.
-reifyFallthroughSuccessors :: (Traversable t, Monad m, MM.MemWidth (MM.ArchAddrWidth arch), Traversable t')
+reifyFallthroughSuccessors :: ( Traversable t, Traversable t', Traversable t''
+                              , Monad m, MM.MemWidth (MM.ArchAddrWidth arch)
+                              )
                            => MM.Memory (MM.ArchAddrWidth arch)
-                           -> t (SymbolicPair arch)
+                           -> t (t' (SymbolicPair arch))
                            -- ^ The modified blocks
-                           -> t' (SymbolicPair arch)
+                           -> t'' (SymbolicPair arch)
                            -- ^ All blocks (which we need to compute the fallthrough address index)
-                           -> RewriterT arch m (t (FallthroughPair arch))
+                           -> RewriterT arch m (t (t' (FallthroughPair arch)))
 reifyFallthroughSuccessors mem modifiedBlocks allBlocks = do
   isa <- askISA
   let symSuccIdx = LBSM.successorMap isa allBlocks
-  T.traverse (addExplicitFallthrough mem symSuccIdx) modifiedBlocks
+  T.traverse (T.traverse (addExplicitFallthrough mem symSuccIdx)) modifiedBlocks
 
 addExplicitFallthrough :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
                        => MM.Memory (MM.ArchAddrWidth arch)

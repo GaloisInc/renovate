@@ -6,8 +6,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Renovate.Redirect.LayoutBlocks.Types (
   LayoutStrategy(..),
-  LoopStrategy(..),
-  loopStrategy,
+  Grouping(..),
+  grouping,
   CompactOrdering(..),
   LayoutPair(..),
   SymbolicPair(..),
@@ -29,13 +29,13 @@ import           Renovate.BasicBlock
 
 -- | A type for selecting the strategy for laying out basic blocks in rewritten
 -- binaries.
-data LayoutStrategy = Parallel LoopStrategy
+data LayoutStrategy = Parallel Grouping
                      -- ^ Lay instrumented blocks out in parallel with the
                      -- original basic blocks.  The excess space in the original
                      -- blocks will be filled with trap instructions.
                      -- Instrumented blocks will all be placed in a new text
                      -- section.
-                     | Compact CompactOrdering LoopStrategy
+                     | Compact CompactOrdering Grouping
                      -- ^ Lay blocks out more compactly by re-using space in
                      -- original basic blocks to hold instrumented code.
                      -- Instrumented blocks that cannot fit in existing slack
@@ -44,12 +44,12 @@ data LayoutStrategy = Parallel LoopStrategy
                      -- Also takes an ordering, sorted or randomized.
                     deriving (Eq, Ord, Read, Show)
 
-data LoopStrategy = KeepLoopBlocksTogether | IgnoreLoops
+data Grouping = BlockGrouping | LoopGrouping | FunctionGrouping
   deriving (Bounded, Enum, Eq, Ord, Read, Show)
 
-loopStrategy :: LayoutStrategy -> LoopStrategy
-loopStrategy (Parallel s) = s
-loopStrategy (Compact _ s) = s
+grouping :: LayoutStrategy -> Grouping
+grouping (Parallel s) = s
+grouping (Compact _ s) = s
 
 -- | Directly use the same seed type as the mwc-random package.
 type RandomSeed = V.Vector Word32
