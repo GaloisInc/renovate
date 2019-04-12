@@ -199,10 +199,10 @@ data REPLInfo =
   REPLInfo { rewriterInfo :: Some (R.RewriterInfo ())
            , discoveredIndex :: Maybe SomeBlockIndex
            , outputIndex :: Maybe SomeBlockIndex
-           , blockMapping :: Some BlockMapping
+           , blockMapping :: BlockMapping
            }
 
-newtype BlockMapping arch =
+data BlockMapping = forall arch. MM.MemWidth (MM.ArchAddrWidth arch) =>
   BlockMapping (M.Map (R.ConcreteAddress arch) (R.ConcreteAddress arch))
 
 data SomeBlockIndex =
@@ -211,7 +211,7 @@ data SomeBlockIndex =
                  , _blockISA :: R.ISA arch
                  }
 
-runREPL :: R.RewriterInfo () arch -> IO ()
+runREPL :: MM.MemWidth (MM.ArchAddrWidth arch) => R.RewriterInfo () arch -> IO ()
 runREPL ri = H.runInputT settings' (repl hdlrs)
   where
     ws = [' ', '\t']
@@ -228,7 +228,7 @@ runREPL ri = H.runInputT settings' (repl hdlrs)
                       case ri ^. R.riOutputBlocks of
                         Nothing -> Nothing
                         Just (R.SomeBlocks isa bs) -> Just (SomeBlockIndex (indexBlocks isa bs) isa)
-                    , blockMapping = Some (BlockMapping (M.fromList (ri ^. R.riBlockMapping)))
+                    , blockMapping = BlockMapping (M.fromList (ri ^. R.riBlockMapping))
                     }
 
 data CommandHandler =
@@ -372,7 +372,7 @@ tryOutputAddress ri addr = do
       let caddr = R.concreteFromAbsolute (fromIntegral addr)
       case IM.elems (IM.containing idx caddr) of
         [] -> Nothing
-        bs -> Just (replOutputBlockInfo ri isa addr caddr bs)
+        bs -> Just (replOutputBlockInfo isa caddr bs)
 
 plurality :: [a] -> String
 plurality ls =
@@ -390,11 +390,9 @@ replOriginalBlockInfo :: (R.InstructionConstraints arch)
 replOriginalBlockInfo ri isa waddr addr bs = do
   H.outputStrLn ("The instruction at " +|| PD.pretty addr ||+ " was in the original text section in block" +| plurality bs |+ ":")
   F.forM_ bs (printOutputBlock H.outputStr isa)
-{-
-  case outputIndex ri of
-    Nothing -> H.outputStrLn "There are no output blocks"
-    Just (SomeBlockIndex idx isa') -> do
-      let Some (BlockMapping bm) = blockMapping ri
+  case (outputIndex ri, blockMapping ri) of
+    (Nothing, _) -> H.outputStrLn "There are no output blocks"
+    (Just (SomeBlockIndex idx isa'), BlockMapping bm) -> do
       let caddr' = R.concreteFromAbsolute (fromIntegral waddr)
       case M.lookup caddr' bm of
         Nothing ->
@@ -404,16 +402,13 @@ replOriginalBlockInfo ri isa waddr addr bs = do
           let obs = IM.elems (IM.containing idx outBlockAddr')
           H.outputStrLn ("It occurs in the following output block" +| plurality obs |+ "")
           F.forM_ obs (printOutputBlock H.outputStr isa')
--}
 
 replOutputBlockInfo :: (R.InstructionConstraints arch)
-                    => REPLInfo
-                    -> R.ISA arch
-                    -> Word64
+                    => R.ISA arch
                     -> R.ConcreteAddress arch
                     -> [R.ConcreteBlock arch]
                     -> H.InputT IO ()
-replOutputBlockInfo ri isa waddr addr bs = do
+replOutputBlockInfo isa addr bs = do
   H.outputStrLn ("The instruction at " +|| PD.pretty addr ||+ " is in a block added by the rewriter")
   F.forM_ bs (printOutputBlock H.outputStr isa)
 

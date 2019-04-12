@@ -11,7 +11,6 @@ import qualified GHC.Err.Located as L
 import           Control.Monad.State ( gets )
 
 import qualified Data.ByteString as BS
-import           Data.Maybe ( catMaybes )
 import           Data.Ord ( Down(..) )
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
@@ -24,7 +23,6 @@ import qualified Data.Functor.Compose as C
 import qualified Data.Heap as H
 import qualified Data.List as L
 import qualified Data.Map.Strict as M
-import qualified Data.Set as S
 import           Data.STRef
 import qualified Data.Traversable as T
 import qualified Data.UnionFind.ST as UF
@@ -205,8 +203,10 @@ functionHeads :: forall arch.
   M.Map (ConcreteAddress arch) (ConcreteAddress arch)
 functionHeads functions = runST $ do
   rel <- discrete
-  M.traverseWithKey (F.traverse_ . equate rel) functions
+  _ <- M.traverseMaybeWithKey (go rel) functions
   freeze rel
+  where
+  go rel entryPoint blocks = Nothing <$ F.traverse_ (equate rel entryPoint) blocks
 
 cfgHeads :: forall arch pairs.
   ( pairs ~ [(ConcreteAddress arch, ConcreteAddress arch)]
