@@ -123,7 +123,7 @@ computeRewrittenJumpSize ::
 computeRewrittenJumpSize isa mem origAddr addr ftJmp = case rewrittenSize of
   Just size -> size
   Nothing ->
-      error ("computeRewrittenJumpSize: Jump cannot be modified: " ++ isaPrettyInstruction isa jmp ++ " at " ++ show addr ++ " at original address " ++ show origAddr)
+      error ("computeRewrittenJumpSize: Jump cannot be modified: " ++ isaPrettyInstruction isa jmp ++ " at " ++ show addr ++ " at original address " ++ show origAddr ++ " with new target " ++ show (ftTag ftJmp))
   where
     instrSize = fromIntegral . isaInstructionSize isa
     jmp = isaConcretizeAddresses isa mem addr (ftInstruction ftJmp)
