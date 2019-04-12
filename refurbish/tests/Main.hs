@@ -59,10 +59,12 @@ main = do
   hdlAlloc <- C.newHandleAllocator
   let injection = [ ("tests/injection-base/injection-base.ppc64.exe", "tests/injection-base/ppc64-exit.bin")]
   T.defaultMain $ T.testGroup "RefurbishTests" [
-    rewritingTests mRunner hdlAlloc (R.Parallel R.IgnoreLoops) exes,
-    rewritingTests mRunner hdlAlloc (R.Compact R.SortedOrder R.IgnoreLoops) exes,
-    codeInjectionTests mRunner hdlAlloc (R.Parallel R.IgnoreLoops) injection,
-    codeInjectionTests mRunner hdlAlloc (R.Compact R.SortedOrder R.IgnoreLoops) injection
+    rewritingTests mRunner hdlAlloc (R.Parallel R.BlockGrouping) exes,
+    rewritingTests mRunner hdlAlloc (R.Compact R.SortedOrder R.BlockGrouping) exes,
+    rewritingTests mRunner hdlAlloc (R.Compact R.SortedOrder R.LoopGrouping) exes,
+    rewritingTests mRunner hdlAlloc (R.Compact R.SortedOrder R.FunctionGrouping) exes,
+    codeInjectionTests mRunner hdlAlloc (R.Parallel R.BlockGrouping) injection,
+    codeInjectionTests mRunner hdlAlloc (R.Compact R.SortedOrder R.BlockGrouping) injection
     ]
 
 -- | Generate a set of tests for the code injection API
