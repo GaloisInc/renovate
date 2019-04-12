@@ -24,6 +24,7 @@ import qualified Data.Map as M
 import           Data.Maybe ( fromMaybe )
 import           Data.Monoid ((<>))
 import           Data.Parameterized.Some ( Some(..) )
+import qualified Data.Set as S
 import qualified Data.Text.IO as T
 import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Word ( Word64 )
@@ -61,6 +62,7 @@ data Options = Options { oInput :: FilePath
                        , oCompact :: Bool
                        , oLayoutRandom :: Bool
                        , oGrouping :: R.Grouping
+                       , oBlocksToSkip :: [Word64]
                        }
 
 optionsParser :: O.Parser Options
@@ -121,6 +123,11 @@ optionsParser = Options <$> O.strArgument (  O.metavar "FILE"
                                <> O.help "Lay out instructions that are part of the same block adjacent to each other (DEFAULT)"
                                 )
                             )
+                        <*> O.many (O.option O.auto (  O.long "skip-rewriting"
+                                                    <> O.metavar "ADDRESS"
+                                                    <> O.help "Do not rewrite the block at the given address (not even the identity rewrite)"
+                                                    )
+                                   )
 
 main :: IO ()
 main = X.catches (O.execParser optParser >>= mainWithOptions) handlers
@@ -148,9 +155,9 @@ mainWithOptions :: Options -> IO ()
 mainWithOptions o = do
   bytes <- BS.readFile (oInput o)
   let configs :: [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite ()) (Const ()))]
-      configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analysis))
-                , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
-                , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))
+      configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 (analysis o)))
+                , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 (analysis o)))
+                , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config (analysis o)))
                 ]
   layout <-
     if oCompact o
@@ -462,13 +469,18 @@ withHandleWhen mf k =
       | fn == "-" -> k IO.stdout
       | otherwise -> IO.withFile fn IO.WriteMode k
 
-analysis :: R.AnalyzeAndRewrite () arch binFmt (Const ())
-analysis =
+analysis :: MM.MemWidth (MM.ArchAddrWidth arch) => Options -> R.AnalyzeAndRewrite () arch binFmt (Const ())
+analysis opts =
   R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
                       , R.arAnalyze = \_ _ -> return (Const ())
                       , R.arPreRewrite = \_ _ -> return (Const ())
-                      , R.arRewrite = \_ _ _ b -> return (Just (R.basicBlockInstructions b))
+                      , R.arRewrite = \_ _ _ b -> return
+                        $ if R.concreteAddress (R.basicBlockAddress b) `S.member` addrs
+                          then Nothing
+                          else Just (R.basicBlockInstructions b)
                       }
+  where
+  addrs = S.fromList (map (R.concreteFromAbsolute . MM.memWord) (oBlocksToSkip opts))
 
 -- | Format a 'R.ConcreteBlock' to the given 'IO.Handle'
 printOutputBlock :: (Monad m, R.InstructionConstraints arch)
