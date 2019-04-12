@@ -395,7 +395,7 @@ addExplicitFallthrough :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
                        -> LBSM.SuccessorMap arch
                        -> SymbolicPair arch
                        -> RewriterT arch m (FallthroughPair arch)
-addExplicitFallthrough mem symSucIdx (SymbolicPair (LayoutPair cb sb Modified)) = do
+addExplicitFallthrough mem symSucIdx (SymbolicPair (LayoutPair cb sb _)) = do
   isa <- askISA
   -- We pass in a fake relative address since we don't need the resolution of
   -- relative jumps.  We just need the type of jump.
@@ -428,8 +428,6 @@ addExplicitFallthrough mem symSucIdx (SymbolicPair (LayoutPair cb sb Modified)) 
                                                            (show (basicBlockAddress sb))
                                                            (show (basicBlockAddress cb)))
       | otherwise = projectInstruction $ last (basicBlockInstructions sb)
-addExplicitFallthrough _ _ (SymbolicPair (LayoutPair cb sb Unmodified)) =
-  return (FallthroughPair (LayoutPair cb (lastInstructionFallthrough noFallthrough sb) Unmodified))
 
 lastInstructionFallthrough ::
   (TaggedInstruction arch (InstructionAnnotation arch) -> SymbolicFallthrough arch (InstructionAnnotation arch)) ->
