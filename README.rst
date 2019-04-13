@@ -5,7 +5,7 @@ This library implements a static binary rewriter.
 
 Static binary rewriting is a capability that allows a user to add (or remove) code to a binary without executing it (i.e., as opposed to a dynamic binary rewriter like Intel's PIN tool or valgrind).  The API presented operates at the level of *basic blocks*, which are sequences of straightline code with no branches into the middle.
 
-The core of the binary rewriter is architecture-independent; each supported architecture requires a small amount of architecture-specific code.  The renovate library exposes two primary APIs right now: ``analyzeElf`` and ``rewriteElf`` to perform architecture-independent program analysis and rewriting, respectively.  In rewriting mode, the results of a pre-rewriting analysis pass are fed to the rewriter, allowing rewriting to be driven by sophisticated analysis.
+The core of the binary rewriter is architecture-independent; each supported architecture requires a small amount of architecture-specific code.  The renovate library exposes two primary APIs right now: ``analyzeElf`` and ``rewriteElf`` to perform architecture-independent program analysis and rewriting, respectively.  In rewriting mode, the results of a pre-rewriting analysis pass are fed to the rewriter, allowing rewriting to be driven by sophisticated analysis.  There are some usage examples in the ``Refurbish.Tutorial`` module, as well as the command line ``refurbish`` tool itself.
 
 Currently, statically-linked ELF binaries for the x86_64 and PowerPC architectures are supported.
 
@@ -22,6 +22,8 @@ The library is divided into three components:
 * ``renovate`` implements the core binary rewriting functionality.
 * ``renovate-ppc`` implements the PowerPC-specific backend.
 * ``renovate-x86`` implements the x86_64-specific backend.
+
+There is also another package named ``refurbish``, which provides some useful utilities built on top of ``renovate``, including a command line executable to demonstrate some simple binary rewriting patterns.
 
 Building
 --------
@@ -40,7 +42,7 @@ This code is intended to be imported qualified::
 
   import qualified Renovate as R
 
-The architecture-specific backends each expose *configurations*  that can be passed to ``analyzeElf`` and ``rewriteElf``.
+The architecture-specific backends each expose *configurations*  that can be passed to ``analyzeElf`` and ``rewriteElf``.  There is a tutorial in the module ``Refurbish.Tutorial``.
 
 Status
 ======
