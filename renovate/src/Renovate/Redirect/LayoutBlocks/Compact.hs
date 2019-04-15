@@ -66,12 +66,6 @@ compactLayout :: forall m t arch
               -> M.Map (ConcreteAddress arch) (SymbolicCFG arch)
               -> RewriterT arch m (Layout AddressAssignedPair arch)
 compactLayout startAddr strat blocks injectedCode cfgs = do
-  h0 <- case strat of
-    -- the parallel strategy is now a special case of compact. In particular,
-    -- we avoid allocating the heap and we avoid sorting the input blocklist.
-    Parallel _ -> return mempty
-    _ -> buildAddressHeap startAddr blocks
-
   -- Augment all symbolic blocks such that fallthrough behavior is explicitly
   -- represented with symbolic unconditional jumps.
   --
@@ -85,6 +79,18 @@ compactLayout startAddr strat blocks injectedCode cfgs = do
       unmodifiedBlockChunks = map (map noFallthroughPair) unmodifiedBlockChunks_
   mem <- askMem
   blockChunks' <- reifyFallthroughSuccessors mem modifiedBlockChunks blocks
+
+  h0 <- case strat of
+    -- the parallel strategy is now a special case of compact. In particular,
+    -- we avoid allocating the heap and we avoid sorting the input blocklist.
+    Parallel _ -> return mempty
+    -- We use blockChunks' (instead of blockChunks or modifiedBlockChunks)
+    -- because buildAddressHeap checks the modification status, and
+    -- reifyFallthroughSuccessors updates the modification status if it adds a
+    -- fallthrough to an unmodified block. (It is okay not to additionally pass
+    -- in the unmodified blocks because buildAddressHeap ignores unmodified
+    -- blocks anyway.)
+    _ -> buildAddressHeap startAddr (concat blockChunks')
 
   -- Either, a) Sort all of the instrumented blocks by size
   --         b) Randomize the order of the blocks.
@@ -112,7 +118,7 @@ compactLayout startAddr strat blocks injectedCode cfgs = do
   h2 <- case strat of
     -- In the parallel layout, we don't use any space reclaimed by redirecting
     -- things, so we should overwrite it all with padding.
-    Parallel{} -> buildAddressHeap startAddr blocks
+    Parallel{} -> buildAddressHeap startAddr (concat blockChunks')
     _ -> return h1
 
   let paddingBlocks :: [ConcreteBlock arch]
@@ -439,7 +445,7 @@ lastInstructionFallthrough fallthrough sb = sb { basicBlockInstructions = insns 
 
 buildAddressHeap :: (MM.MemWidth (MM.ArchAddrWidth arch), Foldable t, Monad m)
                  => ConcreteAddress arch
-                 -> t (SymbolicPair arch)
+                 -> t (FallthroughPair arch)
                  -> RewriterT arch m (AddressHeap arch)
 buildAddressHeap startAddr blocks = do
   isa <- askISA
@@ -459,9 +465,9 @@ addOriginalBlock :: (MM.MemWidth (MM.ArchAddrWidth arch))
                  => ISA arch
                  -> Word64
                  -> AddressHeap arch
-                 -> SymbolicPair arch
+                 -> FallthroughPair arch
                  -> AddressHeap arch
-addOriginalBlock isa jumpSize h (SymbolicPair (LayoutPair cb _ status))
+addOriginalBlock isa jumpSize h (FallthroughPair (LayoutPair cb _ status))
   | bsize > jumpSize && status == Modified =
     H.insert (H.Entry (Down spaceSize) addr) h
   | otherwise = h
