@@ -4,7 +4,7 @@
 name:                refurbish
 version:             0.1.0.0
 synopsis:            A tester for the renovate binary rewriter
--- description:
+description:         Refurbish is a tool used to exercise and demonstrate the renovate binary rewriter.
 license:             BSD3
 license-file:        LICENSE
 author:              Tristan Ravitch
