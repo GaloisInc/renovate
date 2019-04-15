@@ -44,7 +44,18 @@ data LayoutStrategy = Parallel Grouping
                      -- Also takes an ordering, sorted or randomized.
                     deriving (Eq, Ord, Read, Show)
 
-data Grouping = BlockGrouping | LoopGrouping | FunctionGrouping
+-- | Specifies the layout grouping for instrumented blocks.
+data Grouping =
+  BlockGrouping
+    -- ^ place instructions that are part of the same block adjacent
+    -- to each other, but do not attempt to order or group the blocks
+    -- themselves in any fashion.
+  | LoopGrouping
+    -- ^ place blocks that are part of the same loop adjacent to each
+    -- other
+  | FunctionGrouping
+    -- ^ place blocks that are part of the same function adjacent to
+    -- each other.
   deriving (Bounded, Enum, Eq, Ord, Read, Show)
 
 grouping :: LayoutStrategy -> Grouping
