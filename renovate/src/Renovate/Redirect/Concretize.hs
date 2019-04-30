@@ -134,8 +134,8 @@ concretizeJumps concreteAddressMap (AddressAssignedPair (LayoutPair cb (AddressA
                , basicBlockInstructions = concretizedInstrs ++ isaMakePadding isa (maxSize - concretizedSize)
                }
   return (ConcretePair (LayoutPair cb sb' Modified))
-concretizeJumps _concreteAddressMap (AddressAssignedPair (LayoutPair cb _ Unmodified)) =
-  return (ConcretePair (LayoutPair cb cb Unmodified))
+concretizeJumps _concreteAddressMap (AddressAssignedPair (LayoutPair cb _ notModifiedStatus)) =
+  return (ConcretePair (LayoutPair cb cb notModifiedStatus))
 
 mapJumpAddressDriver ::
   forall m arch.

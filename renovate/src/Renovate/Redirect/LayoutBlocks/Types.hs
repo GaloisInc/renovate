@@ -131,6 +131,12 @@ ppInsnLists xs ys = go xs ys
 data Status
   = Modified
   | Unmodified
+  -- ^ This code hasn't been modified yet, but is eligible to be in the future
+  -- if it turns out to be useful.
+  | Immutable
+  -- ^ This code shouldn't be modified by anyone, e.g. because it has control
+  -- flow constructs we don't fully understand or isn't in the text section or
+  -- similar.
   deriving (Eq, Ord, Read, Show)
 
 newtype SymbolicPair         arch = SymbolicPair { unSymbolicPair :: LayoutPair (SymbolicBlock arch) arch }

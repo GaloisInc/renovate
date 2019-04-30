@@ -116,7 +116,7 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
          RM.recordUnrelocatableTermBlock
        when (isIncompleteBlockAddress blockInfo (basicBlockAddress cb)) $ do
          RM.recordIncompleteBlock
-       return (SymbolicPair (LayoutPair cb sb Unmodified))
+       return (SymbolicPair (LayoutPair cb sb Immutable))
   injectedCode <- lift getInjectedFunctions
   layout <- concretize strat layoutAddr transformedBlocks injectedCode blockInfo
   let concretizedBlocks = programBlockLayout layout
@@ -128,7 +128,7 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
   return (sortedBlocks, injectedBlocks)
   where
     unPair (ConcretePair (LayoutPair cb sb Modified))   = [cb, sb]
-    unPair (ConcretePair (LayoutPair cb _  Unmodified)) = [cb]
+    unPair (ConcretePair (LayoutPair cb _  _))          = [cb]
 
 toBlockMapping :: [ConcretePair arch] -> [(ConcreteAddress arch, ConcreteAddress arch)]
 toBlockMapping ps =

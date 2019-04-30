@@ -56,4 +56,4 @@ redirectBlock input@(ConcretePair (LayoutPair origBlock instrBlock Modified)) = 
     False -> do
       let origBlock' = origBlock { basicBlockInstructions = jmpInsns }
       return (ConcretePair (LayoutPair origBlock' instrBlock Modified))
-redirectBlock unmodified@(ConcretePair (LayoutPair _ _ Unmodified)) = return unmodified
+redirectBlock unmodified = return unmodified

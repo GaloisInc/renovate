@@ -11,6 +11,7 @@ import qualified GHC.Err.Located as L
 import           Control.Monad.State ( gets )
 
 import qualified Data.ByteString as BS
+import           Data.Monoid ( Any(Any) )
 import           Data.Ord ( Down(..) )
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
@@ -73,10 +74,8 @@ compactLayout startAddr strat blocks injectedCode cfgs = do
   -- behavior of blocks ending in conditional jumps (or non-jumps).
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . lpOrig) (F.toList blocks)))))
   blockChunks <- groupBlocks (grouping strat) cfgs blocks
-  let (modifiedBlockChunks, unmodifiedBlockChunks_) = L.partition
-        (any (\(SymbolicPair b) -> lpStatus b == Modified))
-        blockChunks
-      unmodifiedBlockChunks = map (map noFallthroughPair) unmodifiedBlockChunks_
+  let (modifiedBlockChunks, unmodifiedBlocks_) = foldMap splitChunk blockChunks
+      unmodifiedBlocks = map noFallthroughPair unmodifiedBlocks_
   mem <- askMem
   blockChunks' <- reifyFallthroughSuccessors mem modifiedBlockChunks blocks
 
@@ -135,7 +134,7 @@ compactLayout startAddr strat blocks injectedCode cfgs = do
   -- That is critical.
   assignedPairs <- T.traverse
     (assignConcreteAddress symBlockAddrs)
-    (concat (blockChunks' ++ unmodifiedBlockChunks))
+    (unmodifiedBlocks ++ concat blockChunks')
 
   return Layout { programBlockLayout = assignedPairs
                 , layoutPaddingBlocks = paddingBlocks
@@ -176,6 +175,24 @@ noFallthroughPair (SymbolicPair lp) = FallthroughPair lp
     { basicBlockInstructions = map noFallthrough (basicBlockInstructions (lpNew lp))
     }
   }
+
+-- | Some grouping strategies may ask modified and immutable blocks to be
+-- "chunked up" and relocated together. We can't honor that request, but we'll
+-- come as close as we can by splitting off the immutable blocks, but
+-- relocating any modifiable blocks together.
+--
+-- So given a collection of blocks, this gives back 0 or 1 chunks of blocks
+-- that should be treated as modified, and a collection of blocks that can be
+-- treated as unmodified.
+splitChunk :: [SymbolicPair arch] -> ([[SymbolicPair arch]], [SymbolicPair arch])
+splitChunk pairs = case foldMap summarize pairs of
+  (immutable, modifiable, Any True) -> ([modifiable], immutable)
+  (_, _, Any False) -> ([], pairs)
+  where
+  summarize pair = case lpStatus (unSymbolicPair pair) of
+    Modified   -> ([], [pair], Any True)
+    Unmodified -> ([], [pair], Any False)
+    Immutable  -> ([pair], [], Any False)
 
 -- | Group together blocks that are part of a loop. The arguments are a map
 -- that tells which loop each block is part of, and a collection of blocks to
@@ -296,8 +313,8 @@ assignConcreteAddress assignedAddrs (FallthroughPair (LayoutPair cb fb Modified)
                                 (show (basicBlockAddress fb))
                                 (show (basicBlockAddress cb))
     Just (addr, size) -> return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb addr size) Modified))
-assignConcreteAddress _ (FallthroughPair (LayoutPair cb fb Unmodified)) =
-  return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb (basicBlockAddress cb) 0) Unmodified))
+assignConcreteAddress _ (FallthroughPair (LayoutPair cb fb notModifiedStatus)) =
+  return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb (basicBlockAddress cb) 0) notModifiedStatus))
 
 allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch), F.Foldable t, Functor t)
                                => ConcreteAddress arch
@@ -401,6 +418,9 @@ addExplicitFallthrough :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
                        -> LBSM.SuccessorMap arch
                        -> SymbolicPair arch
                        -> RewriterT arch m (FallthroughPair arch)
+addExplicitFallthrough _mem _symSucIdx (SymbolicPair (LayoutPair cb _sb Immutable)) = error $
+  printf "Attempted to modify an immutable block (at address %s) by adding explicit fallthrough information"
+         (show (basicBlockAddress cb))
 addExplicitFallthrough mem symSucIdx (SymbolicPair (LayoutPair cb sb _)) = do
   isa <- askISA
   -- We pass in a fake relative address since we don't need the resolution of
