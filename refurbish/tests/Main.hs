@@ -103,7 +103,7 @@ rewritingTests :: Maybe RD.Runner
                -> [FilePath]
                -> T.TestTree
 rewritingTests mRunner hdlAlloc strat exes =
-  T.testGroup ("Rewriting" ++ show strat)
+  T.testGroup ("Rewriting " ++ show strat)
               (map (toRewritingTest mRunner hdlAlloc strat) exes)
 
 toRewritingTest :: Maybe RD.Runner
