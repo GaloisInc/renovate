@@ -53,7 +53,7 @@ runner :: [(FilePath, FilePath)] -> [String] -> IO (E.ExitCode, String, String)
 runner mapping cmdline =
   P.readProcessWithExitCode "docker" dargs ""
   where
-    argMap = [["-v", src ++ ":" ++ dst] | (src, dst) <- mapping]
+    argMap = [["-v", src ++ ":" ++ dst ++ ":Z"] | (src, dst) <- mapping]
     dargs = concat [ ["run", "--init", "--rm"]
                    , concat argMap
                    , [qemuRunnerName]
