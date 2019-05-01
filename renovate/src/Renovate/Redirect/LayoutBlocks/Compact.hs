@@ -313,8 +313,10 @@ assignConcreteAddress assignedAddrs (FallthroughPair (LayoutPair cb fb Modified)
                                 (show (basicBlockAddress fb))
                                 (show (basicBlockAddress cb))
     Just (addr, size) -> return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb addr size) Modified))
-assignConcreteAddress _ (FallthroughPair (LayoutPair cb fb notModifiedStatus)) =
-  return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb (basicBlockAddress cb) 0) notModifiedStatus))
+assignConcreteAddress _ (FallthroughPair (LayoutPair cb fb Unmodified)) =
+  return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb (basicBlockAddress cb) 0) Unmodified))
+assignConcreteAddress _ (FallthroughPair (LayoutPair cb fb Immutable)) =
+  return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb (basicBlockAddress cb) 0) Immutable))
 
 allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch), F.Foldable t, Functor t)
                                => ConcreteAddress arch
@@ -418,10 +420,15 @@ addExplicitFallthrough :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
                        -> LBSM.SuccessorMap arch
                        -> SymbolicPair arch
                        -> RewriterT arch m (FallthroughPair arch)
-addExplicitFallthrough _mem _symSucIdx (SymbolicPair (LayoutPair cb _sb Immutable)) = error $
-  printf "Attempted to modify an immutable block (at address %s) by adding explicit fallthrough information"
-         (show (basicBlockAddress cb))
-addExplicitFallthrough mem symSucIdx (SymbolicPair (LayoutPair cb sb _)) = do
+addExplicitFallthrough mem symSucIdx (SymbolicPair (LayoutPair cb sb status)) = do
+  -- quick sanity check
+  case status of
+    Modified -> return ()
+    Unmodified -> return ()
+    Immutable -> error $ printf
+      "Attempted to modify an immutable block (at address %s) by adding explicit fallthrough information"
+      (show (basicBlockAddress cb))
+
   isa <- askISA
   -- We pass in a fake relative address since we don't need the resolution of
   -- relative jumps.  We just need the type of jump.

@@ -128,7 +128,8 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
   return (sortedBlocks, injectedBlocks)
   where
     unPair (ConcretePair (LayoutPair cb sb Modified))   = [cb, sb]
-    unPair (ConcretePair (LayoutPair cb _  _))          = [cb]
+    unPair (ConcretePair (LayoutPair cb _  Unmodified)) = [cb]
+    unPair (ConcretePair (LayoutPair cb _  Immutable))  = [cb]
 
 toBlockMapping :: [ConcretePair arch] -> [(ConcreteAddress arch, ConcreteAddress arch)]
 toBlockMapping ps =
