@@ -28,3 +28,6 @@ All of the test binaries are expected to be stored in =refurbish/tests/binaries=
 * Docker Notes
 
 See the =Dockerfile= for details, but the image is very basic: Ubuntu 18.04 with the =qemu-user= package installed.  Note that the =qemu-user= package also installs a Linux binfmt handler that automatically invokes the correct =qemu-ARCH= binary on non-host binaries.
+
+See ../README.md for instructions on installing Docker and user space
+QEMU on the host system.
