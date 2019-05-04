@@ -8,6 +8,24 @@ Run an executable via QEMU in a Docker container. Useful for running
 cross compiled executables for foreign architectures on your local
 machine.
 
+Note that QEMU also makes it easy to run foreign arch binaries
+directly on your local machine -- on Ubuntu 18.04 installing the
+`qemu` package (which brings in a bunch of deps) seems to be enough to
+let me e.g. run *statically linked* PPC ELF binaries on an x86_64
+machine directly, as if they were a native x86_64 ELF
+binaries. However, `refurbish-run` is still useful because it runs
+your binaries in a sandbox, which is a nice bit of firewalling when
+running possibly corrupt binaries (e.g the output of `refurbish` or
+`embrittle`).
+
+More details about QEMU magic here (`binfmt_misc` kernel module + user
+mode QEMU), including how to deal with dynamically linked foreign arch
+binaries (in the simplest case you can use
+e.g. `(QEMU_LD_PREFIX=/usr/powerpc64-linux-gnu/ tmp/hello-world)` when
+`tmp/hello_world` is a dynamically linked PPC ELF binary that uses
+glibc):
+https://ownyourbits.com/2018/06/13/transparently-running-binaries-from-any-architecture-in-linux-with-qemu-and-binfmt_misc/
+
 #### Setting up Docker and QEMU
 
 You need to install the Docker tool and user space QEMU. On Ubuntu
