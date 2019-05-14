@@ -17,7 +17,7 @@ import           Data.Monoid ( Any(Any) )
 import           Data.Ord ( Down(..) )
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
-import           Control.Exception ( Exception, SomeException(SomeException), assert, displayException )
+import           Control.Exception ( Exception, SomeException(SomeException), assert )
 import           Control.Monad
 import           Control.Monad.IO.Class
 import           Control.Monad.ST
@@ -552,12 +552,7 @@ data OverlappingFreeBlocks arch
   deriving (Eq, Ord, Typeable)
 deriving instance MM.MemWidth (MM.ArchAddrWidth arch) => Show (OverlappingFreeBlocks arch)
 
-instance (MM.MemWidth (MM.ArchAddrWidth arch), Typeable arch) => Exception (OverlappingFreeBlocks arch) where
-  displayException (OverlappingFreeBlocks addr len addr' len') = unlines
-    [ "While computing space to reuse in layout, we found overlapping blocks."
-    , "The sequence of blocks beginning at "  ++ show addr  ++ " and extending " ++ show len  ++ " bytes"
-    , "overlaps with the block beginning at " ++ show addr' ++ " and extending " ++ show len' ++ " bytes."
-    ]
+instance (MM.MemWidth (MM.ArchAddrWidth arch), Typeable arch) => Exception (OverlappingFreeBlocks arch)
 
 coalesceHeap ::
   (Monad m, MM.MemWidth (MM.ArchAddrWidth arch), Typeable arch) =>
