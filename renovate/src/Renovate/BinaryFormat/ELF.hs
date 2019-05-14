@@ -1136,15 +1136,12 @@ mkNewDataSection baseAddr info = do
     bytes = fromIntegral (RW.nextGlobalAddress info `RA.addressDiff` baseAddr)
 
 data ElfRewriteException = RewrittenTextSectionSizeMismatch Int Int
-                         | StringTableNotFound
                          | BlockRecoveryFailure C.SomeException [RD.Diagnostic]
                          | RewriterFailure C.SomeException [RD.Diagnostic]
                          | UnsupportedArchitecture E.ElfMachine
                          | MemoryLoadError String
                          | NoTextSectionFound
                          | MultipleTextSectionsFound Int
-                         | NoSectionFound B.ByteString
-                         | CannotAllocateTextSection
                          deriving (Typeable)
 
 deriving instance Show ElfRewriteException
