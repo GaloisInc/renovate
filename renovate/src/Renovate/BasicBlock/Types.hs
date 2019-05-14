@@ -94,10 +94,9 @@ type InstructionConstraints arch =
   , Show (Instruction arch ())
   , Eq (Instruction arch ())
   , Ord (RegisterType arch)
-  , Typeable (Instruction arch (InstructionAnnotation arch))
+  , Typeable arch
   , Typeable (Instruction arch)
   , Typeable (InstructionAnnotation arch)
-  , Typeable (Instruction arch ())
   , MC.MemWidth (MC.ArchAddrWidth arch)
   )
 

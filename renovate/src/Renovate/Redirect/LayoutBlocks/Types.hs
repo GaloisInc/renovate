@@ -15,6 +15,8 @@ module Renovate.Redirect.LayoutBlocks.Types (
   AddressAssignedPair(..),
   ConcretePair(..),
   Status(..),
+  changed,
+  changeable,
   Layout(..),
   RandomSeed
   ) where
@@ -137,7 +139,25 @@ data Status
   -- ^ This code shouldn't be modified by anyone, e.g. because it has control
   -- flow constructs we don't fully understand or isn't in the text section or
   -- similar.
+  | Subsumed
+  -- ^ This code has been modified, but we don't need to leave a redirection in
+  -- its old location, because we believe we have already found and fixed up
+  -- all jumps to this block.
   deriving (Eq, Ord, Read, Show)
+
+-- | Has the code in the given block been changed in any way?
+changed :: Status -> Bool
+changed Modified = True
+changed Unmodified = False
+changed Immutable = False
+changed Subsumed = True
+
+-- | Is the code in the given block eligible to be changed further?
+changeable :: Status -> Bool
+changeable Modified = True
+changeable Unmodified = True
+changeable Immutable = False
+changeable Subsumed = True
 
 newtype SymbolicPair         arch = SymbolicPair { unSymbolicPair :: LayoutPair (SymbolicBlock arch) arch }
 newtype FallthroughPair      arch = FallthroughPair { unFallthroughPair :: LayoutPair (FallthroughBlock arch) arch }

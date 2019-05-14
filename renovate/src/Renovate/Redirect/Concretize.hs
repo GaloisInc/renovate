@@ -27,7 +27,7 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutPair(..)
                                                       , SymbolicPair(..)
                                                       , AddressAssignedPair(..)
                                                       , ConcretePair(..)
-                                                      , Status(..)
+                                                      , changed
                                                       , LayoutStrategy )
 import           Renovate.Redirect.Monad
 
@@ -123,21 +123,19 @@ concretizeJumps :: (Monad m, InstructionConstraints arch)
                 => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
                 -> AddressAssignedPair arch
                 -> RewriterT arch m (ConcretePair arch)
-concretizeJumps concreteAddressMap (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock sb baddr maxSize) Modified)) = do
-  let insnAddrs = basicBlockInstructions sb
-  concretizedInstrsSizes <- S.evalStateT (T.traverse (mapJumpAddressDriver concreteAddressMap) insnAddrs) baddr
-  let Sum concretizedSize = foldMap snd concretizedInstrsSizes
-      concretizedInstrs = foldMap fst concretizedInstrsSizes
-  assert (concretizedSize <= maxSize) (return ())
-  isa <- askISA
-  let sb' = sb { basicBlockAddress = baddr
-               , basicBlockInstructions = concretizedInstrs ++ isaMakePadding isa (maxSize - concretizedSize)
-               }
-  return (ConcretePair (LayoutPair cb sb' Modified))
-concretizeJumps _concreteAddressMap (AddressAssignedPair (LayoutPair cb _ Unmodified)) =
-  return (ConcretePair (LayoutPair cb cb Unmodified))
-concretizeJumps _concreteAddressMap (AddressAssignedPair (LayoutPair cb _ Immutable)) =
-  return (ConcretePair (LayoutPair cb cb Immutable))
+concretizeJumps concreteAddressMap (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock sb baddr maxSize) status))
+  | changed status = do
+    let insnAddrs = basicBlockInstructions sb
+    concretizedInstrsSizes <- S.evalStateT (T.traverse (mapJumpAddressDriver concreteAddressMap) insnAddrs) baddr
+    let Sum concretizedSize = foldMap snd concretizedInstrsSizes
+        concretizedInstrs = foldMap fst concretizedInstrsSizes
+    assert (concretizedSize <= maxSize) (return ())
+    isa <- askISA
+    let sb' = sb { basicBlockAddress = baddr
+                 , basicBlockInstructions = concretizedInstrs ++ isaMakePadding isa (maxSize - concretizedSize)
+                 }
+    return (ConcretePair (LayoutPair cb sb' status))
+  | otherwise = return (ConcretePair (LayoutPair cb cb status))
 
 mapJumpAddressDriver ::
   forall m arch.

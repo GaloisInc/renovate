@@ -127,9 +127,11 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
   let sortedBlocks = L.sortBy (comparing basicBlockAddress) (paddingBlocks ++ concatMap unPair (F.toList redirectedBlocks))
   return (sortedBlocks, injectedBlocks)
   where
-    unPair (ConcretePair (LayoutPair cb sb Modified))   = [cb, sb]
-    unPair (ConcretePair (LayoutPair cb _  Unmodified)) = [cb]
-    unPair (ConcretePair (LayoutPair cb _  Immutable))  = [cb]
+    unPair (ConcretePair (LayoutPair cb sb status)) = case status of
+      Modified   -> [cb, sb]
+      Unmodified -> [cb    ]
+      Immutable  -> [cb    ]
+      Subsumed   -> [    sb]
 
 toBlockMapping :: [ConcretePair arch] -> [(ConcreteAddress arch, ConcreteAddress arch)]
 toBlockMapping ps =

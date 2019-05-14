@@ -58,3 +58,6 @@ redirectBlock input@(ConcretePair (LayoutPair origBlock instrBlock Modified)) = 
       return (ConcretePair (LayoutPair origBlock' instrBlock Modified))
 redirectBlock unmodified@(ConcretePair (LayoutPair _ _ Unmodified)) = return unmodified
 redirectBlock unmodified@(ConcretePair (LayoutPair _ _ Immutable )) = return unmodified
+-- The consumer ignores the concrete block of a Subsumed pair, so we don't need
+-- to bother figuring out how to redirect it.
+redirectBlock subsumed@(ConcretePair (LayoutPair _ _ Subsumed)) = return subsumed
