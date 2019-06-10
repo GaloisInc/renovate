@@ -495,6 +495,7 @@ isIncompleteBlock pb =
     MC.ParsedLookupTable {} -> False
     MC.ParsedJump {} -> False
     MC.ParsedCall {} -> False
+    MC.PLTStub {} -> False
 
 {- Note [Unaligned Instructions]
 

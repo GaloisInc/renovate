@@ -1,6 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NondecreasingIndentation #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -70,7 +71,7 @@ import qualified Data.Foldable as F
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
-import           Data.Maybe ( catMaybes, fromMaybe, maybeToList, listToMaybe, isJust )
+import           Data.Maybe ( fromMaybe, maybeToList, listToMaybe, isJust )
 import           Data.Monoid
 import qualified Data.Ord as O
 import qualified Data.Sequence as Seq
@@ -193,9 +194,8 @@ rewriteElf :: (B.InstructionConstraints arch,
            -> IO (E.Elf (MM.ArchAddrWidth arch), b arch, RewriterInfo lm arch)
 rewriteElf cfg hdlAlloc e loadedBinary strat = do
     (analysisResult, ri) <- runElfRewriter e $ do
-      let mem = MBL.memoryImage loadedBinary
       -- FIXME: Use the symbol map from the loaded binary (which we still need to add)
-      symmap <- withCurrentELF (buildSymbolMap mem)
+      symmap <- withCurrentELF buildSymbolMap
       doRewrite cfg hdlAlloc loadedBinary symmap strat
     return (_riELF ri, analysisResult, ri)
 
@@ -218,7 +218,7 @@ analyzeElf :: (B.InstructionConstraints arch,
            -> IO (b arch, [RE.Diagnostic])
 analyzeElf cfg hdlAlloc e loadedBinary = do
   (b, ri) <- runElfRewriter e $ do
-    symmap <- withCurrentELF (buildSymbolMap (MBL.memoryImage loadedBinary))
+    symmap <- withCurrentELF buildSymbolMap
     textSection <- withCurrentELF findTextSection
     let textRange = sectionAddressRange textSection
     withAnalysisEnv cfg hdlAlloc loadedBinary symmap textRange $ \env -> do
@@ -647,25 +647,19 @@ incrementSegmentNumber :: (Monad m) => E.ElfSegment w -> m (E.ElfSegment w)
 incrementSegmentNumber seg = return seg { E.elfSegmentIndex = E.elfSegmentIndex seg + 1 }
 
 buildSymbolMap :: (w ~ MM.ArchAddrWidth arch, Integral (E.ElfWordType w), MM.MemWidth w)
-               => MM.Memory w
-               -> E.Elf w
+               => E.Elf w
                -> ElfRewriter lm arch (RE.SymbolMap arch)
-buildSymbolMap _mem elf = do
-  case filter isSymbolTable (F.toList (E._elfFileData elf)) of
-    [E.ElfDataSymtab table] -> do
-      let entries = catMaybes (map mkPair (F.toList (E.elfSymbolTableEntries table)))
-      return (foldr (uncurry Map.insert) mempty entries)
-    -- TODO: can there be more than 1 symbol table?
-    _ -> return mempty
-  where
-    mkPair e
-      | let addr = RA.concreteFromAbsolute (fromIntegral (E.steValue e))
-      , E.steType e == E.STT_FUNC = Just (addr, E.steName e)
-      | otherwise = Nothing
-
-isSymbolTable :: E.ElfDataRegion w -> Bool
-isSymbolTable (E.ElfDataSymtab{}) = True
-isSymbolTable _                   = False
+buildSymbolMap elf = return . flip foldMap (E._elfFileData elf) $ \case
+  E.ElfDataSymtab table -> flip foldMap (E.elfSymbolTableEntries table) $ \case
+    -- dynamically linked functions are all reported as having address 0; let's
+    -- skip those so we don't try to dereference a null pointer later when
+    -- converting from ConcreteAddress to MemSegmentOff
+    E.EST { E.steType = E.STT_FUNC
+          , E.steValue = v
+          , E.steName = n
+          } | v /= 0 -> Map.singleton (RA.concreteFromAbsolute (fromIntegral v)) n
+    _ -> mempty
+  _ -> mempty
 
 -- | Build a new symbol table based on the one in the original ELF file
 --
