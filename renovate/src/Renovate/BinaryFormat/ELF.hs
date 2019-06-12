@@ -575,8 +575,18 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- Note: We have to update the GNU Stack and GnuRelroRegion segment numbers
   -- independently, as they are handled specially in elf-edit.
   modifyCurrentELF (\e -> ((),) <$> fixOtherSegmentNumbers e)
+  -- Any PHDR segments that existed before have got wrong data or padding in
+  -- them now, so they're no good to anybody. We'll keep them around so that
+  -- other parts of the ELF don't shift around, but inform the audience that
+  -- they're uninteresting.
+  modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments nullifyPhdr e)
   modifyCurrentELF (appendSegment (phdrSegment (fromIntegral phdrSegmentAddress)))
   return analysisResult
+
+nullifyPhdr :: Applicative f => E.ElfSegment w -> f (E.ElfSegment w)
+nullifyPhdr s = pure $ case E.elfSegmentType s of
+  E.PT_PHDR -> s { E.elfSegmentType = E.PT_NULL }
+  _ -> s
 
 -- | The (base) virtual address to lay out the PHDR table at
 --
@@ -633,6 +643,13 @@ phdrSegment :: (E.ElfWidthConstraints w)
             -> E.ElfSegment w
 phdrSegment addr =
   let alignedAddr = alignValue addr (fromIntegral pageAlignment)
+  -- Why not E.PT_NULL here? Answer: glibc really, *really* wants the program
+  -- headers to be visible in its mapped memory somewhere. So we definitely
+  -- have to add them as part of a loadable segment. In the future we could
+  -- consider also adding a E.PT_PHDR segment to be polite to folks that might
+  -- find that useful, but the spec says it's okay not to, too. (Beware: the
+  -- E.PT_HDR segment should have the same offset as this one, and elf-edit
+  -- seems currently not to support that kind of segment overlap cleanly.)
   in E.ElfSegment { E.elfSegmentType = E.PT_LOAD
                   , E.elfSegmentFlags = E.pf_r
                   , E.elfSegmentIndex = 0
