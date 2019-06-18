@@ -646,20 +646,20 @@ phdrSegment :: (E.ElfWidthConstraints w)
 phdrSegment addr =
   let alignedAddr = alignValue addr (fromIntegral pageAlignment)
       containerSegment = E.ElfSegment
-  -- Why not E.PT_NULL here? Answer: glibc really, *really* wants the program
-  -- headers to be visible in its mapped memory somewhere. So we definitely
-  -- have to add them as part of a loadable segment.
-                  { E.elfSegmentType = E.PT_LOAD
-                  , E.elfSegmentFlags = E.pf_r
-                  -- Our caller expects the index of the container to be the
-                  -- largest index of any segment defined here.
-                  , E.elfSegmentIndex = 1
-                  , E.elfSegmentVirtAddr = alignedAddr
-                  , E.elfSegmentPhysAddr = alignedAddr
-                  , E.elfSegmentAlign = fromIntegral pageAlignment
-                  , E.elfSegmentMemSize = E.ElfRelativeSize 0
-                  , E.elfSegmentData = Seq.singleton (E.ElfDataSegment containedSegment)
-                  }
+        -- Why not E.PT_NULL here? Answer: glibc really, *really* wants the program
+        -- headers to be visible in its mapped memory somewhere. So we definitely
+        -- have to add them as part of a loadable segment.
+        { E.elfSegmentType = E.PT_LOAD
+        , E.elfSegmentFlags = E.pf_r
+        -- Our caller expects the index of the container to be the
+        -- largest index of any segment defined here.
+        , E.elfSegmentIndex = 1
+        , E.elfSegmentVirtAddr = alignedAddr
+        , E.elfSegmentPhysAddr = alignedAddr
+        , E.elfSegmentAlign = fromIntegral pageAlignment
+        , E.elfSegmentMemSize = E.ElfRelativeSize 0
+        , E.elfSegmentData = Seq.singleton (E.ElfDataSegment containedSegment)
+        }
       containedSegment = containerSegment
         { E.elfSegmentType = E.PT_PHDR
         , E.elfSegmentIndex = 0
