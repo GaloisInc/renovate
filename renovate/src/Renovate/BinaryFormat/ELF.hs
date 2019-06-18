@@ -568,19 +568,21 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- Now overwrite the original code (in the .text segment) with the
   -- content computed by our transformation.
   modifyCurrentELF (overwriteTextSection overwrittenBytes)
+  let newSegment = phdrSegment phdrSegmentAddress
+      newSegmentCount = E.elfSegmentIndex newSegment + 1
   -- Increment all of the segment indexes so that we can reserve the first
   -- segment index (0) for our fresh PHDR segment that we want at the beginning
   -- of the PHDR table (but not at the first offset)
-  modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments incrementSegmentNumber e)
+  modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments (incrementSegmentNumber newSegmentCount) e)
   -- Note: We have to update the GNU Stack and GnuRelroRegion segment numbers
   -- independently, as they are handled specially in elf-edit.
-  modifyCurrentELF (\e -> ((),) <$> fixOtherSegmentNumbers e)
+  modifyCurrentELF (\e -> ((),) <$> fixOtherSegmentNumbers newSegmentCount e)
   -- Any PHDR segments that existed before have got wrong data or padding in
   -- them now, so they're no good to anybody. We'll keep them around so that
   -- other parts of the ELF don't shift around, but inform the audience that
   -- they're uninteresting.
   modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments nullifyPhdr e)
-  modifyCurrentELF (appendSegment (phdrSegment (fromIntegral phdrSegmentAddress)))
+  modifyCurrentELF (appendSegment newSegment)
   return analysisResult
 
 nullifyPhdr :: Applicative f => E.ElfSegment w -> f (E.ElfSegment w)
@@ -592,7 +594,7 @@ nullifyPhdr s = pure $ case E.elfSegmentType s of
 --
 -- NOTE: We probably want to think more carefully about the alignment of this
 -- address.  Currently, we page align it.
-phdrSegmentAddress :: Word64
+phdrSegmentAddress :: Num a => a
 phdrSegmentAddress = 0x900000
 
 -- | Count the number of program headers (i.e., entries in the PHDR table)
@@ -643,25 +645,30 @@ phdrSegment :: (E.ElfWidthConstraints w)
             -> E.ElfSegment w
 phdrSegment addr =
   let alignedAddr = alignValue addr (fromIntegral pageAlignment)
+      containerSegment = E.ElfSegment
   -- Why not E.PT_NULL here? Answer: glibc really, *really* wants the program
   -- headers to be visible in its mapped memory somewhere. So we definitely
-  -- have to add them as part of a loadable segment. In the future we could
-  -- consider also adding a E.PT_PHDR segment to be polite to folks that might
-  -- find that useful, but the spec says it's okay not to, too. (Beware: the
-  -- E.PT_HDR segment should have the same offset as this one, and elf-edit
-  -- seems currently not to support that kind of segment overlap cleanly.)
-  in E.ElfSegment { E.elfSegmentType = E.PT_LOAD
+  -- have to add them as part of a loadable segment.
+                  { E.elfSegmentType = E.PT_LOAD
                   , E.elfSegmentFlags = E.pf_r
-                  , E.elfSegmentIndex = 0
+                  -- Our caller expects the index of the container to be the
+                  -- largest index of any segment defined here.
+                  , E.elfSegmentIndex = 1
                   , E.elfSegmentVirtAddr = alignedAddr
                   , E.elfSegmentPhysAddr = alignedAddr
                   , E.elfSegmentAlign = fromIntegral pageAlignment
                   , E.elfSegmentMemSize = E.ElfRelativeSize 0
-                  , E.elfSegmentData = Seq.singleton E.ElfDataSegmentHeaders
+                  , E.elfSegmentData = Seq.singleton (E.ElfDataSegment containedSegment)
                   }
+      containedSegment = containerSegment
+        { E.elfSegmentType = E.PT_PHDR
+        , E.elfSegmentIndex = 0
+        , E.elfSegmentData = Seq.singleton E.ElfDataSegmentHeaders
+        }
+  in containerSegment
 
-incrementSegmentNumber :: (Monad m) => E.ElfSegment w -> m (E.ElfSegment w)
-incrementSegmentNumber seg = return seg { E.elfSegmentIndex = E.elfSegmentIndex seg + 1 }
+incrementSegmentNumber :: (Monad m) => E.SegmentIndex -> E.ElfSegment w -> m (E.ElfSegment w)
+incrementSegmentNumber n seg = return seg { E.elfSegmentIndex = E.elfSegmentIndex seg + n }
 
 buildSymbolMap :: (w ~ MM.ArchAddrWidth arch, Integral (E.ElfWordType w), MM.MemWidth w)
                => E.Elf w
@@ -727,15 +734,15 @@ newTextAlign = 0x10000
 -- However, elf-edit handles the GNU_STACK and Relro segments specially.  This
 -- function acts as a traversal over these special segments and increments their
 -- segment numbers.
-fixOtherSegmentNumbers :: (Monad m) => E.Elf w -> m (E.Elf w)
-fixOtherSegmentNumbers e =
+fixOtherSegmentNumbers :: (Monad m) => E.SegmentIndex -> E.Elf w -> m (E.Elf w)
+fixOtherSegmentNumbers n e =
   return e { E.elfGnuStackSegment = fmap updateStackIndex (E.elfGnuStackSegment e)
            , E.elfGnuRelroRegions = fmap updateRelroIndex (E.elfGnuRelroRegions e)
            }
   where
-    updateStackIndex gs = gs { E.gnuStackSegmentIndex = E.gnuStackSegmentIndex gs + 1 }
-    updateRelroIndex rr = rr { E.relroSegmentIndex = E.relroSegmentIndex rr + 1
-                             , E.relroRefSegmentIndex = E.relroRefSegmentIndex rr + 1
+    updateStackIndex gs = gs { E.gnuStackSegmentIndex = E.gnuStackSegmentIndex gs + n }
+    updateRelroIndex rr = rr { E.relroSegmentIndex = E.relroSegmentIndex rr + n
+                             , E.relroRefSegmentIndex = E.relroRefSegmentIndex rr + n
                              }
 
 -- | Get the current symbol table
