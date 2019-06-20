@@ -528,6 +528,7 @@ phdrSegment addr =
         }
       containedSegment = containerSegment
         { E.elfSegmentType = E.PT_PHDR
+        -- The spec says that if there's a PHDR segment, it must be the first one.
         , E.elfSegmentIndex = 0
         , E.elfSegmentData = Seq.singleton E.ElfDataSegmentHeaders
         }
