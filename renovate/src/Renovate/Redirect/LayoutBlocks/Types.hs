@@ -6,9 +6,10 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Renovate.Redirect.LayoutBlocks.Types (
   LayoutStrategy(..),
-  Grouping(..),
-  grouping,
+  Allocator(..),
   CompactOrdering(..),
+  Grouping(..),
+  TrampolineStrategy(..),
   LayoutPair(..),
   SymbolicPair(..),
   FallthroughPair(..),
@@ -29,15 +30,15 @@ import qualified Data.Text.Prettyprint.Doc as PD
 import           Renovate.Address ( ConcreteAddress, SymbolicAddress )
 import           Renovate.BasicBlock
 
--- | A type for selecting the strategy for laying out basic blocks in rewritten
--- binaries.
-data LayoutStrategy = Parallel Grouping
+-- | A type for selecting the which addresses are available for laying out
+-- basic blocks in rewritten binaries.
+data Allocator       = Parallel
                      -- ^ Lay instrumented blocks out in parallel with the
                      -- original basic blocks.  The excess space in the original
                      -- blocks will be filled with trap instructions.
                      -- Instrumented blocks will all be placed in a new text
                      -- section.
-                     | Compact CompactOrdering Grouping
+                     | Compact CompactOrdering
                      -- ^ Lay blocks out more compactly by re-using space in
                      -- original basic blocks to hold instrumented code.
                      -- Instrumented blocks that cannot fit in existing slack
@@ -60,10 +61,6 @@ data Grouping =
     -- each other.
   deriving (Bounded, Enum, Eq, Ord, Read, Show)
 
-grouping :: LayoutStrategy -> Grouping
-grouping (Parallel s) = s
-grouping (Compact _ s) = s
-
 -- | Directly use the same seed type as the mwc-random package.
 type RandomSeed = V.Vector Word32
 
@@ -71,6 +68,25 @@ data CompactOrdering
   = SortedOrder            -- ^ Sort by block size
   | RandomOrder RandomSeed -- ^ seed for the randomization
   deriving (Read, Show, Eq, Ord)
+
+-- | When we lay out a block at a new location, when should we install a
+-- trampoline (that is, a jump to the new location or else a copy of the old
+-- block) at the old location?
+data TrampolineStrategy
+  = AlwaysTrampoline
+  -- ^ Always.
+  | WholeFunctionTrampoline
+  -- ^ Only for function entry points, or for blocks that participate in
+  -- functions we couldn't completely move for one reason or another.
+  deriving (Bounded, Enum, Eq, Ord, Read, Show)
+
+-- | A type for selecting the strategy for laying out basic blocks in rewritten
+-- binaries.
+data LayoutStrategy = LayoutStrategy
+  { allocator :: Allocator
+  , grouping :: Grouping
+  , trampolines :: TrampolineStrategy
+  } deriving (Eq, Ord, Read, Show)
 
 
 data Layout pair arch =

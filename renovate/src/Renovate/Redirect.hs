@@ -4,7 +4,8 @@ module Renovate.Redirect (
   redirect,
   LayoutStrategy(..),
   Grouping(..),
-  grouping,
+  Allocator(..),
+  TrampolineStrategy(..),
   ConcreteBlock,
   SymbolicBlock,
   BasicBlock(..),
@@ -43,7 +44,8 @@ import           Renovate.Recovery.Overlap ( disjoint )
 import           Renovate.Redirect.Concretize
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , Grouping(..)
-                                                      , grouping
+                                                      , Allocator(..)
+                                                      , TrampolineStrategy(..)
                                                       , Status(..)
                                                       , Layout(..)
                                                       , ConcretePair(..)

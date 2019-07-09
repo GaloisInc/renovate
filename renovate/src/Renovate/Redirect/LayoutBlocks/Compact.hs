@@ -84,17 +84,17 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
   mem <- askMem
   blockChunks' <- reifyFallthroughSuccessors mem modifiedBlockChunks blocks0
 
-  (h0, blocks1) <- case strat of
+  (h0, blocks1) <- case allocator strat of
     -- the parallel strategy is now a special case of compact. In particular,
     -- we avoid allocating the heap and we avoid sorting the input blocklist.
-    Parallel _ -> return (mempty, concat blockChunks')
+    Parallel -> return (mempty, concat blockChunks')
     -- We use blockChunks' (instead of blockChunks or modifiedBlockChunks)
     -- because buildAddressHeap checks the modification status, and
     -- reifyFallthroughSuccessors updates the modification status if it adds a
     -- fallthrough to an unmodified block. (It is okay not to additionally pass
     -- in the unmodified blocks because buildAddressHeap ignores unmodified
     -- blocks anyway.)
-    _ -> buildAddressHeap startAddr (concat blockChunks')
+    _ -> buildAddressHeap (trampolines strat) startAddr (concat blockChunks')
 
   -- Either, a) Sort all of the instrumented blocks by size
   --         b) Randomize the order of the blocks.
@@ -105,10 +105,10 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
   isa <- askISA
 
   let newBlocks = map (map (lpNew . unFallthroughPair)) blockChunks'
-      sortedBlocks = case strat of
-        Compact SortedOrder        _ -> L.sortOn    (bySize isa mem) newBlocks
-        Compact (RandomOrder seed) _ -> randomOrder seed             newBlocks
-        Parallel                   _ -> newBlocks
+      sortedBlocks = case allocator strat of
+        Compact SortedOrder        -> L.sortOn    (bySize isa mem) newBlocks
+        Compact (RandomOrder seed) -> randomOrder seed             newBlocks
+        Parallel                   -> newBlocks
 
   -- Allocate an address for each block (falling back to startAddr if the heap
   -- can't provide a large enough space).
@@ -119,10 +119,10 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
   -- from the original text section as padding instead. But it is safer to
   -- catch jumps that our tool didn't know about by landing at a halt
   -- instruction, when that is possible.
-  (h2, blocks2) <- case strat of
+  (h2, blocks2) <- case allocator strat of
     -- In the parallel layout, we don't use any space reclaimed by redirecting
     -- things, so we should overwrite it all with padding.
-    Parallel{} -> buildAddressHeap startAddr (concat blockChunks')
+    Parallel -> buildAddressHeap (trampolines strat) startAddr (concat blockChunks')
     _ -> return (h1, blocks1)
 
   let paddingBlocks :: [ConcreteBlock arch]
@@ -473,10 +473,11 @@ lastInstructionFallthrough fallthrough sb = sb { basicBlockInstructions = insns 
     is -> map noFallthrough (init is) ++ [fallthrough (last is)]
 
 buildAddressHeap :: (MM.MemWidth (MM.ArchAddrWidth arch), Monad m, Typeable arch)
-                 => ConcreteAddress arch
+                 => TrampolineStrategy
+                 -> ConcreteAddress arch
                  -> [FallthroughPair arch]
                  -> RewriterT arch m (AddressHeap arch, [FallthroughPair arch])
-buildAddressHeap startAddr blocks = do
+buildAddressHeap strat startAddr blocks = do
   functionToBlocks <- gets (functionBlocks . rwsStats)
   isa <- askISA
   let dummyJump = isaMakeRelativeJumpTo  isa startAddr startAddr
@@ -489,9 +490,11 @@ buildAddressHeap startAddr blocks = do
         ]
       relocatedFunctions = findRelocatedFunctions blockToFunctions functionToBlocks blocks
       redirectableFunctions = (disjointFunctions S.\\ smallBlocks) `S.intersection` relocatedFunctions
-      pRedirect addr = case M.lookup addr blockToFunctions of
-        Just [entryPoint] -> entryPoint == addr || entryPoint `S.notMember` redirectableFunctions
-        _ -> True
+      pRedirect = case strat of
+        AlwaysTrampoline -> const True
+        WholeFunctionTrampoline -> \addr -> case M.lookup addr blockToFunctions of
+          Just [entryPoint] -> entryPoint == addr || entryPoint `S.notMember` redirectableFunctions
+          _ -> True
       (preh, blocks') = F.foldl' (addOriginalBlock isa jumpSize pRedirect) (M.empty, []) blocks
   h <- coalesceHeap preh
   return (h, blocks')
