@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 module Renovate.Redirect.LayoutBlocks.Types (
   LayoutStrategy(..),
@@ -14,6 +15,8 @@ module Renovate.Redirect.LayoutBlocks.Types (
   FallthroughPair(..),
   AddressAssignedPair(..),
   ConcretePair(..),
+  RewritePair(..),
+  toRewritePair,
   Status(..),
   changed,
   changeable,
@@ -21,11 +24,13 @@ module Renovate.Redirect.LayoutBlocks.Types (
   RandomSeed
   ) where
 
+import           Control.Monad ( guard )
 import qualified Data.ByteString as BS
 import qualified Data.Vector.Unboxed as V
 import           Data.Word ( Word32 )
 import qualified Data.Text.Prettyprint.Doc as PD
 
+import qualified Data.Macaw.CFG as MC
 import           Renovate.Address ( ConcreteAddress, SymbolicAddress )
 import           Renovate.BasicBlock
 
@@ -163,3 +168,24 @@ newtype SymbolicPair         arch = SymbolicPair { unSymbolicPair :: LayoutPair 
 newtype FallthroughPair      arch = FallthroughPair { unFallthroughPair :: LayoutPair (FallthroughBlock arch) arch }
 newtype AddressAssignedPair  arch = AddressAssignedPair { unAddressAssignedPair :: LayoutPair (AddressAssignedBlock arch) arch }
 newtype ConcretePair         arch = ConcretePair { unConcretePair :: LayoutPair (ConcreteBlock arch) arch }
+
+-- RewritePair is basically a ConcretePair, but in a format that's more
+-- friendly for sharing with the outside world. It also serves as a gatekeeper:
+-- we export RewritePair from the package, but not ConcretePair, and since an
+-- explicit conversion is required between them, this forces us to be conscious
+-- about sending internal data to the outside world.
+
+-- | A block, together with what it's been rewritten to. If 'rpNew' is
+-- 'Nothing', this means that we kept the original code in the original
+-- position.
+data RewritePair arch = RewritePair
+  { rpOrig :: ConcreteBlock arch
+  , rpNew :: Maybe (ConcreteBlock arch)
+  }
+
+deriving instance Eq (Instruction arch ()) => Eq (RewritePair arch)
+deriving instance (Show (Instruction arch ()), MC.MemWidth (MC.ArchAddrWidth arch)) => Show (RewritePair arch)
+
+toRewritePair :: ConcretePair arch -> RewritePair arch
+toRewritePair (ConcretePair (LayoutPair orig new status))
+  = RewritePair orig (guard (changed status) *> Just new)

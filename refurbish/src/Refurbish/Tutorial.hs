@@ -127,16 +127,38 @@ myRewriter env nBlocks (RewriteState newFuncAddr) symBlock =
 :}
 
 >>> :{
-analysis :: R.AnalyzeAndRewrite lm arch binFmt (Const Int)
+-- | The verifier runs after the rewriter and can be used to check that the
+-- rewriter did something sensible. It's provided with the correspondence
+-- between original blocks and rewritten blocks.
+--
+-- For our simple verification, we'll just check that there are at least as
+-- many instructions in the rewritten form.
+myVerifier :: env arch binFmt
+           -> Const Int arch
+           -> [R.RewritePair arch]
+           -> IO Bool
+myVerifier env nBlocks blockPairs =
+  return (all (\(R.RewritePair origBlock mNewBlock)
+               -> all (\newBlock -> length (R.basicBlockInstructions origBlock)
+                                 <= length (R.basicBlockInstructions newBlock)
+                      ) mNewBlock
+              )
+              blockPairs
+         )
+:}
+
+>>> :{
+analysis :: R.AnalyzeAndRewrite lm Bool arch binFmt (Const Int)
 analysis = R.AnalyzeAndRewrite { R.arPreAnalyze = myPreAnalysis
                                , R.arAnalyze = myAnalysis
                                , R.arPreRewrite = myPreRewriter
                                , R.arRewrite = myRewriter
+                               , R.arVerify = myVerifier
                                }
 :}
 
 >>> :{
-analysisConfigs :: [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite lm) (Const Int))]
+analysisConfigs :: [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite lm Bool) (Const Int))]
 analysisConfigs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analysis))
                   , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
                   , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))
@@ -144,14 +166,15 @@ analysisConfigs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.c
 :}
 
 >>> :{
-myAnalyzeElf :: E.SomeElf E.Elf -> IO Int
+myAnalyzeElf :: E.SomeElf E.Elf -> IO (Int, Bool)
 myAnalyzeElf someElf = do
   fha <- FH.newHandleAllocator
   R.withElfConfig someElf analysisConfigs $ \config e loadedBinary -> do
-    (newElf, res, ri) <- R.rewriteElf config fha e loadedBinary (R.Parallel R.BlockGrouping)
-    print (getConst res)
+    (newElf, constRes, ri) <- R.rewriteElf config fha e loadedBinary (R.Parallel R.BlockGrouping)
+    let res = (getConst (fst constRes), snd constRes)
+    print res
     print (ri ^. R.riBlockMapping)
-    return (getConst res)
+    return res
 :}
 
 

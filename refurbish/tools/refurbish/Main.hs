@@ -154,7 +154,7 @@ diagnosticHandler d = do
 mainWithOptions :: Options -> IO ()
 mainWithOptions o = do
   bytes <- BS.readFile (oInput o)
-  let configs :: [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite ()) (Const ()))]
+  let configs :: [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite () ()) (Const ()))]
       configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 (analysis o)))
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 (analysis o)))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config (analysis o)))
@@ -454,7 +454,7 @@ withHandleWhen mf k =
       | fn == "-" -> k IO.stdout
       | otherwise -> IO.withFile fn IO.WriteMode k
 
-analysis :: MM.MemWidth (MM.ArchAddrWidth arch) => Options -> R.AnalyzeAndRewrite () arch binFmt (Const ())
+analysis :: MM.MemWidth (MM.ArchAddrWidth arch) => Options -> R.AnalyzeAndRewrite () () arch binFmt (Const ())
 analysis opts =
   R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
                       , R.arAnalyze = \_ _ -> return (Const ())
@@ -463,6 +463,7 @@ analysis opts =
                         $ if R.concreteAddress (R.basicBlockAddress b) `S.member` addrs
                           then Nothing
                           else Just (R.basicBlockInstructions b)
+                      , R.arVerify = \_ _ _ -> return ()
                       }
   where
   addrs = S.fromList (map (R.concreteFromAbsolute . MM.memWord) (oBlocksToSkip opts))

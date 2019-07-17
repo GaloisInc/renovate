@@ -11,6 +11,7 @@ module Renovate.Redirect (
   ConcreteAddress,
   SymbolicAddress,
   TaggedInstruction,
+  RewritePair(..),
   -- * Rewriter Monad
   RM.runRewriterT,
   RM.Diagnostic(..),
@@ -48,7 +49,8 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , Layout(..)
                                                       , ConcretePair(..)
                                                       , SymbolicPair(..)
-                                                      , LayoutPair(..) )
+                                                      , LayoutPair(..)
+                                                      , RewritePair(..) )
 import           Renovate.Redirect.Internal
 import qualified Renovate.Redirect.Monad as RM
 import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions )
@@ -82,7 +84,7 @@ redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch
          -- ^ The start address for the copied blocks
          -> [(ConcreteBlock arch, SymbolicBlock arch)]
          -- ^ Symbolized basic blocks
-         -> RM.RewriterT arch m ([ConcreteBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)])
+         -> RM.RewriterT arch m ([ConcreteBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)], [ConcretePair arch])
 redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr baseSymBlocks = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   RM.recordSection "text" (RM.SectionInfo textStart textEnd)
@@ -125,7 +127,7 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
   RM.recordBlockMap (toBlockMapping concretizedBlocks)
   redirectedBlocks <- redirectOriginalBlocks concretizedBlocks
   let sortedBlocks = L.sortBy (comparing basicBlockAddress) (paddingBlocks ++ concatMap unPair (F.toList redirectedBlocks))
-  return (sortedBlocks, injectedBlocks)
+  return (sortedBlocks, injectedBlocks, concretizedBlocks)
   where
     unPair (ConcretePair (LayoutPair cb sb status)) = case status of
       Modified   -> [cb, sb]

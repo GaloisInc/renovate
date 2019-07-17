@@ -134,6 +134,7 @@ module Renovate
   E.riSections,
   D.Diagnostic(..),
   D.Diagnostics(..),
+  LB.RewritePair(..),
   -- * Constraints
   B.InstructionConstraints,
   -- * Exceptions

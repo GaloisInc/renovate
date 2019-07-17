@@ -6,7 +6,8 @@ module Renovate.Redirect.LayoutBlocks (
   LayoutStrategy(..),
   Grouping(..),
   grouping,
-  CompactOrdering(..)
+  CompactOrdering(..),
+  RewritePair(..)
   ) where
 
 import qualified Data.ByteString as BS
@@ -24,7 +25,8 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , grouping
                                                       , CompactOrdering(..)
                                                       , SymbolicPair
-                                                      , AddressAssignedPair )
+                                                      , AddressAssignedPair
+                                                      , RewritePair(..) )
 
 -- | Compute a concrete address for each 'SymbolicBlock'.
 --
