@@ -170,30 +170,20 @@ mainWithOptions o = do
     else return $ R.Parallel (oGrouping o)
 
   hdlAlloc <- C.newHandleAllocator
-  case E.parseElf bytes of
-    E.ElfHeaderError _ err -> do
-      putStrLn err
-      IO.exitFailure
-    E.Elf32Res errs e32 -> do
-      case errs of
-        [] -> return ()
-        _ -> print errs
-      R.withElfConfig (E.Elf32 e32) configs $ \rc e loadedBinary -> do
-        let rc' = rc { R.rcUpdateSymbolTable = True }
-        (e', _, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary layout
-        printInfo o ri
-        LBS.writeFile (oOutput o) (E.renderElf e')
-        when (oRunREPL o) (runREPL ri)
-    E.Elf64Res errs e64 -> do
-      case errs of
-        [] -> return ()
-        _ -> print errs
-      R.withElfConfig (E.Elf64 e64) configs $ \rc e loadedBinary -> do
-        let rc' = rc { R.rcUpdateSymbolTable = True }
-        (e', _, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary layout
-        printInfo o ri
-        LBS.writeFile (oOutput o) (E.renderElf e')
-        when (oRunREPL o) (runREPL ri)
+  someE <- case E.parseElf bytes of
+    E.ElfHeaderError _ err -> putStrLn err >> IO.exitFailure
+    E.Elf32Res errs e32 -> printErrs errs >> return (E.Elf32 e32)
+    E.Elf64Res errs e64 -> printErrs errs >> return (E.Elf64 e64)
+  R.withElfConfig someE configs $ \rc e loadedBinary -> do
+    let rc' = rc { R.rcUpdateSymbolTable = True }
+    (e', _, ri) <- R.rewriteElf rc' hdlAlloc e loadedBinary layout
+    printInfo o ri
+    LBS.writeFile (oOutput o) (E.renderElf e')
+    when (oRunREPL o) (runREPL ri)
+
+printErrs :: Show a => [a] -> IO ()
+printErrs [] = return ()
+printErrs errs = print errs
 
 data REPLInfo =
   REPLInfo { rewriterInfo :: Some (R.RewriterInfo ())
