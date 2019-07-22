@@ -61,7 +61,6 @@ import           Control.Monad ( guard, when )
 import qualified Control.Monad.Catch as C
 import qualified Control.Monad.Catch.Pure as P
 import qualified Control.Monad.IO.Class as IO
-import           Control.Monad.ST ( RealWorld )
 import qualified Control.Monad.State.Strict as S
 import           Data.Bits ( Bits, (.|.) )
 import qualified Data.ByteString as B
@@ -182,7 +181,7 @@ rewriteElf :: (B.InstructionConstraints arch,
                MS.SymArchConstraints arch)
            => RenovateConfig arch binFmt (AnalyzeAndRewrite lm) b
            -- ^ The configuration for the rewriter
-           -> C.HandleAllocator RealWorld
+           -> C.HandleAllocator
            -- ^ A handle allocator for allocating crucible function handles (used for lifting macaw->crucible)
            -> E.Elf (MM.ArchAddrWidth arch)
            -- ^ The ELF file to rewrite
@@ -209,7 +208,7 @@ analyzeElf :: (B.InstructionConstraints arch,
                MS.SymArchConstraints arch)
            => RenovateConfig arch binFmt AnalyzeOnly b
            -- ^ The configuration for the analysis
-           -> C.HandleAllocator RealWorld
+           -> C.HandleAllocator
            -> E.Elf (MM.ArchAddrWidth arch)
            -- ^ The ELF file to analyze
            -> MBL.LoadedBinary arch binFmt
@@ -433,7 +432,7 @@ doRewrite :: (B.InstructionConstraints arch,
               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
               MS.SymArchConstraints arch)
           => RenovateConfig arch binFmt (AnalyzeAndRewrite lm) b
-          -> C.HandleAllocator RealWorld
+          -> C.HandleAllocator
           -> MBL.LoadedBinary arch binFmt
           -> RE.SymbolMap arch
           -> RE.LayoutStrategy
@@ -1027,7 +1026,7 @@ instrumentTextSection :: forall w arch binFmt b lm
                           Integral (E.ElfWordType w),
                           MS.SymArchConstraints arch)
                       => RenovateConfig arch binFmt (AnalyzeAndRewrite lm) b
-                      -> C.HandleAllocator RealWorld
+                      -> C.HandleAllocator
                       -> MBL.LoadedBinary arch binFmt
                       -- ^ The memory space
                       -> (RA.ConcreteAddress arch, RA.ConcreteAddress arch)
@@ -1116,7 +1115,7 @@ withAnalysisEnv :: forall w arch binFmt callbacks b a lm
                        Integral (E.ElfWordType w),
                        MS.SymArchConstraints arch)
                    => RenovateConfig arch binFmt callbacks b
-                   -> C.HandleAllocator RealWorld
+                   -> C.HandleAllocator
                    -> MBL.LoadedBinary arch binFmt
                    -- ^ The memory space
                    -> RE.SymbolMap arch
