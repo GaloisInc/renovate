@@ -48,6 +48,7 @@ module Renovate.BinaryFormat.ELF (
   riInstrumentedBytes,
   riBlockMapping,
   riOutputBlocks,
+  riRewritePairs,
   riFunctionBlocks,
   riSections,
   ) where
@@ -1041,7 +1042,8 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
                                   , raeSymBlockMap = symbolicBlockMap
                                   }
     case rcAnalysis cfg of
-      AnalyzeAndRewrite preAnalyze analyze preRewrite rewrite verify -> do
+      -- TODO: eliminate arVerify from everywhere we added it
+      AnalyzeAndRewrite preAnalyze analyze preRewrite rewrite _ -> do
         (entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
         let Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
         let cfgs = FR.recoverFunctions isa mem blockInfo
@@ -1062,7 +1064,7 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
             r <- RE.redirect isa blockInfo textAddrRange rewriter mem strat layoutAddr baseSymBlocks
             return (analysisResult, r)
         (analysisResult, (allBlocks, injected, blockPairs)) <- extractOrThrowRewriterResult eBlocks r1
-        verificationResult <- IO.liftIO (verify rae analysisResult (map RT.toRewritePair blockPairs))
+        riRewritePairs L..= map RT.toRewritePair blockPairs
         let s1 = RE.rrState r1
         let newSyms = RE.rwsNewSymbolsMap s1
 
@@ -1079,7 +1081,8 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
           RenovateConfig { rcAssembler = asm } -> do
             (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks injected
             let newDataBytes = mkNewDataSection newGlobalBase info
-            return (analysisResult, verificationResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms, RE.blockMapping (RE.rwsStats s1))
+            -- TODO: eliminate verificationResult from everywhere
+            return (analysisResult, undefined "verificationResult", overwrittenBytes, instrumentationBytes, newDataBytes, newSyms, RE.blockMapping (RE.rwsStats s1))
 
 
 -- | Helper for handling the error case of `RewriterT`.
