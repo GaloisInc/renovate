@@ -29,7 +29,6 @@ module Renovate.Rewrite (
 
 import qualified Control.Monad.Identity as I
 import qualified Control.Monad.RWS.Strict as RWS
-import           Control.Monad.ST ( RealWorld )
 import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import qualified Data.Map.Strict as M
@@ -107,7 +106,7 @@ data RewriteEnv arch = RewriteEnv
   -- ^ ISA for arch
   , envABI :: ABI.ABI arch
   -- ^ ABI for arch
-  , envHandleAllocator :: C.HandleAllocator RealWorld
+  , envHandleAllocator :: C.HandleAllocator
   -- ^ Crucible handle allocator in use
   }
 -- | A map of block addresses to the set of CFGs that contains them
@@ -154,7 +153,7 @@ mkRewriteEnv
   -> RR.BlockInfo arch
   -> ISA.ISA arch
   -> ABI.ABI arch
-  -> C.HandleAllocator RealWorld
+  -> C.HandleAllocator
   -> RewriteEnv arch
 mkRewriteEnv cfgs entryAddr mem blockInfo isa abi hAlloc = RewriteEnv
   { envBlockCFGIndex = mkBlockCFGIndex cfgs
