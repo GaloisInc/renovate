@@ -63,6 +63,7 @@ data Options = Options { oInput :: FilePath
                        , oLayoutRandom :: Bool
                        , oGrouping :: R.Grouping
                        , oBlocksToSkip :: [Word64]
+                       , oAlwaysTrampoline :: Bool
                        }
 
 optionsParser :: O.Parser Options
@@ -128,6 +129,10 @@ optionsParser = Options <$> O.strArgument (  O.metavar "FILE"
                                                     <> O.help "Do not rewrite the block at the given address (not even the identity rewrite)"
                                                     )
                                    )
+                        <*> O.switch ( O.long "always-trampoline"
+                                     <> O.help "Insert trampolines for every block that has been relocated, even if we think we fixed all the references to it"
+                                     )
+
 
 main :: IO ()
 main = X.catches (O.execParser optParser >>= mainWithOptions) handlers
@@ -159,15 +164,19 @@ mainWithOptions o = do
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 (analysis o)))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config (analysis o)))
                 ]
-  layout <-
+  allocator <-
     if oCompact o
     then if oLayoutRandom o
          then do
            gen <- MWC.createSystemRandom
            seed <- MWC.fromSeed <$> MWC.save gen
-           return $ R.Compact (R.RandomOrder seed) (oGrouping o)
-         else return $ R.Compact R.SortedOrder (oGrouping o)
-    else return $ R.Parallel (oGrouping o)
+           return $ R.Compact (R.RandomOrder seed)
+         else return $ R.Compact R.SortedOrder
+    else return $ R.Parallel
+  let trampolines = if oAlwaysTrampoline o
+                    then R.AlwaysTrampoline
+                    else R.WholeFunctionTrampoline
+      layout = R.LayoutStrategy allocator (oGrouping o) trampolines
 
   hdlAlloc <- C.newHandleAllocator
   someE <- case E.parseElf bytes of

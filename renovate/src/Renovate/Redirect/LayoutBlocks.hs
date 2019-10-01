@@ -4,8 +4,9 @@ module Renovate.Redirect.LayoutBlocks (
   Layout(..),
   layoutBlocks,
   LayoutStrategy(..),
+  Allocator(..),
+  TrampolineStrategy(..),
   Grouping(..),
-  grouping,
   CompactOrdering(..),
   RewritePair(..)
   ) where
@@ -22,7 +23,8 @@ import           Renovate.Redirect.Monad
 import           Renovate.Redirect.LayoutBlocks.Compact ( Layout(..), compactLayout )
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , Grouping(..)
-                                                      , grouping
+                                                      , Allocator(..)
+                                                      , TrampolineStrategy(..)
                                                       , CompactOrdering(..)
                                                       , SymbolicPair
                                                       , AddressAssignedPair

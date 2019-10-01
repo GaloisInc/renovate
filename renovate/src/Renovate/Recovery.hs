@@ -144,11 +144,11 @@ analyzeDiscoveredFunctions recovery mem textAddrRange info !iterations =
         _ -> return ()
       analyzeDiscoveredFunctions recovery mem textAddrRange info' (iterations + 1)
 
-toRegCFG :: forall arch ids s
+toRegCFG :: forall arch ids
           . (MS.SymArchConstraints arch)
-         => C.HandleAllocator s
+         => C.HandleAllocator
          -> MC.DiscoveryFunInfo arch ids
-         -> Maybe (ST s (SCFG CR.SomeCFG arch))
+         -> Maybe (IO (SCFG CR.SomeCFG arch))
 toRegCFG halloc dfi = do
   archFns <- MS.archFunctions <$> MS.archVals (Proxy @arch)
   -- We only support statically linked binaries right now, so we don't have
@@ -254,7 +254,7 @@ blockInfo recovery mem textAddrRange di = do
       guard (not (isIncompleteFunction dfi))
       funcAddr <- concreteFromSegmentOff mem (MC.discoveredFunAddr dfi)
       regCFGGen <- toRegCFG (recoveryHandleAllocator recovery) dfi
-      let regCFG = SymbolicRegCFG (Cached regIor (stToIO regCFGGen))
+      let regCFG = SymbolicRegCFG (Cached regIor regCFGGen)
       cfgGen <- toCFG regCFG
       let cfg = SymbolicCFG (Cached cfgIor cfgGen)
       return (return (Just (funcAddr, (cfg, regCFG))))
@@ -284,7 +284,7 @@ data Recovery arch =
            , recoveryDis :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, Instruction arch ())
            , recoveryAsm :: forall m . (C.MonadThrow m) => Instruction arch () -> m B.ByteString
            , recoveryArchInfo :: MC.ArchitectureInfo arch
-           , recoveryHandleAllocator :: C.HandleAllocator RealWorld
+           , recoveryHandleAllocator :: C.HandleAllocator
            , recoveryBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
            , recoveryFuncCallback :: Maybe (Int, MC.ArchSegmentOff arch -> BlockInfo arch -> IO ())
            }
@@ -495,6 +495,7 @@ isIncompleteBlock pb =
     MC.ParsedLookupTable {} -> False
     MC.ParsedJump {} -> False
     MC.ParsedCall {} -> False
+    MC.PLTStub {} -> False
 
 {- Note [Unaligned Instructions]
 

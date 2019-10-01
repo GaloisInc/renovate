@@ -1,6 +1,7 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NondecreasingIndentation #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -61,7 +62,6 @@ import           Control.Monad ( guard, when )
 import qualified Control.Monad.Catch as C
 import qualified Control.Monad.Catch.Pure as P
 import qualified Control.Monad.IO.Class as IO
-import           Control.Monad.ST ( RealWorld )
 import qualified Control.Monad.State.Strict as S
 import           Data.Bits ( Bits, (.|.) )
 import qualified Data.ByteString as B
@@ -71,7 +71,7 @@ import qualified Data.Foldable as F
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
-import           Data.Maybe ( catMaybes, fromMaybe, maybeToList, listToMaybe, isJust )
+import           Data.Maybe ( fromMaybe, maybeToList, listToMaybe, isJust )
 import           Data.Monoid
 import qualified Data.Ord as O
 import qualified Data.Sequence as Seq
@@ -183,7 +183,7 @@ rewriteElf :: (B.InstructionConstraints arch,
                MS.SymArchConstraints arch)
            => RenovateConfig arch binFmt (AnalyzeAndRewrite lm v) b
            -- ^ The configuration for the rewriter
-           -> C.HandleAllocator RealWorld
+           -> C.HandleAllocator
            -- ^ A handle allocator for allocating crucible function handles (used for lifting macaw->crucible)
            -> E.Elf (MM.ArchAddrWidth arch)
            -- ^ The ELF file to rewrite
@@ -195,9 +195,8 @@ rewriteElf :: (B.InstructionConstraints arch,
            -> IO (E.Elf (MM.ArchAddrWidth arch), (b arch, v), RewriterInfo lm arch)
 rewriteElf cfg hdlAlloc e loadedBinary strat = do
     (analysisResult, ri) <- runElfRewriter e $ do
-      let mem = MBL.memoryImage loadedBinary
       -- FIXME: Use the symbol map from the loaded binary (which we still need to add)
-      symmap <- withCurrentELF (buildSymbolMap mem)
+      symmap <- withCurrentELF buildSymbolMap
       doRewrite cfg hdlAlloc loadedBinary symmap strat
     return (_riELF ri, analysisResult, ri)
 
@@ -211,7 +210,7 @@ analyzeElf :: (B.InstructionConstraints arch,
                MS.SymArchConstraints arch)
            => RenovateConfig arch binFmt AnalyzeOnly b
            -- ^ The configuration for the analysis
-           -> C.HandleAllocator RealWorld
+           -> C.HandleAllocator
            -> E.Elf (MM.ArchAddrWidth arch)
            -- ^ The ELF file to analyze
            -> MBL.LoadedBinary arch binFmt
@@ -220,7 +219,7 @@ analyzeElf :: (B.InstructionConstraints arch,
            -> IO (b arch, [RE.Diagnostic])
 analyzeElf cfg hdlAlloc e loadedBinary = do
   (b, ri) <- runElfRewriter e $ do
-    symmap <- withCurrentELF (buildSymbolMap (MBL.memoryImage loadedBinary))
+    symmap <- withCurrentELF buildSymbolMap
     textSection <- withCurrentELF findTextSection
     let textRange = sectionAddressRange textSection
     withAnalysisEnv cfg hdlAlloc loadedBinary symmap textRange $ \env -> do
@@ -435,7 +434,7 @@ doRewrite :: (B.InstructionConstraints arch,
               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
               MS.SymArchConstraints arch)
           => RenovateConfig arch binFmt (AnalyzeAndRewrite lm v) b
-          -> C.HandleAllocator RealWorld
+          -> C.HandleAllocator
           -> MBL.LoadedBinary arch binFmt
           -> RE.SymbolMap arch
           -> RE.LayoutStrategy
@@ -571,21 +570,33 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- Now overwrite the original code (in the .text segment) with the
   -- content computed by our transformation.
   modifyCurrentELF (overwriteTextSection overwrittenBytes)
+  let newSegment = phdrSegment phdrSegmentAddress
+      newSegmentCount = E.elfSegmentIndex newSegment + 1
   -- Increment all of the segment indexes so that we can reserve the first
   -- segment index (0) for our fresh PHDR segment that we want at the beginning
   -- of the PHDR table (but not at the first offset)
-  modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments incrementSegmentNumber e)
+  modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments (incrementSegmentNumber newSegmentCount) e)
   -- Note: We have to update the GNU Stack and GnuRelroRegion segment numbers
   -- independently, as they are handled specially in elf-edit.
-  modifyCurrentELF (\e -> ((),) <$> fixOtherSegmentNumbers e)
-  modifyCurrentELF (appendSegment (phdrSegment (fromIntegral phdrSegmentAddress)))
+  modifyCurrentELF (\e -> ((),) <$> fixOtherSegmentNumbers newSegmentCount e)
+  -- Any PHDR segments that existed before have got wrong data or padding in
+  -- them now, so they're no good to anybody. We'll keep them around so that
+  -- other parts of the ELF don't shift around, but inform the audience that
+  -- they're uninteresting.
+  modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments nullifyPhdr e)
+  modifyCurrentELF (appendSegment newSegment)
   return (analysisResult, verificationResult)
+
+nullifyPhdr :: Applicative f => E.ElfSegment w -> f (E.ElfSegment w)
+nullifyPhdr s = pure $ case E.elfSegmentType s of
+  E.PT_PHDR -> s { E.elfSegmentType = E.PT_NULL }
+  _ -> s
 
 -- | The (base) virtual address to lay out the PHDR table at
 --
 -- NOTE: We probably want to think more carefully about the alignment of this
 -- address.  Currently, we page align it.
-phdrSegmentAddress :: Word64
+phdrSegmentAddress :: Num a => a
 phdrSegmentAddress = 0x900000
 
 -- | Count the number of program headers (i.e., entries in the PHDR table)
@@ -636,39 +647,46 @@ phdrSegment :: (E.ElfWidthConstraints w)
             -> E.ElfSegment w
 phdrSegment addr =
   let alignedAddr = alignValue addr (fromIntegral pageAlignment)
-  in E.ElfSegment { E.elfSegmentType = E.PT_LOAD
-                  , E.elfSegmentFlags = E.pf_r
-                  , E.elfSegmentIndex = 0
-                  , E.elfSegmentVirtAddr = alignedAddr
-                  , E.elfSegmentPhysAddr = alignedAddr
-                  , E.elfSegmentAlign = fromIntegral pageAlignment
-                  , E.elfSegmentMemSize = E.ElfRelativeSize 0
-                  , E.elfSegmentData = Seq.singleton E.ElfDataSegmentHeaders
-                  }
+      containerSegment = E.ElfSegment
+        -- Why not E.PT_NULL here? Answer: glibc really, *really* wants the program
+        -- headers to be visible in its mapped memory somewhere. So we definitely
+        -- have to add them as part of a loadable segment.
+        { E.elfSegmentType = E.PT_LOAD
+        , E.elfSegmentFlags = E.pf_r
+        -- Our caller expects the index of the container to be the
+        -- largest index of any segment defined here.
+        , E.elfSegmentIndex = 1
+        , E.elfSegmentVirtAddr = alignedAddr
+        , E.elfSegmentPhysAddr = alignedAddr
+        , E.elfSegmentAlign = fromIntegral pageAlignment
+        , E.elfSegmentMemSize = E.ElfRelativeSize 0
+        , E.elfSegmentData = Seq.singleton (E.ElfDataSegment containedSegment)
+        }
+      containedSegment = containerSegment
+        { E.elfSegmentType = E.PT_PHDR
+        -- The spec says that if there's a PHDR segment, it must be the first one.
+        , E.elfSegmentIndex = 0
+        , E.elfSegmentData = Seq.singleton E.ElfDataSegmentHeaders
+        }
+  in containerSegment
 
-incrementSegmentNumber :: (Monad m) => E.ElfSegment w -> m (E.ElfSegment w)
-incrementSegmentNumber seg = return seg { E.elfSegmentIndex = E.elfSegmentIndex seg + 1 }
+incrementSegmentNumber :: (Monad m) => E.SegmentIndex -> E.ElfSegment w -> m (E.ElfSegment w)
+incrementSegmentNumber n seg = return seg { E.elfSegmentIndex = E.elfSegmentIndex seg + n }
 
 buildSymbolMap :: (w ~ MM.ArchAddrWidth arch, Integral (E.ElfWordType w), MM.MemWidth w)
-               => MM.Memory w
-               -> E.Elf w
+               => E.Elf w
                -> ElfRewriter lm arch (RE.SymbolMap arch)
-buildSymbolMap _mem elf = do
-  case filter isSymbolTable (F.toList (E._elfFileData elf)) of
-    [E.ElfDataSymtab table] -> do
-      let entries = catMaybes (map mkPair (F.toList (E.elfSymbolTableEntries table)))
-      return (foldr (uncurry Map.insert) mempty entries)
-    -- TODO: can there be more than 1 symbol table?
-    _ -> return mempty
-  where
-    mkPair e
-      | let addr = RA.concreteFromAbsolute (fromIntegral (E.steValue e))
-      , E.steType e == E.STT_FUNC = Just (addr, E.steName e)
-      | otherwise = Nothing
-
-isSymbolTable :: E.ElfDataRegion w -> Bool
-isSymbolTable (E.ElfDataSymtab{}) = True
-isSymbolTable _                   = False
+buildSymbolMap elf = return . flip foldMap (E._elfFileData elf) $ \case
+  E.ElfDataSymtab table -> flip foldMap (E.elfSymbolTableEntries table) $ \case
+    -- dynamically linked functions are all reported as having address 0; let's
+    -- skip those so we don't try to dereference a null pointer later when
+    -- converting from ConcreteAddress to MemSegmentOff
+    E.EST { E.steType = E.STT_FUNC
+          , E.steValue = v
+          , E.steName = n
+          } | v /= 0 -> Map.singleton (RA.concreteFromAbsolute (fromIntegral v)) n
+    _ -> mempty
+  _ -> mempty
 
 -- | Build a new symbol table based on the one in the original ELF file
 --
@@ -719,15 +737,15 @@ newTextAlign = 0x10000
 -- However, elf-edit handles the GNU_STACK and Relro segments specially.  This
 -- function acts as a traversal over these special segments and increments their
 -- segment numbers.
-fixOtherSegmentNumbers :: (Monad m) => E.Elf w -> m (E.Elf w)
-fixOtherSegmentNumbers e =
+fixOtherSegmentNumbers :: (Monad m) => E.SegmentIndex -> E.Elf w -> m (E.Elf w)
+fixOtherSegmentNumbers n e =
   return e { E.elfGnuStackSegment = fmap updateStackIndex (E.elfGnuStackSegment e)
            , E.elfGnuRelroRegions = fmap updateRelroIndex (E.elfGnuRelroRegions e)
            }
   where
-    updateStackIndex gs = gs { E.gnuStackSegmentIndex = E.gnuStackSegmentIndex gs + 1 }
-    updateRelroIndex rr = rr { E.relroSegmentIndex = E.relroSegmentIndex rr + 1
-                             , E.relroRefSegmentIndex = E.relroRefSegmentIndex rr + 1
+    updateStackIndex gs = gs { E.gnuStackSegmentIndex = E.gnuStackSegmentIndex gs + n }
+    updateRelroIndex rr = rr { E.relroSegmentIndex = E.relroSegmentIndex rr + n
+                             , E.relroRefSegmentIndex = E.relroRefSegmentIndex rr + n
                              }
 
 -- | Get the current symbol table
@@ -1012,7 +1030,7 @@ instrumentTextSection :: forall w arch binFmt b lm v
                           Integral (E.ElfWordType w),
                           MS.SymArchConstraints arch)
                       => RenovateConfig arch binFmt (AnalyzeAndRewrite lm v) b
-                      -> C.HandleAllocator RealWorld
+                      -> C.HandleAllocator
                       -> MBL.LoadedBinary arch binFmt
                       -- ^ The memory space
                       -> (RA.ConcreteAddress arch, RA.ConcreteAddress arch)
@@ -1104,7 +1122,7 @@ withAnalysisEnv :: forall w arch binFmt callbacks b a lm
                        Integral (E.ElfWordType w),
                        MS.SymArchConstraints arch)
                    => RenovateConfig arch binFmt callbacks b
-                   -> C.HandleAllocator RealWorld
+                   -> C.HandleAllocator
                    -> MBL.LoadedBinary arch binFmt
                    -- ^ The memory space
                    -> RE.SymbolMap arch

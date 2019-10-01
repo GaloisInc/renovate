@@ -7,7 +7,6 @@
 -- | Tests for the x64 ABI
 module X64 ( x64Tests ) where
 
-import           Control.Monad.ST ( RealWorld )
 import qualified Data.ByteString as B
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -31,7 +30,7 @@ import qualified Renovate.Arch.X86_64 as R64
 
 import qualified Data.ElfEdit as E
 
-x64Tests :: C.HandleAllocator RealWorld -> [FilePath] -> T.TestTree
+x64Tests :: C.HandleAllocator -> [FilePath] -> T.TestTree
 x64Tests hdlAlloc asmFiles = T.testGroup "x64 ABI tests" (map (mkTest hdlAlloc) asmFiles)
 
 {-
@@ -74,7 +73,7 @@ data ExpectedResult = ExpectedResult { expectedBlocks :: [ExpectedBlock]
                                      }
                     deriving (Read, Show, Eq)
 
-mkTest :: C.HandleAllocator RealWorld -> FilePath -> T.TestTree
+mkTest :: C.HandleAllocator -> FilePath -> T.TestTree
 mkTest hdlAlloc fp = T.testCase fp $ withELF elfFilename testRewrite
   where
     elfFilename = replaceExtension fp "exe"
@@ -115,7 +114,7 @@ testBlockRecovery :: (w ~ MM.ArchAddrWidth arch,
                       E.ElfWidthConstraints w,
                       MS.SymArchConstraints arch
                      )
-                  => C.HandleAllocator RealWorld
+                  => C.HandleAllocator
                   -> R.RenovateConfig arch binFmt R.AnalyzeOnly TestConfig
                   -> E.Elf w
                   -> MBL.LoadedBinary arch binFmt

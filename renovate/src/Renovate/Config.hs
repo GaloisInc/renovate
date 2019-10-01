@@ -73,7 +73,7 @@ data AnalysisEnv arch binFmt =
               , aeBlockInfo :: R.BlockInfo arch
               , aeISA :: ISA.ISA arch
               , aeABI :: ABI.ABI arch
-              , aeHandleAllocator :: C.HandleAllocator RealWorld
+              , aeHandleAllocator :: C.HandleAllocator
               }
 
 -- | Likewise, this type is for implementing 'HasSymbolicBlockMap'
@@ -114,7 +114,7 @@ class HasAnalysisEnv env where
   analysisBlockInfo :: env arch binFmt  -> R.BlockInfo arch
   analysisISA :: env arch binFmt -> ISA.ISA arch
   analysisABI :: env arch binFmt -> ABI.ABI arch
-  analysisHandleAllocator :: env arch binFmt -> C.HandleAllocator RealWorld
+  analysisHandleAllocator :: env arch binFmt -> C.HandleAllocator
 
 -- | This additional environment is available to the rewriter.  It has
 -- information derived from the analysis environment that is useful for
