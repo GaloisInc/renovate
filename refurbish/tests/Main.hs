@@ -59,12 +59,12 @@ main = do
   hdlAlloc <- C.newHandleAllocator
   let injection = [ ("tests/injection-base/injection-base.ppc64.exe", "tests/injection-base/ppc64-exit.bin")]
   T.defaultMain $ T.testGroup "RefurbishTests" [
-    rewritingTests mRunner hdlAlloc (R.Parallel R.BlockGrouping) exes,
-    rewritingTests mRunner hdlAlloc (R.Compact R.SortedOrder R.BlockGrouping) exes,
-    rewritingTests mRunner hdlAlloc (R.Compact R.SortedOrder R.LoopGrouping) exes,
-    rewritingTests mRunner hdlAlloc (R.Compact R.SortedOrder R.FunctionGrouping) exes,
-    codeInjectionTests mRunner hdlAlloc (R.Parallel R.BlockGrouping) injection,
-    codeInjectionTests mRunner hdlAlloc (R.Compact R.SortedOrder R.BlockGrouping) injection
+    rewritingTests mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.WholeFunctionTrampoline) exes,
+    rewritingTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.WholeFunctionTrampoline) exes,
+    rewritingTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.LoopGrouping R.WholeFunctionTrampoline) exes,
+    rewritingTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.FunctionGrouping R.WholeFunctionTrampoline) exes,
+    codeInjectionTests mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.WholeFunctionTrampoline) injection,
+    codeInjectionTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.WholeFunctionTrampoline) injection
     ]
 
 -- | Generate a set of tests for the code injection API
@@ -73,7 +73,7 @@ main = do
 -- a non-zero exit code and use the code injection API to insert a call to a
 -- function that instead makes it exit with 0.
 codeInjectionTests :: Maybe RD.Runner
-                   -> C.HandleAllocator RealWorld
+                   -> C.HandleAllocator
                    -> R.LayoutStrategy
                    -> [(FilePath, FilePath)]
                    -> T.TestTree
@@ -81,7 +81,7 @@ codeInjectionTests mRunner hdlAlloc strat exes =
   T.testGroup ("Injecting " ++ show strat) (map (toCodeInjectionTest mRunner hdlAlloc strat) exes)
 
 toCodeInjectionTest :: Maybe RD.Runner
-                    -> C.HandleAllocator RealWorld
+                    -> C.HandleAllocator
                     -> R.LayoutStrategy
                     -> (FilePath, FilePath)
                     -> T.TestTree
@@ -98,7 +98,7 @@ toCodeInjectionTest mRunner hdlAlloc strat (exePath, injectCodePath) = T.testCas
 -- If the runner is not 'Nothing', each test will use the runner to validate
 -- that the executable still runs correctly
 rewritingTests :: Maybe RD.Runner
-               -> C.HandleAllocator RealWorld
+               -> C.HandleAllocator
                -> R.LayoutStrategy
                -> [FilePath]
                -> T.TestTree
@@ -107,7 +107,7 @@ rewritingTests mRunner hdlAlloc strat exes =
               (map (toRewritingTest mRunner hdlAlloc strat) exes)
 
 toRewritingTest :: Maybe RD.Runner
-                -> C.HandleAllocator RealWorld
+                -> C.HandleAllocator
                 -> R.LayoutStrategy
                 -> FilePath
                 -> T.TestTree
@@ -126,7 +126,7 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , MBL.BinaryLoader arch (E.Elf w)
                 )
              => Maybe RD.Runner
-             -> C.HandleAllocator RealWorld
+             -> C.HandleAllocator
              -> R.LayoutStrategy
              -> FilePath
              -> ((E.ExitCode, E.ExitCode) -> (String, String) -> (String, String) -> IO ())
