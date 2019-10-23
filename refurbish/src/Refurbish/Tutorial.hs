@@ -127,33 +127,11 @@ myRewriter env nBlocks (RewriteState newFuncAddr) symBlock =
 :}
 
 >>> :{
--- | The verifier runs after the rewriter and can be used to check that the
--- rewriter did something sensible. It's provided with the correspondence
--- between original blocks and rewritten blocks.
---
--- For our simple verification, we'll just check that there are at least as
--- many instructions in the rewritten form.
-myVerifier :: env arch binFmt
-           -> Const Int arch
-           -> [R.RewritePair arch]
-           -> IO Bool
-myVerifier env nBlocks blockPairs =
-  return (all (\(R.RewritePair origBlock mNewBlock)
-               -> all (\newBlock -> length (R.basicBlockInstructions origBlock)
-                                 <= length (R.basicBlockInstructions newBlock)
-                      ) mNewBlock
-              )
-              blockPairs
-         )
-:}
-
->>> :{
-analysis :: R.AnalyzeAndRewrite lm Bool arch binFmt (Const Int)
+analysis :: R.AnalyzeAndRewrite lm arch binFmt (Const Int)
 analysis = R.AnalyzeAndRewrite { R.arPreAnalyze = myPreAnalysis
                                , R.arAnalyze = myAnalysis
                                , R.arPreRewrite = myPreRewriter
                                , R.arRewrite = myRewriter
-                               , R.arVerify = myVerifier
                                }
 :}
 

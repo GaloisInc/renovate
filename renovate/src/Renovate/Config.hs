@@ -41,7 +41,6 @@ import qualified Renovate.BasicBlock as B
 import qualified Renovate.ABI as ABI
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as R
-import qualified Renovate.Redirect.LayoutBlocks.Types as RR
 import qualified Renovate.Rewrite as RW
 
 -- | A wrapper around a 'RenovateConfig' that hides parameters and
@@ -137,13 +136,12 @@ data AnalyzeOnly arch binFmt b =
 -- allocating global variables and injecting code in the rewriting context.
 --
 -- Note that the analysis is still in IO.
-data AnalyzeAndRewrite lm v arch binFmt b =
+data AnalyzeAndRewrite lm arch binFmt b =
   forall preAnalyzeState rewriterState .
   AnalyzeAndRewrite { arPreAnalyze :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> RW.RewriteM lm arch (preAnalyzeState arch)
                     , arAnalyze :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> preAnalyzeState arch -> IO (b arch)
                     , arPreRewrite :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> b arch -> RW.RewriteM lm arch (rewriterState arch)
                     , arRewrite :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
-                    , arVerify :: forall env. (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> b arch -> [RR.RewritePair arch] -> IO v
                     }
 
 -- | The configuration required for a run of the binary rewriter.

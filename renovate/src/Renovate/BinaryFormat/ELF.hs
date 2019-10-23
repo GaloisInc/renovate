@@ -182,7 +182,7 @@ rewriteElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                MS.SymArchConstraints arch)
-           => RenovateConfig arch binFmt (AnalyzeAndRewrite lm v) b
+           => RenovateConfig arch binFmt (AnalyzeAndRewrite lm) b
            -- ^ The configuration for the rewriter
            -> C.HandleAllocator
            -- ^ A handle allocator for allocating crucible function handles (used for lifting macaw->crucible)
@@ -193,7 +193,7 @@ rewriteElf :: (B.InstructionConstraints arch,
            -- (including statically-allocated data)
            -> RE.LayoutStrategy
            -- ^ The layout strategy for blocks in the new binary
-           -> IO (E.Elf (MM.ArchAddrWidth arch), (b arch, v), RewriterInfo lm arch)
+           -> IO (E.Elf (MM.ArchAddrWidth arch), b arch, RewriterInfo lm arch)
 rewriteElf cfg hdlAlloc e loadedBinary strat = do
     (analysisResult, ri) <- runElfRewriter e $ do
       -- FIXME: Use the symbol map from the loaded binary (which we still need to add)
@@ -434,12 +434,12 @@ doRewrite :: (B.InstructionConstraints arch,
               MBL.BinaryLoader arch binFmt,
               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
               MS.SymArchConstraints arch)
-          => RenovateConfig arch binFmt (AnalyzeAndRewrite lm v) b
+          => RenovateConfig arch binFmt (AnalyzeAndRewrite lm) b
           -> C.HandleAllocator
           -> MBL.LoadedBinary arch binFmt
           -> RE.SymbolMap arch
           -> RE.LayoutStrategy
-          -> ElfRewriter lm arch (b arch, v)
+          -> ElfRewriter lm arch (b arch)
 doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- We pull some information from the unmodified initial binary: the text
   -- section, the entry point(s), and original symbol table (if any).
@@ -509,7 +509,6 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
       textSectionRange = sectionAddressRange textSection
 
   ( analysisResult
-    , verificationResult
     , overwrittenBytes
     , instrumentedBytes
     , mNewData
@@ -586,7 +585,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- they're uninteresting.
   modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments nullifyPhdr e)
   modifyCurrentELF (appendSegment newSegment)
-  return (analysisResult, verificationResult)
+  return analysisResult
 
 nullifyPhdr :: Applicative f => E.ElfSegment w -> f (E.ElfSegment w)
 nullifyPhdr s = pure $ case E.elfSegmentType s of
@@ -1024,13 +1023,13 @@ nextSegmentIndex = fromIntegral . programHeaderCount
 -- As a side effect of running the instrumentor, we get information
 -- about how much extra space needs to be reserved in a new data
 -- section.  The new data section is rooted at @newGlobalBase@.
-instrumentTextSection :: forall w arch binFmt b lm v
+instrumentTextSection :: forall w arch binFmt b lm
                        . (w ~ MM.ArchAddrWidth arch,
                           MBL.BinaryLoader arch binFmt,
                           B.InstructionConstraints arch,
                           Integral (E.ElfWordType w),
                           MS.SymArchConstraints arch)
-                      => RenovateConfig arch binFmt (AnalyzeAndRewrite lm v) b
+                      => RenovateConfig arch binFmt (AnalyzeAndRewrite lm) b
                       -> C.HandleAllocator
                       -> MBL.LoadedBinary arch binFmt
                       -- ^ The memory space
@@ -1046,7 +1045,7 @@ instrumentTextSection :: forall w arch binFmt b lm v
                       -- ^ The address to lay out the new data section
                       -> RE.SymbolMap arch
                       -- ^ meta data?
-                      -> ElfRewriter lm arch (b arch, v, B.ByteString, B.ByteString, Maybe B.ByteString, RE.NewSymbolsMap arch, [(RE.ConcreteAddress arch, RE.ConcreteAddress arch)])
+                      -> ElfRewriter lm arch (b arch, B.ByteString, B.ByteString, Maybe B.ByteString, RE.NewSymbolsMap arch, [(RE.ConcreteAddress arch, RE.ConcreteAddress arch)])
 instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartAddr, textSectionEndAddr) textBytes strat layoutAddr newGlobalBase symmap = do
   withAnalysisEnv cfg hdlAlloc loadedBinary symmap textAddrRange $ \aenv -> do
     let isa = analysisISA aenv
@@ -1061,8 +1060,7 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
                                   , raeSymBlockMap = symbolicBlockMap
                                   }
     case rcAnalysis cfg of
-      -- TODO: eliminate arVerify from everywhere we added it
-      AnalyzeAndRewrite preAnalyze analyze preRewrite rewrite _ -> do
+      AnalyzeAndRewrite preAnalyze analyze preRewrite rewrite -> do
         (entryPoint NEL.:| _) <- MBL.entryPoints loadedBinary
         let Just concEntryPoint = RA.concreteFromSegmentOff mem entryPoint
         let cfgs = FR.recoverFunctions isa mem blockInfo
@@ -1100,8 +1098,7 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
           RenovateConfig { rcAssembler = asm } -> do
             (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks injected
             let newDataBytes = mkNewDataSection newGlobalBase info
-            -- TODO: eliminate verificationResult from everywhere
-            return (analysisResult, undefined "verificationResult", overwrittenBytes, instrumentationBytes, newDataBytes, newSyms, RE.blockMapping (RE.rwsStats s1))
+            return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms, RE.blockMapping (RE.rwsStats s1))
 
 
 -- | Helper for handling the error case of `RewriterT`.

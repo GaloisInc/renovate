@@ -9,13 +9,12 @@ import qualified Test.Tasty.HUnit as T
 
 import qualified Renovate as R
 
-analysis :: R.AnalyzeAndRewrite lm () arch binFmt (Const ())
+analysis :: R.AnalyzeAndRewrite lm arch binFmt (Const ())
 analysis =
   R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
                       , R.arAnalyze = \_ _ -> return (Const ())
                       , R.arPreRewrite = \_ _ -> return (Const ())
                       , R.arRewrite = \_ _ _ b -> return (Just (R.basicBlockInstructions b))
-                      , R.arVerify = \_ _ _ -> return ()
                       }
 
 allOutputEqual :: (E.ExitCode, E.ExitCode) -> (String, String) -> (String, String) -> IO ()

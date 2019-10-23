@@ -21,13 +21,12 @@ import qualified Renovate.Arch.PPC as RP
 
 injectionAnalysis :: BS.ByteString
                   -> (forall env . (R.HasAnalysisEnv env) => env arch binFmt -> Const () arch -> InjectedAddr arch -> R.SymbolicBlock arch -> R.RewriteM lm arch (Maybe ([R.TaggedInstruction arch (R.InstructionAnnotation arch)])))
-                  -> R.AnalyzeAndRewrite lm () arch binFmt (Const ())
+                  -> R.AnalyzeAndRewrite lm arch binFmt (Const ())
 injectionAnalysis injCode injRewrite =
   R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
                       , R.arAnalyze = \_ _ -> return (Const ())
                       , R.arPreRewrite = injectPreRewrite injCode
                       , R.arRewrite = injRewrite
-                      , R.arVerify = \_ _ _ -> return ()
                       }
 
 data InjectedAddr arch = InjectedAddr (R.SymbolicAddress arch)
