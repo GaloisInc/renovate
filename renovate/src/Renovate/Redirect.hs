@@ -30,6 +30,8 @@ import           Control.Monad.Trans ( MonadIO, lift )
 import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import qualified Data.List as L
+import           Data.Map (Map)
+import qualified Data.Map as M
 import           Data.Ord ( comparing )
 import qualified Data.Traversable as T
 
@@ -52,7 +54,8 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , ConcretePair(..)
                                                       , SymbolicPair(..)
                                                       , LayoutPair(..)
-                                                      , RewritePair(..) )
+                                                      , RewritePair(..)
+                                                      , changed )
 import           Renovate.Redirect.Internal
 import qualified Renovate.Redirect.Monad as RM
 import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions )
@@ -128,6 +131,7 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
   let injectedBlocks = injectedBlockLayout layout
   RM.recordBlockMap (toBlockMapping concretizedBlocks)
   redirectedBlocks <- redirectOriginalBlocks concretizedBlocks
+  RM.recordBackwardBlockMap (toBackwardBlockMapping redirectedBlocks)
   let sortedBlocks = L.sortBy (comparing basicBlockAddress) (paddingBlocks ++ concatMap unPair (F.toList redirectedBlocks))
   return (sortedBlocks, injectedBlocks, concretizedBlocks)
   where
@@ -141,6 +145,14 @@ toBlockMapping :: [ConcretePair arch] -> [(ConcreteAddress arch, ConcreteAddress
 toBlockMapping ps =
   [ (basicBlockAddress (lpOrig lp), basicBlockAddress (lpNew lp))
   | ConcretePair lp <- ps
+  ]
+
+toBackwardBlockMapping :: [ConcretePair arch] -> Map (ConcreteAddress arch) (ConcreteAddress arch)
+toBackwardBlockMapping ps = M.fromList
+  [ (new, old)
+  | ConcretePair (LayoutPair (BasicBlock _ caddr) (BasicBlock _ saddr) status) <- ps
+  , (new, old) <- [(caddr, caddr) | status /= Subsumed]
+               ++ [(saddr, caddr) | changed status]
   ]
 
 isRelocatableTerminatorType :: JumpType arch -> Bool

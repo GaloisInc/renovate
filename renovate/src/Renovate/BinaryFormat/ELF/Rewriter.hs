@@ -35,6 +35,7 @@ module Renovate.BinaryFormat.ELF.Rewriter (
   riDiscoveredBlocks,
   riInstrumentedBytes,
   riBlockMapping,
+  riBackwardBlockMapping,
   riOutputBlocks,
   riRewritePairs,
   riFunctionBlocks,
@@ -217,6 +218,9 @@ riInstrumentedBytes = riStats . GL.field @"instrumentedBytes"
 
 riBlockMapping :: L.Simple L.Lens (RewriterInfo lm arch) [(RA.ConcreteAddress arch, RA.ConcreteAddress arch)]
 riBlockMapping = riStats . GL.field @"blockMapping"
+
+riBackwardBlockMapping :: L.Simple L.Lens (RewriterInfo lm arch) (M.Map (RA.ConcreteAddress arch) (RA.ConcreteAddress arch))
+riBackwardBlockMapping = riStats . GL.field @"backwardBlockMapping"
 
 riOutputBlocks :: L.Simple L.Lens (RewriterInfo lm arch) (Maybe SomeBlocks)
 riOutputBlocks = GL.field @"_riOutputBlocks"

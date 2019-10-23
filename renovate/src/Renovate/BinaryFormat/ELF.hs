@@ -48,6 +48,7 @@ module Renovate.BinaryFormat.ELF (
   riDiscoveredBlocks,
   riInstrumentedBytes,
   riBlockMapping,
+  riBackwardBlockMapping,
   riOutputBlocks,
   riRewritePairs,
   riFunctionBlocks,

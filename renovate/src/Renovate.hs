@@ -130,6 +130,7 @@ module Renovate
   E.riDiscoveredBlocks,
   E.riInstrumentedBytes,
   E.riBlockMapping,
+  E.riBackwardBlockMapping,
   E.riOutputBlocks,
   E.riRewritePairs,
   E.riFunctionBlocks,
