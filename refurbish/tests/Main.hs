@@ -9,7 +9,6 @@ module Main ( main ) where
 
 import           Control.DeepSeq ( force )
 import qualified Control.Exception as X
-import           Control.Monad.ST ( RealWorld )
 import           Data.Bits ( (.|.) )
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
