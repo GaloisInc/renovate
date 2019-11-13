@@ -19,9 +19,6 @@
 [submodule "deps/semmc"]
 	path = deps/semmc
 	url = git@github.com:GaloisInc/semmc.git
-[submodule "deps/macaw-semmc"]
-	path = deps/macaw-semmc
-	url = git@github.com:GaloisInc/macaw-semmc.git
 [submodule "deps/crucible"]
 	path = deps/crucible
 	url = git@github.com:GaloisInc/crucible.git
