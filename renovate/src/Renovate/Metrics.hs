@@ -31,7 +31,7 @@ countIncompleteBlocks =
       let blocks = dfi ^. MD.parsedBlocks . to M.toList
       in sum (map incompleteBlock blocks)
     incompleteBlock (_, b) =
-      case MD.stmtsTerm (MD.blockStatementList b) of
+      case MD.pblockTermStmt b of
         MD.ParsedTranslateError {} -> 1
         MD.ClassifyFailure {} -> 1
         _ -> 0
@@ -56,7 +56,7 @@ incompleteFunctions mem = F.foldl' addIncompleteFunc M.empty . M.toList . R.biFu
                          -> S.Set (RA.ConcreteAddress arch)
     addIfIncompleteBlock s (_, b)
       | Just caddr <- RA.concreteFromSegmentOff mem (MD.pblockAddr b)  =
-          case MD.stmtsTerm (MD.blockStatementList b) of
+          case MD.pblockTermStmt b of
             MD.ParsedTranslateError {} -> S.insert caddr s
             MD.ClassifyFailure {} -> S.insert caddr s
             _ -> s

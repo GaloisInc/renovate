@@ -167,7 +167,7 @@ withElfConfig e0 configs k = do
           | otherwise -> error ("Invalid NatRepr for PPC64: " ++ show nr)
     (E.Elf64 _, mach) -> C.throwM (UnsupportedArchitecture mach)
   where
-    loadOpts = MM.defaultLoadOptions { MM.loadRegionIndex = Just 0 }
+    loadOpts = MM.defaultLoadOptions { MM.loadOffset = Just 0 }
 
 -- | Apply a rewriter to an ELF file using the chosen layout strategy.
 --
@@ -241,7 +241,7 @@ withMemory :: forall w m a arch
 withMemory e k = do
   MBL.loadBinary loadOpts e >>= k
   where
-    loadOpts = MM.defaultLoadOptions { MM.loadRegionIndex = Just 0 }
+    loadOpts = MM.defaultLoadOptions { MM.loadOffset = Just 0 }
 
 findTextSection :: (w ~ MM.ArchAddrWidth arch) => E.Elf w -> ElfRewriter lm arch (E.ElfSection (E.ElfWordType w))
 findTextSection e = do

@@ -151,13 +151,10 @@ toRegCFG :: forall arch ids
          -> Maybe (IO (SCFG CR.SomeCFG arch))
 toRegCFG halloc dfi = do
   archFns <- MS.archFunctions <$> MS.archVals (Proxy @arch)
-  -- We only support statically linked binaries right now, so we don't have
-  -- to deal with segments
-  let memBaseVarMap = M.empty
   let nmTxt = T.decodeUtf8With T.lenientDecode (MC.discoveredFunName dfi)
   let nm = C.functionNameFromText nmTxt
   let posFn addr = C.BinaryPos nmTxt (maybe 0 fromIntegral (MC.segoffAsAbsoluteAddr addr))
-  return (MS.mkFunRegCFG archFns halloc memBaseVarMap nm posFn dfi)
+  return (MS.mkFunRegCFG archFns halloc nm posFn dfi)
 
 toCFG :: forall arch
        . (MS.SymArchConstraints arch)
@@ -486,11 +483,11 @@ isIncompleteFunction fi =
 -- why the analysis of @blk@ was incomplete.
 isIncompleteBlock :: (MC.MemWidth (MC.ArchAddrWidth arch)) => MC.ParsedBlock arch ids -> Bool
 isIncompleteBlock pb =
-  case MC.stmtsTerm (MC.blockStatementList pb) of
+  case MC.pblockTermStmt pb of
     MC.ParsedTranslateError {} -> True
     MC.ClassifyFailure {} -> True
+    MC.ParsedBranch {} -> False
     MC.ParsedArchTermStmt {} -> False
-    MC.ParsedIte {} -> False
     MC.ParsedReturn {} -> False
     MC.ParsedLookupTable {} -> False
     MC.ParsedJump {} -> False
