@@ -133,7 +133,7 @@ x86MoveImmediate
   -> Integer
   -> Instruction TargetAddress
 x86MoveImmediate tp dest_reg imm =
-  x86MakeMovInstr tp dest_reg (D.QWordImm $ fromIntegral imm)
+  x86MakeMovInstr tp dest_reg (D.QWordImm $ D.UImm64Concrete $ fromIntegral imm)
 
 x86Load
   :: Some MT.TypeRepr
@@ -157,7 +157,7 @@ x86StoreImmediate
   -> Integer
   -> Instruction TargetAddress
 x86StoreImmediate tp addr imm =
-  x86MakeMovInstr tp (x86StackAddress addr tp) (D.QWordImm $ fromIntegral imm)
+  x86MakeMovInstr tp (x86StackAddress addr tp) (D.QWordImm $ D.UImm64Concrete $ fromIntegral imm)
 
 x86AddImmediate :: Value -> Integer -> [Instruction TargetAddress]
 x86AddImmediate _ = x86OpSPImmediate $ B.pack [0x4c, 0x01, 0xd4]
@@ -172,7 +172,7 @@ x86OpSPImmediate :: B.ByteString -> Integer -> [Instruction TargetAddress]
 x86OpSPImmediate op_bytes imm = do
   let tmp_reg = D.QWordReg D.R10
   map noAddr $
-    [makeInstr "mov" [tmp_reg, D.QWordImm $ fromIntegral imm]]
+    [makeInstr "mov" [tmp_reg, D.QWordImm $ D.UImm64Concrete (fromIntegral imm)]]
     ++ (map fromFlexInst $
         mapMaybe D.disInstruction $ D.disassembleBuffer op_bytes)
 
