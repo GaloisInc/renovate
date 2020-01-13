@@ -101,7 +101,7 @@ newtype RewriteState arch = RewriteState (R.SymbolicAddress arch)
 :}
 
 >>> :{
--- | The pre-rewriting phase runs in the 'R.RewriteM' monad and nhas access to
+-- | The pre-rewriting phase runs in the 'R.RewriteM' monad and has access to
 -- the analysis results.  It can also be useful for allocating fresh global
 -- variables.
 myPreRewriter :: (R.HasAnalysisEnv env) => env arch binFmt -> Const Int arch -> R.RewriteM lm arch (RewriteState arch)
