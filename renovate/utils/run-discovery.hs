@@ -46,7 +46,7 @@ showDiscoveryInfo di =
     putStrLn $ "===== BEGIN FUNCTION " ++ show funAddr ++ " ====="
     forM_ (M.toList (dfi ^. parsedBlocks)) $ \(blockAddr, pb) -> do
       putStrLn $ "== begin block " ++ show blockAddr ++ " =="
-      putStrLn . show $ blockStatementList pb
+      putStrLn . show $ pblockStmts pb
       putStrLn ""
     putStrLn ""
     putStrLn ""
