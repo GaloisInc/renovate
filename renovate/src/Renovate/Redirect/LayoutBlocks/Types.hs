@@ -38,6 +38,10 @@ data Allocator       = Parallel
                      -- blocks will be filled with trap instructions.
                      -- Instrumented blocks will all be placed in a new text
                      -- section.
+                     | Randomized RandomSeed
+                     -- ^ Lay instrumented blocks randomly in a new text section.
+                     -- The excess space in the original blocks will be filled with
+                     -- trap instructions.
                      | Compact CompactOrdering
                      -- ^ Lay blocks out more compactly by re-using space in
                      -- original basic blocks to hold instrumented code.
