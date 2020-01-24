@@ -148,7 +148,8 @@ myAnalyzeElf :: E.SomeElf E.Elf -> IO Int
 myAnalyzeElf someElf = do
   fha <- FH.newHandleAllocator
   R.withElfConfig someElf analysisConfigs $ \config e loadedBinary -> do
-    (newElf, res, ri) <- R.rewriteElf config fha e loadedBinary (R.Parallel R.BlockGrouping)
+    let strat = R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline
+    (newElf, res, ri) <- R.rewriteElf config fha e loadedBinary strat
     print (getConst res)
     print (ri ^. R.riBlockMapping)
     return (getConst res)
