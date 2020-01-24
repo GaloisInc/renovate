@@ -88,6 +88,9 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
     -- the parallel strategy is now a special case of compact. In particular,
     -- we avoid allocating the heap and we avoid sorting the input blocklist.
     Parallel -> return (mempty, concat blockChunks')
+    -- the randomized strategy is also a special case of compact.
+    -- subject to similar constraints as parallel
+    Randomized _ -> return (mempty, concat blockChunks')
     -- We use blockChunks' (instead of blockChunks or modifiedBlockChunks)
     -- because buildAddressHeap checks the modification status, and
     -- reifyFallthroughSuccessors updates the modification status if it adds a
@@ -108,6 +111,7 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
       sortedBlocks = case allocator strat of
         Compact SortedOrder        -> L.sortOn    (bySize isa mem) newBlocks
         Compact (RandomOrder seed) -> randomOrder seed             newBlocks
+        Randomized seed            -> randomOrder seed             newBlocks
         Parallel                   -> newBlocks
 
   -- Allocate an address for each block (falling back to startAddr if the heap
@@ -119,10 +123,12 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
   -- from the original text section as padding instead. But it is safer to
   -- catch jumps that our tool didn't know about by landing at a halt
   -- instruction, when that is possible.
+  let overwriteAll = buildAddressHeap (trampolines strat) startAddr (concat blockChunks')
   (h2, blocks2) <- case allocator strat of
     -- In the parallel layout, we don't use any space reclaimed by redirecting
     -- things, so we should overwrite it all with padding.
-    Parallel -> buildAddressHeap (trampolines strat) startAddr (concat blockChunks')
+    Parallel -> overwriteAll
+    Randomized _ -> overwriteAll
     _ -> return (h1, blocks1)
 
   let paddingBlocks :: [ConcreteBlock arch]
