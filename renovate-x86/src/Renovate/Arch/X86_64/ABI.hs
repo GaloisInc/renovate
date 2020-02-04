@@ -81,17 +81,17 @@ x64AllocateMemory nBytes addr = [ noAddr $ makeInstr "push" [D.QWordReg D.RAX]
                                 , noAddr $ makeInstr "push" [D.QWordReg (D.Reg64 9)]
                                 , noAddr $ makeInstr "push" [D.QWordReg (D.Reg64 8)]
                                 -- Set up syscall
-                                , noAddr $ makeInstr "mov" [D.QWordReg D.RAX, D.QWordImm 9] -- Syscall number
+                                , noAddr $ makeInstr "mov" [D.QWordReg D.RAX, D.qwordFromInteger 9] -- Syscall number
                                 , noAddr $ makeInstr "xor" [D.QWordReg D.RDI, D.QWordReg D.RDI] -- Start address (no request, kernel decides)
-                                , noAddr $ makeInstr "mov" [D.QWordReg D.RSI, D.QWordImm (fromIntegral nBytes)] -- Amount to map
-                                , noAddr $ makeInstr "mov" [D.QWordReg D.RDX, D.QWordImm (prot_Read .|. prot_Write)] -- Memory protection
-                                , noAddr $ makeInstr "mov" [D.QWordReg (D.Reg64 10), D.QWordImm map_Anon] -- An anonymous mapping
-                                , noAddr $ makeInstr "mov" [D.QWordReg (D.Reg64 8), D.QWordImm maxBound] -- FD (should be -1)
+                                , noAddr $ makeInstr "mov" [D.QWordReg D.RSI, D.qwordFromIntegral nBytes] -- Amount to map
+                                , noAddr $ makeInstr "mov" [D.QWordReg D.RDX, D.qwordFromIntegral (prot_Read .|. prot_Write)] -- Memory protection
+                                , noAddr $ makeInstr "mov" [D.QWordReg (D.Reg64 10), D.qwordFromIntegral map_Anon] -- An anonymous mapping
+                                , noAddr $ makeInstr "mov" [D.QWordReg (D.Reg64 8), D.qwordFromIntegral (maxBound :: Word64)] -- FD (should be -1)
                                 , noAddr $ makeInstr "xor" [D.QWordReg (D.Reg64 9), D.QWordReg (D.Reg64 9)]
                                 , noAddr $ makeInstr "syscall" []
                                 -- Save the result FIXME: Error checking
                                   -- Put the address to store the result at into a register
-                                , noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (fromIntegral (R.absoluteAddress addr))]
+                                , noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.qwordFromIntegral (R.absoluteAddress addr)]
                                 , noAddr $ makeInstr "mov" [D.Mem64 destAddr, D.QWordReg D.RAX]
                                 -- Restore registers
                                 , noAddr $ makeInstr "pop" [D.QWordReg (D.Reg64 8)]
@@ -119,7 +119,7 @@ map_Anon = 0x20
 x64ComputeStackPointerOffset :: R.ConcreteAddress X86.X86_64 -> [Instruction TargetAddress]
 x64ComputeStackPointerOffset memAddr =
   [ noAddr $ makeInstr "push" [D.QWordReg D.RBX]
-  , noAddr $ makeInstr "mov" [D.QWordReg D.RBX, D.QWordImm (fromIntegral (R.absoluteAddress memAddr))]
+  , noAddr $ makeInstr "mov" [D.QWordReg D.RBX, D.qwordFromIntegral (R.absoluteAddress memAddr)]
   , noAddr $ makeInstr "sub" [D.Mem64 memRef, D.QWordReg D.RSP]
   , noAddr $ makeInstr "pop" [D.QWordReg D.RBX]
   ]
@@ -136,7 +136,7 @@ x64ComputeStackPointerOffset memAddr =
 -- stack space by modifying rsp).
 x64SaveReturnAddress :: R.ConcreteAddress X86.X86_64 -> [Instruction TargetAddress]
 x64SaveReturnAddress memAddr =
-  [ noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (fromIntegral (R.absoluteAddress memAddr))]
+  [ noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.qwordFromIntegral (R.absoluteAddress memAddr)]
   , noAddr $ makeInstr "mov" [D.QWordReg D.RSI, D.QWordReg D.RSP]
   , noAddr $ makeInstr "add" [D.QWordReg D.RSI, D.Mem64 offsetMemRef]
   -- The offset to write the return address to is now in %rsi (%rdi is now free)
@@ -155,7 +155,7 @@ x64SaveReturnAddress memAddr =
 -- shadow value into another register, then cmp + jmp
 x64CheckShadowStack :: R.ConcreteAddress X86.X86_64 -> [Instruction TargetAddress]
 x64CheckShadowStack memAddr =
-  [ noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (fromIntegral (R.absoluteAddress memAddr))]
+  [ noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.qwordFromIntegral (R.absoluteAddress memAddr)]
   , noAddr $ makeInstr "mov" [D.QWordReg D.RSI, D.QWordReg D.RSP]
   , noAddr $ makeInstr "add" [D.QWordReg D.RSI, D.Mem64 offsetMemRef]
   -- The address of the shadow return value is now in %rsi, while %rdi is free
