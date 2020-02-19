@@ -79,6 +79,10 @@ data AnalysisEnv arch binFmt =
 data RewriterAnalysisEnv arch binFmt =
   RewriterAnalysisEnv { raeEnv :: AnalysisEnv arch binFmt
                       , raeSymBlockMap :: Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
+                      , raeNewCodeAddress :: RA.ConcreteAddress arch
+                      -- ^ The address at which we place new code, e.g. new
+                      -- functions
+                      , raeNewCodeMaxSize :: MM.MemWord (MM.ArchAddrWidth arch)
                       }
 
 instance HasAnalysisEnv AnalysisEnv where
@@ -97,6 +101,8 @@ instance HasAnalysisEnv RewriterAnalysisEnv where
 
 instance HasSymbolicBlockMap RewriterAnalysisEnv where
   getSymbolicBlockMap = raeSymBlockMap
+  getNewCodeAddress = raeNewCodeAddress
+  getNewCodeMaxSize = raeNewCodeMaxSize
 
 -- | This class exposes all of the user-facing functionality in the analysis environment.
 --
@@ -121,6 +127,8 @@ class HasAnalysisEnv env where
 -- the symbolic addresses that are used in the rewriter.
 class HasSymbolicBlockMap env where
   getSymbolicBlockMap :: env arch binFmt -> Map (RA.ConcreteAddress arch) (B.SymbolicBlock arch)
+  getNewCodeAddress :: env arch binFmt -> RA.ConcreteAddress arch
+  getNewCodeMaxSize :: env arch binFmt -> MM.MemWord (MM.ArchAddrWidth arch)
 
 -- | The configuration for a binary analysis
 --
