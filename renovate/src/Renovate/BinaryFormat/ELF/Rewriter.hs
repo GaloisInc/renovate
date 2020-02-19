@@ -21,7 +21,6 @@ module Renovate.BinaryFormat.ELF.Rewriter (
   riSectionBaseAddress,
   riInstrumentationSites,
   riLogMsgs,
-  riSegmentVirtualAddress,
   riOverwrittenRegions,
   riAppendedSegments,
   riRecoveredBlocks,
@@ -38,6 +37,10 @@ module Renovate.BinaryFormat.ELF.Rewriter (
   riOutputBlocks,
   riFunctionBlocks,
   riSections,
+  -- * Re-exports
+  Env.RewriterEnv,
+  Env.reSegmentMaximumSize,
+  Env.reSegmentVirtualAddress
   ) where
 
 import           GHC.Generics ( Generic )
@@ -49,6 +52,7 @@ import qualified Control.Lens as L
 import qualified Control.Monad.Catch.Pure as P
 import qualified Control.Monad.IO.Class as IO
 import qualified Control.Monad.State.Strict as S
+import qualified Control.Monad.Reader as R
 import qualified Data.ByteString as B
 import qualified Data.Generics.Product as GL
 import qualified Data.Map as M
@@ -60,12 +64,14 @@ import           Prelude
 import qualified Data.ElfEdit as E
 import qualified Data.Macaw.CFG as MM
 
+import           Renovate.Config (RenovateConfig)
 import qualified Renovate.Address as RA
 import qualified Renovate.BasicBlock as B
 import qualified Renovate.Diagnostic as RD
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Rewrite as RW
 import qualified Renovate.Redirect.Monad as RM
+import qualified Renovate.BinaryFormat.ELF.Rewriter.Env as Env
 
 assertM :: (Monad m, HasCallStack) => Bool -> m ()
 assertM b = X.assert b (return ())
@@ -75,8 +81,7 @@ assertM b = X.assert b (return ())
 --
 -- Here @lm@ is the user controlled type of log msgs.
 data RewriterInfo lm arch =
-  RewriterInfo { _riSegmentVirtualAddress :: Maybe Word64
-               , _riOverwrittenRegions :: [(String, Word64)]
+  RewriterInfo { _riOverwrittenRegions :: [(String, Word64)]
                -- ^ The name of a data region and its length (which is
                -- the number of zero bytes that that replaced it)
                , _riAppendedSegments :: [(E.ElfSegmentType, Word16, Word64, Word64)]
@@ -110,23 +115,36 @@ data SomeBlocks = forall arch
                 . (B.InstructionConstraints arch)
                 => SomeBlocks (ISA.ISA arch) [B.ConcreteBlock arch]
 
-newtype ElfRewriter lm arch a = ElfRewriter { unElfRewrite :: S.StateT (RewriterInfo lm arch) IO a }
-                          deriving (Monad,
-                                    Functor,
-                                    Applicative,
-                                    IO.MonadIO,
-                                    P.MonadThrow,
-                                    S.MonadState (RewriterInfo lm arch))
+newtype ElfRewriter lm arch a =
+  ElfRewriter { unElfRewrite ::
+                  R.ReaderT
+                    (Env.RewriterEnv arch)
+                    (S.StateT (RewriterInfo lm arch) IO)
+                    a
+              }
+  deriving
+    ( Functor
+    , Applicative
+    , Monad
+    , IO.MonadIO
+    , P.MonadThrow
+    , S.MonadState (RewriterInfo lm arch)
+    , R.MonadReader (Env.RewriterEnv arch)
+    )
 
-runElfRewriter :: E.Elf (MM.ArchAddrWidth arch)
+runElfRewriter :: E.ElfWidthConstraints (MM.ArchAddrWidth arch)
+               => RenovateConfig arch binFmt callbacks b
+               -> E.Elf (MM.ArchAddrWidth arch)
                -> ElfRewriter lm arch a
                -> IO (a, RewriterInfo lm arch)
-runElfRewriter e a =
-  S.runStateT (unElfRewrite a) (emptyRewriterInfo e)
+runElfRewriter config e a = do
+  env <- Env.makeRewriterEnv config e
+  S.runStateT
+    (R.runReaderT (unElfRewrite a) env)
+    (emptyRewriterInfo e)
 
 emptyRewriterInfo :: E.Elf (MM.ArchAddrWidth arch) -> RewriterInfo lm arch
-emptyRewriterInfo e = RewriterInfo { _riSegmentVirtualAddress    = Nothing
-                                   , _riOverwrittenRegions       = []
+emptyRewriterInfo e = RewriterInfo { _riOverwrittenRegions       = []
                                    , _riAppendedSegments         = []
                                    , _riEntryPointAddress        = Nothing
                                    , _riSectionBaseAddress       = Nothing
@@ -161,9 +179,6 @@ riTransitivelyIncompleteBlocks = GL.field @"_riTransitivelyIncompleteBlocks"
 
 riIncompleteFunctions :: L.Simple L.Lens (RewriterInfo lm arch) (M.Map (RA.ConcreteAddress arch) (S.Set (RA.ConcreteAddress arch)))
 riIncompleteFunctions = GL.field @"_riIncompleteFunctions"
-
-riSegmentVirtualAddress :: L.Simple L.Lens (RewriterInfo lm arch) (Maybe Word64)
-riSegmentVirtualAddress = GL.field @"_riSegmentVirtualAddress"
 
 riOverwrittenRegions :: L.Simple L.Lens (RewriterInfo lm arch) [(String, Word64)]
 riOverwrittenRegions = GL.field @"_riOverwrittenRegions"

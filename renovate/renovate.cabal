@@ -38,8 +38,10 @@ library
                        Renovate.Analysis.FunctionRecovery
                        Renovate.BasicBlock
                        Renovate.BinaryFormat.ELF
+                       Renovate.BinaryFormat.ELF.Common
                        Renovate.BinaryFormat.ELF.BSS
                        Renovate.BinaryFormat.ELF.Rewriter
+                       Renovate.BinaryFormat.ELF.Rewriter.Env
                        Renovate.ISA
                        Renovate.Recovery
                        Renovate.Recovery.Overlap

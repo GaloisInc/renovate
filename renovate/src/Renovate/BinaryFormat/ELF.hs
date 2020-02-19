@@ -5,7 +5,6 @@
 {-# LANGUAGE NondecreasingIndentation #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
@@ -27,6 +26,8 @@ module Renovate.BinaryFormat.ELF (
   RewriterInfo,
   SomeBlocks(..),
   RE.SectionInfo(..),
+  reSegmentMaximumSize,
+  reSegmentVirtualAddress,
   -- * Lenses
   riInitialBytes,
   riSmallBlockCount,
@@ -36,7 +37,6 @@ module Renovate.BinaryFormat.ELF (
   riSectionBaseAddress,
   riInstrumentationSites,
   riLogMsgs,
-  riSegmentVirtualAddress,
   riOverwrittenRegions,
   riAppendedSegments,
   riRecoveredBlocks,
@@ -61,6 +61,7 @@ import           Control.Monad ( guard, when )
 import qualified Control.Monad.Catch as C
 import qualified Control.Monad.Catch.Pure as P
 import qualified Control.Monad.IO.Class as IO
+import qualified Control.Monad.Reader as R
 import qualified Control.Monad.State.Strict as S
 import           Data.Bits ( Bits, (.|.) )
 import qualified Data.ByteString as B
@@ -76,7 +77,7 @@ import qualified Data.Ord as O
 import qualified Data.Sequence as Seq
 import           Data.Typeable ( Typeable )
 import qualified Data.Vector as V
-import           Data.Word ( Word16, Word32, Word64 )
+import           Data.Word ( Word16, Word32 )
 import           Text.Printf ( printf )
 
 import           Prelude
@@ -96,10 +97,10 @@ import qualified Renovate.Arch as Arch
 import qualified Renovate.BasicBlock as B
 import qualified Renovate.BasicBlock.Assemble as BA
 import           Renovate.BinaryFormat.ELF.BSS ( expandBSS )
-import           Renovate.BinaryFormat.ELF.Rewriter
+import           Renovate.BinaryFormat.ELF.Common
+import           Renovate.BinaryFormat.ELF.Rewriter as Rewriter
 import           Renovate.Config
 import qualified Renovate.Diagnostic as RD
-import qualified Renovate.ISA as RI
 import qualified Renovate.Metrics as RM
 import qualified Renovate.Recovery as R
 import qualified Renovate.Redirect as RE
@@ -192,7 +193,7 @@ rewriteElf :: (B.InstructionConstraints arch,
            -- ^ The layout strategy for blocks in the new binary
            -> IO (E.Elf (MM.ArchAddrWidth arch), b arch, RewriterInfo lm arch)
 rewriteElf cfg hdlAlloc e loadedBinary strat = do
-    (analysisResult, ri) <- runElfRewriter e $ do
+    (analysisResult, ri) <- runElfRewriter cfg e $ do
       -- FIXME: Use the symbol map from the loaded binary (which we still need to add)
       symmap <- withCurrentELF buildSymbolMap
       doRewrite cfg hdlAlloc loadedBinary symmap strat
@@ -216,7 +217,7 @@ analyzeElf :: (B.InstructionConstraints arch,
            -- (including statically-allocated data)
            -> IO (b arch, [RE.Diagnostic])
 analyzeElf cfg hdlAlloc e loadedBinary = do
-  (b, ri) <- runElfRewriter e $ do
+  (b, ri) <- runElfRewriter cfg e $ do
     symmap <- withCurrentELF buildSymbolMap
     textSection <- withCurrentELF findTextSection
     let textRange = sectionAddressRange textSection
@@ -242,13 +243,6 @@ withMemory e k = do
   MBL.loadBinary loadOpts e >>= k
   where
     loadOpts = MM.defaultLoadOptions { MM.loadOffset = Just 0 }
-
-findTextSection :: (w ~ MM.ArchAddrWidth arch) => E.Elf w -> ElfRewriter lm arch (E.ElfSection (E.ElfWordType w))
-findTextSection e = do
-  case E.findSectionByName (C8.pack ".text") e of
-    [textSection] -> return textSection
-    [] -> C.throwM NoTextSectionFound
-    sections -> C.throwM (MultipleTextSectionsFound (length sections))
 
 -- | Call the given continuation with the current ELF file
 --
@@ -283,120 +277,6 @@ sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
   where
     textSectionStartAddr = RA.concreteFromAbsolute (fromIntegral (E.elfSectionAddr sec))
     textSectionEndAddr = RA.addressAddOffset textSectionStartAddr (fromIntegral ((E.elfSectionSize sec)))
-
--- | Extract all the segments' virtual addresses (keys) and their sizes
--- (values). If we don't know the size of a segment yet because it is going to
--- be computed later, return that segment as an error.
-allocatedVAddrs ::
-  E.ElfWidthConstraints w =>
-  E.Elf w ->
-  Either (E.ElfSegment w)
-         (Map.Map (E.ElfWordType w) (E.ElfWordType w))
-allocatedVAddrs e = F.foldl' (Map.unionWith max) Map.empty <$> traverse processRegion (E._elfFileData e) where
-  processRegion (E.ElfDataSegment seg) = case E.elfSegmentMemSize seg of
-    E.ElfRelativeSize{} -> Left seg
-    E.ElfAbsoluteSize size -> return (Map.singleton (E.elfSegmentVirtAddr seg) size)
-  processRegion _ = return Map.empty
-
--- | Generate a list of @(addr, size)@ pairs where each pair is within @(lo,
--- hi)@ (i.e., in range of a jump from the text section) and correctly aligned
--- w.r.t. the passed-in alignment.
-availableAddrs :: (Ord w, Integral w) => w -> w -> w -> Map.Map w w -> [(w, w)]
-availableAddrs lo hi alignment allocated = go lo (Map.toAscList allocated)
-  where
-    -- This function scans the list of already-allocated address ranges and puts
-    -- together a list of pairs representing unallocated ranges.  The @addr@
-    -- argument is the start of the next available range.
-    go addr allocd =
-      case allocd of
-        [] ->
-          -- In this case, we are out of allocated pairs.  We'll make one last
-          -- address range starting here and spanning to the end of the
-          -- reachable range
-          buildAlignedRange addr hi
-        (_, 0) : rest ->
-          -- In this case, we hit a zero-sized range.  Just skip it
-          go addr rest
-        (allocatedStart, allocatedSize) : rest
-          -- If we reach a region beyond the high watermark, just throw the rest away
-          | allocatedStart >= hi -> []
-          | addr < allocatedStart ->
-            buildAlignedRange addr allocatedStart ++ go (allocatedStart + allocatedSize) rest
-          -- Should never happen, but just in case...
-          | otherwise -> go addr rest
-
-    buildAlignedRange base0 end0
-      | base >= hi || end <= lo || base >= end = []
-      | otherwise = [(base, end - base)]
-      where
-        base = (base0-1) + alignment - ((base0-1) `mod` alignment)
-        end = min end0 hi
-
-
--- | Given an existing section, find the range of addresses where we could lay
--- out code while still being able to jump to anywhere in the existing section.
-withinJumpRange ::
-  (w ~ E.ElfWordType (MM.ArchAddrWidth arch), Num w, Ord w) =>
-  RenovateConfig arch binFmt callbacks b ->
-  E.ElfSection w ->
-  (w, w)
-withinJumpRange cfg text =
-  -- max 1: we don't want to lay out code at address 0...
-  ( max 1 (end - min end range)
-  , start + range
-  )
-  where
-  start = E.elfSectionAddr text
-  end = start + E.elfSectionSize text - 1
-  range = fromIntegral (RI.isaMaxRelativeJumpSize (rcISA cfg))
-
--- | Like allocatedVAddrs, but throw an error in the ElfRewriter monad instead
--- of returning it purely.
-allocatedVAddrsM ::
-  E.ElfWidthConstraints w =>
-  E.Elf w ->
-  ElfRewriter lm arch (Map.Map (E.ElfWordType w) (E.ElfWordType w))
-allocatedVAddrsM e = case allocatedVAddrs e of
-  Left seg -> fail
-    $  "Could not compute free virtual addresses: segment "
-    ++ show (E.elfSegmentIndex seg)
-    ++ " has relative size"
-  Right m -> return m
-
--- | Choose a virtual address for extratext (and report how many bytes are
--- available at that address).
-selectLayoutAddr ::
-  (E.ElfWidthConstraints w, MM.ArchAddrWidth arch ~ w) =>
-  E.ElfWordType w ->
-  E.ElfWordType w ->
-  E.ElfWordType w ->
-  E.Elf w ->
-  ElfRewriter lm arch (E.ElfWordType w, E.ElfWordType w)
-selectLayoutAddr lo hi alignment e = do
-  allocated <- allocatedVAddrsM e
-  case availableAddrs lo hi alignment allocated of
-    [] -> fail "No unallocated virtual address space within jumping range of the text section is available for use as a new extratext section."
-    available -> do
-      return $ L.maximumBy (O.comparing snd) available
-
--- | Find a region suitable for the requested layout address
---
--- Note that the caller cannot easily tell what address to request that actually respects alignment
--- constraints, so this code aligns the address before looking for an allocation site.
-computeSizeOfLayoutAddr ::
-  (E.ElfWidthConstraints w, MM.ArchAddrWidth arch ~ w) =>
-  E.ElfWordType w ->
-  E.ElfWordType w ->
-  E.Elf w ->
-  ElfRewriter lm arch (E.ElfWordType w, E.ElfWordType w)
-computeSizeOfLayoutAddr addr alignment e = do
-  let alignedAddr = alignValue addr alignment
-  allocated <- allocatedVAddrsM e
-  case availableAddrs alignedAddr maxBound alignment allocated of
-    (result@(addr',_)):_
-      | alignedAddr == addr' -> return result
-      | addr' < alignedAddr + alignment -> fail $ "Requested layout address " ++ show alignedAddr ++ " not aligned to " ++ show alignment ++ "-byte boundary."
-    _ -> fail $ "Requested layout address " ++ show alignedAddr ++ " overlaps existing segments."
 
 -- | The rewriter driver
 --
@@ -443,30 +323,6 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   textSection <- withCurrentELF findTextSection
   mBaseSymtab <- withCurrentELF getBaseSymbolTable
 
-  -- We need to compute the address to start laying out new code.
-  --
-  -- The new code's virtual address should satisfy a few constraints:
-  --
-  -- 1. Not overlaying any existing loadable segments.
-  -- 2. Within jumping range of the old text section to ease redirection of blocks.
-  -- 3. Enough empty space to hold the new code.
-  --
-  -- It's real tough to guarantee (3), since we don't know how much code there
-  -- will be yet. So we just pick the biggest chunk of address space that
-  -- satisfies (1) and (2).
-  --
-  -- NOTE: This code MUST be run BEFORE we change any segments.  It relies on
-  -- every segment having an absolute memsize, which is true for segments coming
-  -- from elf-edit.  Once we start modifying segments, however, we start
-  -- generating segments with relative sizes.
-  let (lo, hi) = withinJumpRange cfg textSection
-      layoutChoiceFunction = case rcExtratextOffset cfg of
-        0 -> selectLayoutAddr lo hi
-        n | n < 0 -> computeSizeOfLayoutAddr (E.elfSectionAddr textSection + fromIntegral n)
-          | otherwise -> computeSizeOfLayoutAddr (E.elfSectionAddr textSection + E.elfSectionSize textSection + fromIntegral n)
-  (newTextAddr, newTextSize) <- withCurrentELF (layoutChoiceFunction (fromIntegral newTextAlign))
-  riSegmentVirtualAddress L..= Just (fromIntegral newTextAddr)
-
   -- Remove (and pad out) the sections whose size could change if we
   -- modify the binary.  We'll re-add them later (see @appendHeaders@).
   --
@@ -497,6 +353,9 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- (overwrittenBytes) and the contents of the new code segment
   -- (instrumentedBytes), which will be placed at the address computed
   -- above.
+  env <- R.ask
+  let newTextAddr = Rewriter.reSegmentVirtualAddress env
+  let newTextSize = Rewriter.reSegmentMaximumSize env
   let layoutAddr = RA.concreteFromAbsolute (fromIntegral newTextAddr)
       -- FIXME: This is wrong; it doesn't account for the required alignment we
       -- need.  That is a big challenge because it depends on how much code we
@@ -717,14 +576,6 @@ buildNewSymbolTable textSecIdx extraTextSecIdx layoutAddr newSyms addrMap baseTa
                                 , e <- maybeToList $! Map.lookup (fromIntegral (RA.absoluteAddress oa)) t
                                 ]
 
--- | The alignment of the new text segment
---
--- We could just copy the alignment from the old one, but the alignment on x86
--- is very high, which would waste a lot of space.  It seems like setting it
--- lower is safe...
-newTextAlign :: Word64
-newTextAlign = 0x10000
-
 -- | Increment the segment numbers for segments that elf-edit handles specially
 --
 -- During one stage of the rewriting, we need to increment the segment number of
@@ -880,16 +731,6 @@ elfDataRegionName r =
     E.ElfDataRaw _            -> "RawData"
     E.ElfDataStrtab {}        -> "Strtab"
     E.ElfDataSymtab {}        -> "Symtab"
-
--- | Align a value
---
--- @alignValue v alignment@ returns the value @v'@ greater than or equal to @v@
--- such that @v' % align == 0@.
---
--- For an alignment of zero or one, return @v@.
-alignValue :: (Integral w) => w -> w -> w
-alignValue v 0 = v
-alignValue v alignment = v + ((alignment - (v `mod` alignment)) `mod` alignment)
 
 -- | Overwrite the original text section with some new contents (@newBytes@).
 overwriteTextSection :: (w ~ MM.ArchAddrWidth arch, Integral (E.ElfWordType w)) => B.ByteString -> E.Elf w -> ElfRewriter lm arch ((), E.Elf w)
@@ -1157,8 +998,6 @@ data ElfRewriteException = RewrittenTextSectionSizeMismatch Int Int
                          | RewriterFailure C.SomeException [RD.Diagnostic]
                          | UnsupportedArchitecture E.ElfMachine
                          | MemoryLoadError String
-                         | NoTextSectionFound
-                         | MultipleTextSectionsFound Int
                          deriving (Typeable)
 
 deriving instance Show ElfRewriteException
