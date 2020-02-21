@@ -893,8 +893,13 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
     let symbolicBlockMap = Map.fromList [ (RE.basicBlockAddress cb, sb)
                                         | (cb, sb) <- baseSymBlocks
                                         ]
+    newCodeAddr <- fromIntegral <$> R.asks reSegmentVirtualAddress
+    newCodeSize <- fromIntegral <$> R.asks reSegmentMaximumSize
     let rae = RewriterAnalysisEnv { raeEnv = aenv
                                   , raeSymBlockMap = symbolicBlockMap
+                                  , raeNewCodeAddress =
+                                      RA.concreteFromAbsolute newCodeAddr
+                                  , raeNewCodeMaxSize = newCodeSize
                                   }
     case rcAnalysis cfg of
       AnalyzeAndRewrite preAnalyze analyze preRewrite rewrite -> do
