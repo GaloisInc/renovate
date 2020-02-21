@@ -136,12 +136,14 @@ runElfRewriter :: E.ElfWidthConstraints (MM.ArchAddrWidth arch)
                => RenovateConfig arch binFmt callbacks b
                -> E.Elf (MM.ArchAddrWidth arch)
                -> ElfRewriter lm arch a
-               -> IO (a, RewriterInfo lm arch)
+               -> IO (a, RewriterInfo lm arch, Env.RewriterEnv arch)
 runElfRewriter config e a = do
   env <- Env.makeRewriterEnv config e
-  S.runStateT
-    (R.runReaderT (unElfRewrite a) env)
-    (emptyRewriterInfo e)
+  (result, info) <-
+    S.runStateT
+      (R.runReaderT (unElfRewrite a) env)
+      (emptyRewriterInfo e)
+  return (result, info, env)
 
 emptyRewriterInfo :: E.Elf (MM.ArchAddrWidth arch) -> RewriterInfo lm arch
 emptyRewriterInfo e = RewriterInfo { _riOverwrittenRegions       = []
