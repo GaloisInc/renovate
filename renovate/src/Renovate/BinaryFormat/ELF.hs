@@ -24,6 +24,7 @@ module Renovate.BinaryFormat.ELF (
   rewriteElf,
   analyzeElf,
   RewriterInfo,
+  RewriterEnv,
   SomeBlocks(..),
   RE.SectionInfo(..),
   reSegmentMaximumSize,
@@ -191,13 +192,13 @@ rewriteElf :: (B.InstructionConstraints arch,
            -- (including statically-allocated data)
            -> RE.LayoutStrategy
            -- ^ The layout strategy for blocks in the new binary
-           -> IO (E.Elf (MM.ArchAddrWidth arch), b arch, RewriterInfo lm arch)
+           -> IO (E.Elf (MM.ArchAddrWidth arch), b arch, RewriterInfo lm arch, RewriterEnv arch)
 rewriteElf cfg hdlAlloc e loadedBinary strat = do
-    (analysisResult, ri) <- runElfRewriter cfg e $ do
+    (analysisResult, ri, env) <- runElfRewriter cfg e $ do
       -- FIXME: Use the symbol map from the loaded binary (which we still need to add)
       symmap <- withCurrentELF buildSymbolMap
       doRewrite cfg hdlAlloc loadedBinary symmap strat
-    return (_riELF ri, analysisResult, ri)
+    return (_riELF ri, analysisResult, ri, env)
 
 -- | Run an analysis over an ELF file
 --
@@ -217,7 +218,7 @@ analyzeElf :: (B.InstructionConstraints arch,
            -- (including statically-allocated data)
            -> IO (b arch, [RE.Diagnostic])
 analyzeElf cfg hdlAlloc e loadedBinary = do
-  (b, ri) <- runElfRewriter cfg e $ do
+  (b, ri, _env) <- runElfRewriter cfg e $ do
     symmap <- withCurrentELF buildSymbolMap
     textSection <- withCurrentELF findTextSection
     let textRange = sectionAddressRange textSection

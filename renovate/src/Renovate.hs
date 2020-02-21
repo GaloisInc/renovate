@@ -109,6 +109,7 @@ module Renovate
   RW.RewriteSite(..),
   E.SomeBlocks(..),
   E.RewriterInfo,
+  E.RewriterEnv,
   E.SectionInfo(..),
   E.riSmallBlockCount,
   E.riReusedByteCount,
