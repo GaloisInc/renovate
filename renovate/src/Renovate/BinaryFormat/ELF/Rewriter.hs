@@ -50,6 +50,7 @@ import           Control.Applicative
 import qualified Control.Exception as X
 import qualified Control.Lens as L
 import qualified Control.Monad.Catch.Pure as P
+import qualified Control.Monad.Fail as MF
 import qualified Control.Monad.IO.Class as IO
 import qualified Control.Monad.State.Strict as S
 import qualified Control.Monad.Reader as R
@@ -127,6 +128,7 @@ newtype ElfRewriter lm arch a =
     , Applicative
     , Monad
     , IO.MonadIO
+    , MF.MonadFail
     , P.MonadThrow
     , S.MonadState (RewriterInfo lm arch)
     , R.MonadReader (Env.RewriterEnv arch)
