@@ -8,12 +8,14 @@ packages: deps/elf-edit/
           deps/macaw/x86_symbolic/
           deps/parameterized-utils/
           deps/crucible/crucible/
-          deps/crucible/what4/
+          deps/what4/what4/
           deps/crucible/crucible-llvm/
           deps/llvm-pretty/
           deps/dismantle/dismantle-tablegen/
           deps/dismantle/dismantle-ppc/
           deps/semmc/semmc/
+          deps/semmc/semmc-synthesis/
+          deps/semmc/semmc-learning/
           deps/semmc/semmc-ppc/
           deps/macaw-loader/macaw-loader/
           deps/macaw-loader/macaw-loader-ppc/
