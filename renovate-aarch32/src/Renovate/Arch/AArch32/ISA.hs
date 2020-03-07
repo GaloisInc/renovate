@@ -10,6 +10,7 @@ module Renovate.Arch.AArch32.ISA (
   ) where
 
 import qualified Control.Monad.Catch as C
+import qualified Data.Bits as DB
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Coerce ( coerce )
@@ -17,8 +18,12 @@ import qualified Data.Parameterized.TraversableFC as FC
 import qualified Data.Text.Prettyprint.Doc as PP
 import           Data.Word ( Word8, Word64 )
 
-
-import qualified Dismantle.ASL.AArch32 as D
+-- NOTE: Renovate currently does not rewrite thumb blocks
+--
+-- The challenge there is that we would really like to be able to guarantee that
+-- blocks only contain instructions from a single instruction set.  This API
+-- makes that difficult to enforce
+import qualified Dismantle.ARM.A32 as D
 import qualified Data.Macaw.AArch32 as MA32
 import qualified Data.Macaw.Memory as MM
 
@@ -79,17 +84,22 @@ fromInst i =
 unannotateOpcode :: D.Annotated a D.Operand tp -> D.Operand tp
 unannotateOpcode (D.Annotated _ op) = op
 
+-- | All A32 instructions are 4 bytes
+--
+-- This will have to change to support thumb
 armInstrSize :: Instruction a -> Word8
-armInstrSize = error "instr sizes"
+armInstrSize _ = 4
 
 armMakePadding :: Word64 -> [Instruction ()]
 armMakePadding nBytes = error "make padding"
+  where
+    nopInsn = D.Instruction D.HLT_A1
 
 armMakeRelativeJumpTo :: R.ConcreteAddress MA32.AArch32 -> R.ConcreteAddress MA32.AArch32 -> [Instruction ()]
 armMakeRelativeJumpTo = error "make relative jump to"
 
 armMaxRelativeJumpSize :: Word64
-armMaxRelativeJumpSize = undefined
+armMaxRelativeJumpSize = DB.bit 25 - 4
 
 -- FIXME: This one will be tricky - I think we can simplify it a lot if we pass
 -- in the macaw block containing the instruction.  If it isn't the entire block,
@@ -97,6 +107,11 @@ armMaxRelativeJumpSize = undefined
 -- instruction (which we can obtain via metadata).  Ultimately, the problem is
 -- that almost any instruction can be a jump if it writes directly to the PC,
 -- and figuring that out requires deep semantic knowledge.
+--
+-- We can just look at either the arch-update marker from macaw or, if there is
+-- none, the post state of the terminator.  This means that we can avoid passing
+-- in any instructions: we just need to pass in the post arch state and use the
+-- instruction pointer value out of it
 armJumpType :: Instruction a
             -> MM.Memory 32
             -> R.ConcreteAddress MA32.AArch32
