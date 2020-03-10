@@ -17,6 +17,7 @@ import           Data.Coerce ( coerce )
 import qualified Data.Parameterized.TraversableFC as FC
 import qualified Data.Text.Prettyprint.Doc as PP
 import           Data.Word ( Word8, Word64 )
+import           Text.Printf ( printf )
 
 -- NOTE: Renovate currently does not rewrite thumb blocks
 --
@@ -91,9 +92,12 @@ armInstrSize :: Instruction a -> Word8
 armInstrSize _ = 4
 
 armMakePadding :: Word64 -> [Instruction ()]
-armMakePadding nBytes = error "make padding"
+armMakePadding nBytes
+  | leftover == 0 = replicate nInsns (fromInst nopInsn)
+  | otherwise = error (printf "Unexpected byte count (%d); only instruction-sized padding is supported" nBytes)
   where
     nopInsn = D.Instruction D.HLT_A1
+    (nInsns, leftover) = fromIntegral nBytes `divMod` 4
 
 armMakeRelativeJumpTo :: R.ConcreteAddress MA32.AArch32 -> R.ConcreteAddress MA32.AArch32 -> [Instruction ()]
 armMakeRelativeJumpTo = error "make relative jump to"
