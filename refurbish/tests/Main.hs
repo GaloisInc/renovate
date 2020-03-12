@@ -135,7 +135,7 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
              -> MBL.LoadedBinary arch (E.Elf w)
              -> IO ()
 testRewriter mRunner hdlAlloc strat exePath assertions rc e loadedBinary = do
-  (e', _, _) <- R.rewriteElf rc hdlAlloc e loadedBinary strat
+  (e', _, _, _) <- R.rewriteElf rc hdlAlloc e loadedBinary strat
   let !bs = force (E.renderElf e')
   T.assertBool "Invalid ELF length" (LBS.length bs > 0)
   -- If we have a runner available, compare the output of the original
