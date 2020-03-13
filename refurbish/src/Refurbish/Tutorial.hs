@@ -149,7 +149,7 @@ myAnalyzeElf someElf = do
   fha <- FH.newHandleAllocator
   R.withElfConfig someElf analysisConfigs $ \config e loadedBinary -> do
     let strat = R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline
-    (newElf, res, ri) <- R.rewriteElf config fha e loadedBinary strat
+    (newElf, res, ri, _) <- R.rewriteElf config fha e loadedBinary strat
     print (getConst res)
     print (ri ^. R.riBlockMapping)
     return (getConst res)
