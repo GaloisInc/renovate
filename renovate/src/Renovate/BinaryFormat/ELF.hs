@@ -9,6 +9,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 -- | An interface for manipulating ELF files
 --
 -- It provides a convenient interface for loading an ELF file,
@@ -79,6 +80,7 @@ import qualified Data.Sequence as Seq
 import           Data.Typeable ( Typeable )
 import qualified Data.Vector as V
 import           Data.Word ( Word16, Word32 )
+import           GHC.TypeLits
 import           Text.Printf ( printf )
 
 import           Prelude
@@ -132,6 +134,7 @@ withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
               -> [(Arch.Architecture, SomeConfig callbacks b)]
               -> (forall arch . (MS.SymArchConstraints arch,
+                                  16 <= MM.ArchAddrWidth arch,
                                   MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch)),
                                   E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                                   B.InstructionConstraints arch)
@@ -180,6 +183,7 @@ withElfConfig e0 configs k = do
 rewriteElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
+               16 <= MM.ArchAddrWidth arch,
                MS.SymArchConstraints arch)
            => RenovateConfig arch binFmt (AnalyzeAndRewrite lm) b
            -- ^ The configuration for the rewriter
@@ -207,6 +211,7 @@ rewriteElf cfg hdlAlloc e loadedBinary strat = do
 analyzeElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
+               16 <= MM.ArchAddrWidth arch,
                MS.SymArchConstraints arch)
            => RenovateConfig arch binFmt AnalyzeOnly b
            -- ^ The configuration for the analysis
@@ -311,6 +316,7 @@ sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
 doRewrite :: (B.InstructionConstraints arch,
               MBL.BinaryLoader arch binFmt,
               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
+              16 <= MM.ArchAddrWidth arch,
               MS.SymArchConstraints arch)
           => RenovateConfig arch binFmt (AnalyzeAndRewrite lm) b
           -> C.HandleAllocator
@@ -866,6 +872,7 @@ instrumentTextSection :: forall w arch binFmt b lm
                           MBL.BinaryLoader arch binFmt,
                           B.InstructionConstraints arch,
                           Integral (E.ElfWordType w),
+                          16 <= w,
                           MS.SymArchConstraints arch)
                       => RenovateConfig arch binFmt (AnalyzeAndRewrite lm) b
                       -> C.HandleAllocator
@@ -960,6 +967,7 @@ withAnalysisEnv :: forall w arch binFmt callbacks b a lm
                        MBL.BinaryLoader arch binFmt,
                        B.InstructionConstraints arch,
                        Integral (E.ElfWordType w),
+                       16 <= w,
                        MS.SymArchConstraints arch)
                    => RenovateConfig arch binFmt callbacks b
                    -> C.HandleAllocator
@@ -970,7 +978,6 @@ withAnalysisEnv :: forall w arch binFmt callbacks b a lm
                    -> (AnalysisEnv arch binFmt -> ElfRewriter lm arch a)
                    -> ElfRewriter lm arch a
 withAnalysisEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
-  let mem = MBL.memoryImage loadedBinary
   elfEntryPoints <- MBL.entryPoints loadedBinary
   let isa = rcISA cfg
   let abi = rcABI cfg
@@ -982,8 +989,9 @@ withAnalysisEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
                             , R.recoveryHandleAllocator = hdlAlloc
                             , R.recoveryBlockCallback = rcBlockCallback cfg
                             , R.recoveryFuncCallback = fmap (second ($ loadedBinary)) (rcFunctionCallback cfg)
+                            , R.recoveryRefinement = rcRefinementConfig cfg
                             }
-  blockInfo <- IO.liftIO (R.recoverBlocks recovery mem symmap elfEntryPoints textAddrRange)
+  blockInfo <- IO.liftIO (R.recoverBlocks recovery loadedBinary symmap elfEntryPoints textAddrRange)
   let env = AnalysisEnv { aeLoadedBinary = loadedBinary
                         , aeBlockInfo = blockInfo
                         , aeISA = isa

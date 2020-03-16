@@ -3,6 +3,7 @@ packages: deps/elf-edit/
           deps/flexdis86/binary-symbols
           deps/dwarf/
           deps/macaw/base/
+          deps/macaw/refinement/
           deps/macaw/x86/
           deps/macaw/symbolic/
           deps/macaw/x86_symbolic/
