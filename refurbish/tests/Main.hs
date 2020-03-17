@@ -5,6 +5,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 module Main ( main ) where
 
 import           Control.DeepSeq ( force )
@@ -15,6 +16,7 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ElfEdit as E
 import qualified Data.Foldable as F
 import           Data.Functor.Const ( Const(..) )
+import           GHC.TypeLits
 import qualified System.Directory as SD
 import qualified System.Exit as E
 import           System.FilePath ( (</>), (<.>) )
@@ -123,6 +125,7 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , E.ElfWidthConstraints w
                 , MS.SymArchConstraints arch
                 , R.InstructionConstraints arch
+                , 16 <= w
                 , MBL.BinaryLoader arch (E.Elf w)
                 )
              => Maybe RD.Runner
@@ -183,6 +186,7 @@ withELF :: FilePath
         -> [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite lm) a)]
         -> (forall arch . ( MS.SymArchConstraints arch
                           , MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch))
+                          , 16 <= MM.ArchAddrWidth arch
                           , E.ElfWidthConstraints (MM.ArchAddrWidth arch)
                           , R.InstructionConstraints arch
                           ) =>
