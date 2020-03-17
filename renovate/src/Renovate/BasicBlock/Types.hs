@@ -1,13 +1,14 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DeriveFoldable #-}
-{-# LANGUAGE DeriveTraversable #-}
 module Renovate.BasicBlock.Types (
   BasicBlock(..),
   Instruction,
@@ -34,6 +35,11 @@ module Renovate.BasicBlock.Types (
   InstructionConstraints
   ) where
 
+import           Data.Kind ( Type )
+import qualified Data.Map as M
+import           Data.Maybe ( isJust )
+import           Data.Parameterized.Classes
+import qualified Data.Parameterized.Nonce as PN
 import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Typeable ( Typeable )
 import           Data.Word
@@ -51,33 +57,42 @@ import           Renovate.Address
 -- The intent is that basic blocks can have either concrete or
 -- symbolic addresses (instantiated as 'ConcreteBlock' and
 -- 'SymbolicBlock', respectively)
-data BasicBlock addr (i :: * -> *) a =
-  BasicBlock { basicBlockInstructions :: [i a]
-             , basicBlockAddress :: addr
+data BasicBlock s arch (addr :: Type -> Type) (i :: Type -> Type -> Type) a =
+  forall ids .
+  BasicBlock { basicBlockInstructions :: [i arch a]
+             , basicBlockAddress :: addr arch
+             , basicBlockArchStates :: M.Map (ConcreteAddress arch) (MC.RegState (MC.ArchReg arch) (MC.Value arch ids))
+             , basicBlockNonce :: PN.Nonce s ids
              }
-  deriving (Eq, Show)
 
-instance (PD.Pretty addr, PD.Pretty (i a)) => PD.Pretty (BasicBlock addr i a) where
-  pretty (BasicBlock insns addr) =
+instance Eq (BasicBlock s arch addr i a) where
+  (BasicBlock { basicBlockNonce = n1}) == (BasicBlock { basicBlockNonce = n2 }) =
+    isJust (testEquality n1 n2)
+
+instance (PD.Pretty (addr arch), PD.Pretty (i arch a)) => Show (BasicBlock s arch addr i a) where
+  show bb = show (PD.pretty bb)
+
+instance (PD.Pretty (addr arch), PD.Pretty (i arch a)) => PD.Pretty (BasicBlock s arch addr i a) where
+  pretty (BasicBlock insns addr _ _) =
     PD.pretty addr PD.<> ":" PD.<+> PD.align (PD.vsep (map PD.pretty insns))
 
 -- | The type of instructions for an architecture
 --
 -- Instructions are parameterized by an annotation type that is usually either
 -- '()' or @'InstructionAnnotation' arch@
-type family Instruction arch :: * -> *
+data family Instruction arch :: Type -> Type
 
 -- | The type of annotations used to carry relocation information while rewriting
-type family InstructionAnnotation arch :: *
+data family InstructionAnnotation arch :: Type
 
 -- | The type of register values for the architecture
-type family RegisterType arch :: *
+type family RegisterType arch :: Type
 
 -- | Concrete renovate instructions of the type @'Instruction' arch ()@ are in
 -- several cases equivalent to semmc instructions of type
 -- @'SemMC.Architecture.Instruction' arch@. This property is not true for X86
 -- instructions, but is true for PowerPC.
-class ToGenericInstruction arch 
+class ToGenericInstruction arch
   where
     toGenericInstruction   :: Instruction arch a  -> SA.Instruction arch
     fromGenericInstruction :: SA.Instruction arch -> Instruction arch  ()
@@ -107,7 +122,7 @@ type InstructionConstraints arch =
 -- 'MC.SegmentedAddr', as we need to create blocks that haven't yet
 -- been assigned to a segment, so we can't actually give them a
 -- 'MC.SegmentedAddr' (there is no segment for them to refer to).
-type ConcreteBlock arch = BasicBlock (ConcreteAddress arch) (Instruction arch) ()
+type ConcreteBlock s arch = BasicBlock s arch ConcreteAddress Instruction ()
 
 -- | A wrapper around a normal instruction that includes an optional
 -- 'SymbolicAddress'.
@@ -146,7 +161,7 @@ projectInstruction = fst . unTag
 -- | The type of 'BasicBlock's that only have symbolic addresses.
 -- Their jumps are annotated with symbolic address targets as well,
 -- which refer to other 'SymbolicBlock's.
-type SymbolicBlock arch = BasicBlock (SymbolicInfo arch) (TaggedInstruction arch) (InstructionAnnotation arch)
+type SymbolicBlock s arch = BasicBlock s arch SymbolicInfo TaggedInstruction (InstructionAnnotation arch)
 
 -- | When rewriting code after relocating it, we need to track each
 -- instruction's possible successors. In most cases, for straight-line code,
@@ -184,8 +199,8 @@ data FallthroughInstruction arch addr a = FallthroughInstruction
   , ftTag :: FallthroughTag addr
   }
 
-type SymbolicFallthrough arch = FallthroughInstruction arch (SymbolicAddress arch)
-type ConcreteFallthrough arch = FallthroughInstruction arch (ConcreteAddress arch)
+newtype SymbolicFallthrough arch a = SymbolicFallthrough (FallthroughInstruction arch (SymbolicAddress arch) a)
+newtype ConcreteFallthrough arch a = ConcreteFallthrough (FallthroughInstruction arch (ConcreteAddress arch) a)
 
 instance PD.Pretty (Instruction arch a) => PD.Pretty (FallthroughInstruction arch addr a) where
   pretty = PD.pretty . ftInstruction
@@ -195,13 +210,13 @@ instance PD.Pretty (Instruction arch a) => PD.Pretty (FallthroughInstruction arc
 -- target before, it's considered straightline code and the successor address
 -- is ignored.
 addFallthrough :: SymbolicAddress arch -> TaggedInstruction arch a -> SymbolicFallthrough arch a
-addFallthrough fallthrough (Tag (i, tgt)) = FallthroughInstruction i (FallthroughTag tgt (Just fallthrough))
+addFallthrough fallthrough (Tag (i, tgt)) = SymbolicFallthrough (FallthroughInstruction i (FallthroughTag tgt (Just fallthrough)))
 
 -- | Lift a 'TaggedInstruction' to a 'FallthroughInstruction' by asserting that
 -- it has no fallthrough successor. If it didn't have a jump target before, it
 -- shouldn't need to be rewritten. So we treat it as straightline code.
 noFallthrough :: TaggedInstruction arch a -> SymbolicFallthrough arch a
-noFallthrough (Tag (i, tgt)) = FallthroughInstruction i (FallthroughTag tgt Nothing)
+noFallthrough (Tag (i, tgt)) = SymbolicFallthrough (FallthroughInstruction i (FallthroughTag tgt Nothing))
 
 -- | Return 'True' if the 'FallthroughInstruction' has no target or fallthrough addresses.
 hasNoAddresses :: FallthroughInstruction arch addr a -> Bool
@@ -213,13 +228,13 @@ hasNoAddresses fi = case ftTag fi of
 -- Unconditional jumps are annotated with symbolic address targets, and
 -- conditional jumps are annotated with two symbolic addresses for their target
 -- and fallthrough behavior.
-type FallthroughBlock arch = BasicBlock (SymbolicInfo arch) (SymbolicFallthrough arch) (InstructionAnnotation arch)
+type FallthroughBlock s arch = BasicBlock s arch SymbolicInfo SymbolicFallthrough (InstructionAnnotation arch)
 
 -- | Some algorithms (such as layout) will need to assigned an address
 -- to symbolic blocks and then make the blocks concrete. This type
 -- bundles up a symbolic block and concrete address for that purpose.
-data AddressAssignedBlock arch = AddressAssignedBlock
-  { lbBlock :: FallthroughBlock arch -- ^ The block with symbolic addresses
+data AddressAssignedBlock s arch = AddressAssignedBlock
+  { lbBlock :: FallthroughBlock s arch -- ^ The block with symbolic addresses
   , lbAt    :: ConcreteAddress arch -- ^ The concrete address for this block
   , lbSize  :: Word64 -- ^ How many bytes we set aside for this block (or 0 if we aren't moving/rewriting it)
   }
