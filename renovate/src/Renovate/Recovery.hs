@@ -2,6 +2,8 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -28,6 +30,9 @@ module Renovate.Recovery (
 import qualified Control.Lens as L
 import           Control.Monad ( guard )
 import qualified Control.Monad.Catch as C
+import qualified Control.Monad.Identity as I
+import           Control.Monad.IO.Class ( MonadIO )
+import qualified Control.Monad.IO.Unlift as MIU
 import           Control.Monad.ST ( stToIO, ST, RealWorld )
 import qualified Data.ByteString as B
 import           Data.Either ( partitionEithers )
@@ -42,10 +47,14 @@ import qualified Data.Text.Encoding as T
 import qualified Data.Text.Encoding.Error as T
 import qualified Data.Traversable as T
 import qualified GHC.Err.Located as L
+import           GHC.TypeLits
+import qualified Lumberjack as LJ
 
 import qualified Data.Macaw.Architecture.Info as MC
+import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Discovery as MC
+import qualified Data.Macaw.Refinement as MR
 import qualified Data.Macaw.Symbolic as MS
 import qualified Data.Parameterized.Context as Ctx
 import qualified Data.Parameterized.Some as PU
@@ -284,6 +293,7 @@ data Recovery arch =
            , recoveryHandleAllocator :: C.HandleAllocator
            , recoveryBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
            , recoveryFuncCallback :: Maybe (Int, MC.ArchSegmentOff arch -> BlockInfo arch -> IO ())
+           , recoveryRefinement :: Maybe MR.RefinementConfig
            }
 
 -- | Use macaw to discover code in a binary
@@ -304,17 +314,60 @@ data Recovery arch =
 -- that attempts to make code relocatable (the symbolization phase) fails badly
 -- in this case.  To avoid these failures, we constrain our code recovery to the
 -- text section.
-recoverBlocks :: (MS.SymArchConstraints arch)
+recoverBlocks :: (MS.SymArchConstraints arch, 16 <= MC.ArchAddrWidth arch)
               => Recovery arch
-              -> MC.Memory (MC.ArchAddrWidth arch)
+              -> MBL.LoadedBinary arch binFmt
               -> SymbolMap arch
               -> NEL.NonEmpty (MC.MemSegmentOff (MC.ArchAddrWidth arch))
               -> (ConcreteAddress arch, ConcreteAddress arch)
               -> IO (BlockInfo arch)
-recoverBlocks recovery mem symmap entries textAddrRange = do
+recoverBlocks recovery loadedBinary symmap entries textAddrRange = do
+  let mem = MBL.memoryImage loadedBinary
   sam <- toMacawSymbolMap mem symmap
   di <- cfgFromAddrsWith recovery mem textAddrRange sam (F.toList entries) []
-  blockInfo recovery mem textAddrRange di
+  -- If the caller requested refinement, call refinement in a loop until nothing changes
+  di' <- case recoveryRefinement recovery of
+    Nothing -> return di
+    Just refineCfg -> do
+      rc <- MR.defaultRefinementContext refineCfg loadedBinary
+      refineDiscoveryInfo rc di
+  blockInfo recovery mem textAddrRange di'
+
+newtype RefineM arch a = RefineM { unRefineM :: I.IdentityT IO a }
+  deriving ( Functor
+           , Applicative
+           , Monad
+           , MonadIO
+           , MIU.MonadUnliftIO
+           , C.MonadThrow
+           )
+
+runRefineM :: RefineM arch a -> IO a
+runRefineM = I.runIdentityT . unRefineM
+
+nullLogger :: LJ.LogAction (RefineM arch) msg
+nullLogger = LJ.LogAction { LJ.writeLog = \_ -> return () }
+
+instance LJ.HasLog (MR.RefinementLog arch) (RefineM arch) where
+  getLogAction = return nullLogger
+
+refineDiscoveryInfo :: forall arch
+                     . ( 16 <= MC.ArchAddrWidth arch
+                       , MS.SymArchConstraints arch
+                       )
+                    => MR.RefinementContext arch
+                    -> MC.DiscoveryState arch
+                    -> IO (MC.DiscoveryState arch)
+refineDiscoveryInfo rc = go mempty
+  where
+    go findings0 s0 = do
+      -- NOTE: We are currently throwing away all of the diagnostics from
+      -- macaw-refinement.  We could collect them in an @MVar (Seq msg)@ or
+      -- similar if we wanted them
+      (s1, findings1) <- runRefineM @arch $ MR.refineDiscovery rc findings0 s0
+      case findings0 == findings1 of
+        True -> return s1
+        False -> go findings1 s1
 
 canAssemble :: (t -> Maybe a) -> t -> Bool
 canAssemble asm1 i =

@@ -33,6 +33,7 @@ import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Architecture.Info as MM
 import qualified Data.Macaw.CFG as MM
+import qualified Data.Macaw.Refinement as MR
 import qualified Data.Macaw.Symbolic as MS
 import qualified Lang.Crucible.FunctionHandle as C
 
@@ -201,6 +202,9 @@ data RenovateConfig arch binFmt callbacks (b :: * -> *) = RenovateConfig
   -- text section, @0@ means choose the largest chunk of otherwise unused
   -- addresses within jumping range of the text section, and positive @n@ means
   -- start @n@ bytes after the end of the text section.
+  , rcRefinementConfig :: Maybe MR.RefinementConfig
+  -- ^ Optional configuration for macaw-refinement; if provided, call
+  -- macaw-refinement to find additional code through SMT-based refinement
   }
 
 -- | Compose a list of instrumentation functions into a single
