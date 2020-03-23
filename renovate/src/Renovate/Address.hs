@@ -1,9 +1,12 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 -- | This module defines opaque concrete and symbolic address types.
 module Renovate.Address (
+  ArchOf,
   SymbolicAddress(..),
   ConcreteAddress,
   concreteFromSegmentOff,
@@ -22,6 +25,12 @@ import qualified Numeric as N
 
 import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.CFG as MM
+
+-- | Type family to associate types with their architecture parameter.
+type family ArchOf (x :: *) :: *
+
+type instance ArchOf (SymbolicAddress arch) = arch
+type instance ArchOf (ConcreteAddress arch) = arch
 
 
 -- | Symbolic addresses that can be referenced abstractly and

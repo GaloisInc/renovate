@@ -32,9 +32,12 @@ import qualified Data.List as L
 import           Data.Ord ( comparing )
 import qualified Data.Traversable as T
 
+
 import           Prelude
 
 import qualified Data.Macaw.CFG as MM
+import qualified Data.Macaw.CFG as MC
+
 
 import           Renovate.Address
 import           Renovate.BasicBlock
@@ -68,7 +71,10 @@ import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions )
 -- The function runs in an arbitrary 'Monad' to allow instrumentors to
 -- carry around their own state.
 --
-redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch)
+redirect :: (MonadIO m
+            , InstructionConstraints arch
+            , HasInjectedFunctions m arch
+            , MC.ArchConstraints arch)
          => ISA arch
          -- ^ Information about the ISA in use
          -> BlockInfo arch

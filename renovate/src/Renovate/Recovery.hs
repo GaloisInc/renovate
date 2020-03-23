@@ -131,7 +131,7 @@ data BlockInfo arch = BlockInfo
 isIncompleteBlockAddress :: BlockInfo arch -> ConcreteAddress arch -> Bool
 isIncompleteBlockAddress bi a = S.member a (biIncomplete bi)
 
-analyzeDiscoveredFunctions :: (MS.SymArchConstraints arch)
+analyzeDiscoveredFunctions :: (MS.SymArchConstraints arch, InstructionConstraints arch)
                            => Recovery arch
                            -> MC.Memory (MC.ArchAddrWidth arch)
                            -> (ConcreteAddress arch, ConcreteAddress arch)
@@ -175,7 +175,7 @@ toCFG symRegCFG = do
     regCFG <- getSymbolicRegCFG symRegCFG -- this is why we're in IO, not ST
     return (MS.toCoreCFG archFns regCFG)
 
-cfgFromAddrsWith :: (MS.SymArchConstraints arch)
+cfgFromAddrsWith :: (MS.SymArchConstraints arch, InstructionConstraints arch)
                  => Recovery arch
                  -> MC.Memory (MC.ArchAddrWidth arch)
                  -> (ConcreteAddress arch, ConcreteAddress arch)
@@ -214,7 +214,7 @@ addrInRange (textStart, textEnd) addr = fromMaybe False $ do
   let soEnd = absoluteAddress textEnd
   return (absAddr >= soStart && absAddr < soEnd)
 
-blockInfo :: (MS.SymArchConstraints arch)
+blockInfo :: (MS.SymArchConstraints arch, InstructionConstraints arch)
           => Recovery arch
           -> MC.Memory (MC.RegAddrWidth (MC.ArchReg arch))
           -> (ConcreteAddress arch, ConcreteAddress arch)
@@ -314,7 +314,9 @@ data Recovery arch =
 -- that attempts to make code relocatable (the symbolization phase) fails badly
 -- in this case.  To avoid these failures, we constrain our code recovery to the
 -- text section.
-recoverBlocks :: (MS.SymArchConstraints arch, 16 <= MC.ArchAddrWidth arch)
+recoverBlocks :: ( MS.SymArchConstraints arch
+                 , 16 <= MC.ArchAddrWidth arch
+                 , InstructionConstraints arch)
               => Recovery arch
               -> MBL.LoadedBinary arch binFmt
               -> SymbolMap arch
@@ -431,7 +433,8 @@ blockStopAddress blockStarts pb startAddr
 -- For each block, it is either translated (Right), or we report the address of
 -- the function containing the untranslatable block (Left).  We need this list
 -- to mark functions as incomplete.
-buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow m)
+buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow m
+              , InstructionConstraints arch)
            => (B.ByteString -> Maybe (Int, Instruction arch ()))
            -> (Instruction arch () -> Maybe B.ByteString)
            -- ^ The function to pull a single instruction off of the
@@ -473,6 +476,7 @@ buildBlock dis1 asm1 mem blockStarts (funcAddr, (PU.Some pb))
         -- before running out of bytes...
         Nothing -> return BasicBlock { basicBlockAddress = blockAbsAddr
                                      , basicBlockInstructions = reverse insns
+                                     , basicParsedBlock = Just $ PU.Some pb
                                      }
         Just (bytesRead, i)
           -- We have parsed an instruction that crosses a block boundary. We
@@ -484,9 +488,10 @@ buildBlock dis1 asm1 mem blockStarts (funcAddr, (PU.Some pb))
           -- block, OR the instruction we just decoded is a
           -- terminator, so end the block and stop decoding
           | nextAddr == stopAddr -> do
-            return BasicBlock { basicBlockAddress      = blockAbsAddr
-                              , basicBlockInstructions = reverse (i : insns)
-                              }
+              return BasicBlock { basicBlockAddress      = blockAbsAddr
+                                , basicBlockInstructions = reverse (i : insns)
+                                , basicParsedBlock = Just $ PU.Some pb
+                                }
 
           -- Otherwise, we just keep decoding
           | otherwise -> go blockAbsAddr nextAddr stopAddr (B.drop bytesRead bs) (i : insns)

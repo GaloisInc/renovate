@@ -131,9 +131,11 @@ concretizeJumps concreteAddressMap (AddressAssignedPair (LayoutPair cb (AddressA
         concretizedInstrs = foldMap fst concretizedInstrsSizes
     assert (concretizedSize <= maxSize) (return ())
     isa <- askISA
-    let sb' = sb { basicBlockAddress = baddr
-                 , basicBlockInstructions = concretizedInstrs ++ isaMakePadding isa (maxSize - concretizedSize)
-                 }
+    let sb' = BasicBlock
+          { basicBlockAddress = baddr
+          , basicBlockInstructions = concretizedInstrs ++ isaMakePadding isa (maxSize - concretizedSize)
+          , basicParsedBlock = basicParsedBlock sb
+          }
     return (ConcretePair (LayoutPair cb sb' status))
   | otherwise = return (ConcretePair (LayoutPair cb cb status))
 
@@ -176,7 +178,10 @@ resolveSymbolicFallthrough
   RewriterT arch m (ConcreteFallthrough arch a)
 resolveSymbolicFallthrough concreteAddressMap insnAddr sf = do
   ftTag' <- traverse (resolveSymbolicAddr concreteAddressMap insnAddr) (ftTag sf)
-  return sf { ftTag = ftTag' }
+  return $ FallthroughInstruction
+           { ftInstruction = ftInstruction sf
+           , ftTag = ftTag'
+           }
 
 -- | We need the address of the instruction, so we need to pre-compute
 -- all instruction addresses above.

@@ -4,6 +4,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeFamilies #-}
 module Renovate.Redirect.LayoutBlocks.Types (
   LayoutStrategy(..),
   Allocator(..),
@@ -27,7 +28,7 @@ import qualified Data.Vector.Unboxed as V
 import           Data.Word ( Word32 )
 import qualified Data.Text.Prettyprint.Doc as PD
 
-import           Renovate.Address ( ConcreteAddress, SymbolicAddress )
+import           Renovate.Address ( ConcreteAddress, SymbolicAddress, ArchOf )
 import           Renovate.BasicBlock
 
 -- | A type for selecting the which addresses are available for laying out
@@ -105,11 +106,13 @@ data Layout pair arch =
 -- modified and the type of the rewritten block is a type parameter because at
 -- some points in the algorithm it is symbolic and at other points it will be
 -- concrete.
-data LayoutPair block arch = LayoutPair
-  { lpOrig   :: ConcreteBlock arch -- ^ the original block
+data LayoutPair block = LayoutPair
+  { lpOrig   :: ConcreteBlock (ArchOf block) -- ^ the original block
   , lpNew    :: block              -- ^ the instrumented block
   , lpStatus :: Status             -- ^ allows us to track if the instrumentor changed the block.
   }
+
+type instance ArchOf (LayoutPair block) = ArchOf block
 
 instance (InstructionConstraints arch) => PD.Pretty (SymbolicPair arch) where
   pretty (SymbolicPair (LayoutPair o n _)) = ppBlocks projectInstruction o n
@@ -120,7 +123,10 @@ instance (InstructionConstraints arch) => PD.Pretty (ConcretePair arch) where
 ppBlocks :: ( PD.Pretty (i1 a1)
             , PD.Pretty (i1 a2)
             , PD.Pretty addr1
-            ) => (i2 b -> i1 a2) -> BasicBlock addr1 i1 a1 -> BasicBlock addr2 i2 b -> PD.Doc ann
+            ) => (i2 b -> i1 a2)
+         -> BasicBlock addr1 i1 a1
+         -> BasicBlock addr2 i2 b
+         -> PD.Doc ann
 ppBlocks f o n = PD.vcat $ [ PD.pretty (basicBlockAddress o) PD.<> PD.pretty ":" ] ++
                            ppInsnLists origInsns newInsns
   where
@@ -179,7 +185,12 @@ changeable Unmodified = True
 changeable Immutable = False
 changeable Subsumed = True
 
-newtype SymbolicPair         arch = SymbolicPair { unSymbolicPair :: LayoutPair (SymbolicBlock arch) arch }
-newtype FallthroughPair      arch = FallthroughPair { unFallthroughPair :: LayoutPair (FallthroughBlock arch) arch }
-newtype AddressAssignedPair  arch = AddressAssignedPair { unAddressAssignedPair :: LayoutPair (AddressAssignedBlock arch) arch }
-newtype ConcretePair         arch = ConcretePair { unConcretePair :: LayoutPair (ConcreteBlock arch) arch }
+newtype SymbolicPair         arch = SymbolicPair { unSymbolicPair :: LayoutPair (SymbolicBlock arch) }
+newtype FallthroughPair      arch = FallthroughPair { unFallthroughPair :: LayoutPair (FallthroughBlock arch) }
+newtype AddressAssignedPair  arch = AddressAssignedPair { unAddressAssignedPair :: LayoutPair (AddressAssignedBlock arch) }
+newtype ConcretePair         arch = ConcretePair { unConcretePair :: LayoutPair (ConcreteBlock arch) }
+
+type instance ArchOf (SymbolicPair        arch) = arch
+type instance ArchOf (FallthroughPair     arch) = arch
+type instance ArchOf (AddressAssignedPair arch) = arch
+type instance ArchOf (ConcretePair        arch) = arch

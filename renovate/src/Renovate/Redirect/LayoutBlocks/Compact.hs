@@ -124,15 +124,16 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
   -- catch jumps that our tool didn't know about by landing at a halt
   -- instruction, when that is possible.
   let overwriteAll = buildAddressHeap (trampolines strat) startAddr (concat blockChunks')
-  (h2, blocks2) <- case allocator strat of
-    -- In the parallel layout, we don't use any space reclaimed by redirecting
-    -- things, so we should overwrite it all with padding.
-    Parallel -> overwriteAll
-    Randomized _ -> overwriteAll
-    _ -> return (h1, blocks1)
+  ((h2, blocks2) :: (AddressHeap arch, [FallthroughPair arch])) <-
+    case allocator strat of
+      -- In the parallel layout, we don't use any space reclaimed by redirecting
+      -- things, so we should overwrite it all with padding.
+      Parallel -> overwriteAll
+      Randomized _ -> overwriteAll
+      _ -> return (h1, blocks1)
 
   let paddingBlocks :: [ConcreteBlock arch]
-      paddingBlocks = [ BasicBlock (isaMakePadding isa (fromIntegral size)) addr
+      paddingBlocks = [ BasicBlock (isaMakePadding isa (fromIntegral size)) addr Nothing
                       | H.Entry (Down size) addr <- H.toUnsortedList h2
                       ]
 
@@ -181,12 +182,25 @@ groupBlocks FunctionGrouping _cfgs blocks = do
 -- with 'noFallthrough' -- that is, as not a conditional jump. This is safe if
 -- the pair is unmodified, since then it won't be rewritten and these
 -- annotations will be ignored anyway.
+
+      -- Expected type: LayoutPair
+      --                  (BasicBlock
+      --                     (SymbolicInfo arch)
+      --                     (FallthroughInstruction (SymbolicAddress arch))
+      --                     (InstructionAnnotation arch))
+      --   Actual type: LayoutPair (SymbolicBlock arch)
+
 noFallthroughPair :: SymbolicPair arch -> FallthroughPair arch
-noFallthroughPair (SymbolicPair lp) = FallthroughPair lp
-  { lpNew = (lpNew lp)
-    { basicBlockInstructions = map noFallthrough (basicBlockInstructions (lpNew lp))
-    }
+noFallthroughPair (SymbolicPair lp) =
+  FallthroughPair
+  $ LayoutPair
+  { lpOrig = lpOrig lp
+  , lpNew = newBlock
+  , lpStatus = lpStatus lp
   }
+  where b = lpNew lp
+        newInstructions = map noFallthrough $ basicBlockInstructions b
+        newBlock = b { basicBlockInstructions = newInstructions}
 
 -- | Some grouping strategies may ask modified and immutable blocks to be
 -- "chunked up" and relocated together. We can't honor that request, but we'll
@@ -325,19 +339,24 @@ assignConcreteAddress assignedAddrs (FallthroughPair (LayoutPair cb fb status))
     Nothing -> L.error $ printf "Expected an assigned address for symbolic block %s (derived from concrete block %s)"
                                 (show (basicBlockAddress fb))
                                 (show (basicBlockAddress cb))
-    Just (addr, size) -> return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb addr size) status))
+    Just (addr, size) ->
+      return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb addr size) status))
   | otherwise =
     return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb (basicBlockAddress cb) 0) status))
 
-allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch), F.Foldable t, Functor t)
-                               => ConcreteAddress arch
-                               -> AddressHeap arch
-                               -> [[FallthroughBlock arch]]
-                               -> t (SymbolicAddress arch, BS.ByteString)
-                               -> RewriterT arch m ( AddressHeap arch
-                                                   , M.Map (SymbolicInfo arch) (ConcreteAddress arch, Word64)
-                                                   , M.Map (SymbolicAddress arch) (ConcreteAddress arch, (SymbolicAddress arch, BS.ByteString))
-                                                   )
+allocateSymbolicBlockAddresses ::
+  (Monad m
+  , MM.MemWidth (MM.ArchAddrWidth arch)
+  , F.Foldable t
+  , Functor t)
+  => ConcreteAddress arch
+  -> AddressHeap arch
+  -> [[FallthroughBlock arch]]
+  -> t (SymbolicAddress arch, BS.ByteString)
+  -> RewriterT arch m ( AddressHeap arch
+                      , M.Map (SymbolicInfo arch) (ConcreteAddress arch, Word64)
+                      , M.Map (SymbolicAddress arch) (ConcreteAddress arch, (SymbolicAddress arch, BS.ByteString))
+                      )
 allocateSymbolicBlockAddresses startAddr h0 blocksBySize injectedCode = do
   isa <- askISA
   mem <- askMem
@@ -491,7 +510,7 @@ buildAddressHeap strat startAddr blocks = do
       (blockToFunctions, disjointFunctions) = findRelocatableFunctionBlocks functionToBlocks
       smallBlocks = S.fromList
         [ addr
-        | FallthroughPair (LayoutPair cb@(BasicBlock _ addr) _ _) <- blocks
+        | FallthroughPair (LayoutPair cb@(BasicBlock _ addr _) _ _) <- blocks
         , concreteBlockSize isa cb < jumpSize
         ]
       relocatedFunctions = findRelocatedFunctions blockToFunctions functionToBlocks blocks
@@ -541,7 +560,7 @@ findRelocatedFunctions ::
   S.Set (ConcreteAddress arch)
 findRelocatedFunctions entryPointMap initBlockMap = go (S.fromList <$> initBlockMap) where
   go unrelocatedBlockMap [] = M.keysSet (M.filter S.null unrelocatedBlockMap)
-  go ubm (FallthroughPair (LayoutPair (BasicBlock _ addr) _ status) : pairs)
+  go ubm (FallthroughPair (LayoutPair (BasicBlock _ addr _) _ status) : pairs)
     | changed status = case M.lookup addr entryPointMap of
       Nothing -> go ubm pairs
       Just entryPoints -> go (foldr (M.adjust (S.delete addr)) ubm entryPoints) pairs

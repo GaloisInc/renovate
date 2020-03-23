@@ -1,6 +1,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 -- | Lift concrete blocks into relocatable symbolic blocks
 module Renovate.Redirect.Symbolize (
   SymbolicAddressAllocator,
@@ -77,12 +79,16 @@ symbolizeJumps :: (InstructionConstraints arch)
                -> (ConcreteBlock arch, SymbolicAddress arch)
                -> (ConcreteBlock arch, SymbolicBlock arch)
 symbolizeJumps isa mem symAddrMap (cb, symAddr) =
-  (cb, BasicBlock { basicBlockAddress = SymbolicInfo { symbolicAddress = symAddr
-                                                     , concreteAddress = basicBlockAddress cb
-                                                     }
+  (cb, BasicBlock { basicBlockAddress =
+                    SymbolicInfo
+                    { symbolicAddress = symAddr
+                    , concreteAddress = basicBlockAddress cb
+                    }
                   , basicBlockInstructions = concat insns
+                  , basicParsedBlock = pblock
                   })
   where
+    pblock = basicParsedBlock cb
     lookupSymAddr ca = M.lookup ca symAddrMap
     insns = fmap symbolize (instructionAddresses isa cb)
 

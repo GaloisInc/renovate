@@ -1,4 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 -- | Tools for working with 'BasicBlock's
 --
 -- This includes functions to convert between concrete and symbolic
@@ -145,7 +148,10 @@ terminatorType isa mem b =
       let (termInsn, addr) = last insns
       in isaJumpType isa termInsn mem addr
 
-prettyBasicBlock :: (PD.Pretty addr) => ISA arch -> BasicBlock addr (Instruction arch) a -> PD.Doc ann
+prettyBasicBlock ::
+  (PD.Pretty addr)
+  => ISA (ArchOf addr)
+  -> BasicBlock addr (Instruction (ArchOf addr)) a -> PD.Doc ann
 prettyBasicBlock isa b =
   PD.vsep [ PD.pretty (basicBlockAddress b) PD.<> PD.pretty ":"
           , PD.indent 2 (PD.vsep (map (PD.pretty . isaPrettyInstruction isa) (basicBlockInstructions b)))

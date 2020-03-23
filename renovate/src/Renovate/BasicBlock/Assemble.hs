@@ -261,7 +261,6 @@ checkedOverlappingAssemble c overlays = do
     BlockChunk b -> withInstructionConstraints $ do
       isa <- St.gets asISA
       let blockEnd = blockEndAddress isa b
-      let reversedInstructions = reverse (basicBlockInstructions b)
       -- Assert that the overlays (i.e., blocks that overlay this current block
       -- that we are assembling) are all completely contained in the first block.
       --
