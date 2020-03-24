@@ -256,7 +256,7 @@ deriving instance (Show a) => Show (FallthroughType a)
 -- all of the instruction's successors that may be relocated. The addresses can
 -- be chosen to be symbolic or concrete by picking different @addr@s.
 data FallthroughInstruction arch addr a = FallthroughInstruction
-  { ftInstruction :: Instruction arch a
+  { fallthroughInstruction :: Instruction arch a
   , fallthroughType :: FallthroughType addr
   }
 
@@ -264,7 +264,7 @@ type SymbolicFallthrough arch = FallthroughInstruction arch (SymbolicAddress arc
 type ConcreteFallthrough arch = FallthroughInstruction arch (ConcreteAddress arch)
 
 instance PD.Pretty (Instruction arch a) => PD.Pretty (FallthroughInstruction arch addr a) where
-  pretty = PD.pretty . ftInstruction
+  pretty = PD.pretty . fallthroughInstruction
 
 -- | Lift a 'TaggedInstruction' to a 'FallthroughInstruction' by adding the
 -- symbolic address of its fallthrough successor. If it didn't have a jump

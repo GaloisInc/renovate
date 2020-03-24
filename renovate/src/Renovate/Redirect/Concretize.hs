@@ -209,9 +209,9 @@ mapJumpAddress concreteAddressMap (sf, insnAddr) = do
   isa <- askISA
   mem <- askMem
   cf_ <- resolveSymbolicFallthrough concreteAddressMap insnAddr sf
-  let cf = cf_ { ftInstruction = isaConcretizeAddresses isa mem insnAddr (ftInstruction cf_) }
+  let cf = cf_ { fallthroughInstruction = isaConcretizeAddresses isa mem insnAddr (fallthroughInstruction cf_) }
   case (fallthroughType cf, isaModifyJumpTarget isa insnAddr cf) of
-    (InternalInstruction, _) -> return [ftInstruction cf]
+    (InternalInstruction, _) -> return [fallthroughInstruction cf]
     (_, Nothing) -> do
       let err :: Diagnostic
           err = InstructionIsNotJump isa i
@@ -219,5 +219,4 @@ mapJumpAddress concreteAddressMap (sf, insnAddr) = do
       throwError err
     (_, Just insns) -> return insns
   where
-    i = ftInstruction sf
-
+    i = fallthroughInstruction sf

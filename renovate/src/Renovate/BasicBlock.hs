@@ -147,7 +147,7 @@ symbolicBlockSize isa mem addr fb = basicInstSize + fromIntegral jumpSizes
   where
     origAddr = fallthroughOriginalAddress fb
     jumpSizes = sum $ map (computeRewrittenJumpSize isa mem origAddr addr) jumpsToRewrite
-    basicInstSize = sum (map (fromIntegral . isaInstructionSize isa . isaConcretizeAddresses isa mem addr . ftInstruction) standardInstructions)
+    basicInstSize = sum (map (fromIntegral . isaInstructionSize isa . isaConcretizeAddresses isa mem addr . fallthroughInstruction) standardInstructions)
     (standardInstructions, jumpsToRewrite) = DLN.partition hasNoAddresses (fallthroughInstructions fb)
 
 computeRewrittenJumpSize ::
@@ -164,10 +164,10 @@ computeRewrittenJumpSize isa mem origAddr addr ftJmp = case rewrittenSize of
       error ("computeRewrittenJumpSize: Jump cannot be modified: " ++ isaPrettyInstruction isa jmp ++ " at " ++ show addr ++ " at original address " ++ show origAddr ++ " with new target " ++ show (fallthroughType ftJmp))
   where
     instrSize = fromIntegral . isaInstructionSize isa
-    jmp = isaConcretizeAddresses isa mem addr (ftInstruction ftJmp)
+    jmp = isaConcretizeAddresses isa mem addr (fallthroughInstruction ftJmp)
     fakeTgt = addressAddOffset addr (fromIntegral (isaMaxRelativeJumpSize isa))
     rewrittenJmp = isaModifyJumpTarget isa addr FallthroughInstruction
-      { ftInstruction = jmp
+      { fallthroughInstruction = jmp
       , fallthroughType = fakeTgt <$ fallthroughType ftJmp
       }
     rewrittenSize = sum . map instrSize <$> rewrittenJmp
