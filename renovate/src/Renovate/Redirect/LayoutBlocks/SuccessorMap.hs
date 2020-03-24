@@ -31,11 +31,11 @@ successorMap isa symPairs =
                                 , RB.symbolicBlockSymbolicAddress b0
                                 )
                               | wp <- F.toList symPairs
-                              , let b0 = withProvenance wp
+                              , let b0 = withoutProvenance wp
                               ]
     indexSymbolicSuccessors m wp =
       let concBlock = originalBlock wp
-          symBlock = withProvenance wp
+          symBlock = withoutProvenance wp
           symAddr = RB.symbolicBlockSymbolicAddress symBlock
           nextAbsAddr = RB.concreteBlockAddress concBlock `RA.addressAddOffset` fromIntegral (RB.concreteBlockSize isa concBlock)
       in case M.lookup nextAbsAddr concToSymMap of

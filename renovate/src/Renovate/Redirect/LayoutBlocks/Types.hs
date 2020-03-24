@@ -98,9 +98,10 @@ data Layout b arch =
 data WithProvenance b arch =
   WithProvenance { originalBlock :: ConcreteBlock arch
                  -- ^ The block from which the base block (i.e.,
-                 -- 'withProvenance') was derived
-                 , withProvenance :: b arch
-                 -- ^ The payload for which we are tracking provenance
+                 -- 'withoutProvenance') was derived
+                 , withoutProvenance :: b arch
+                 -- ^ The payload for which we are tracking provenance; the
+                 -- accessor discards the provenance information
                  , rewriteStatus :: Status
                  -- ^ A marker indicating whether or not the instrumentor
                  -- changed the block

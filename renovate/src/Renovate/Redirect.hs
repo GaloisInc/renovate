@@ -139,17 +139,17 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
       concretizedBlock (concreteBlockAddress cb) (concreteBlockInstructions cb)
     unPair wp =
       case rewriteStatus wp of
-        Modified    -> [toConcretized (originalBlock wp), withProvenance wp]
+        Modified    -> [toConcretized (originalBlock wp), withoutProvenance wp]
         Unmodified  -> [toConcretized (originalBlock wp)]
         Immutable   -> [toConcretized (originalBlock wp)]
-        Subsumed    -> [                                  withProvenance wp]
+        Subsumed    -> [                                  withoutProvenance wp]
 
 toBlockMapping :: [WithProvenance ConcretizedBlock arch] -> [(ConcreteAddress arch, ConcreteAddress arch)]
 toBlockMapping wps =
   [ (concreteBlockAddress origBlock, concretizedBlockAddress concBlock)
   | wp <- wps
   , let origBlock = originalBlock wp
-  , let concBlock = withProvenance wp
+  , let concBlock = withoutProvenance wp
   ]
 
 isRelocatableTerminatorType :: JumpType arch -> Bool

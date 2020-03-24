@@ -64,7 +64,7 @@ concretize strat startAddr blocks injectedCode blockInfo = do
   let injectedAddresses = injectedBlockLayout layout
   let concreteAddressMap = M.fromList [ (fallthroughSymbolicAddress sb, ca)
                                       | wp <- F.toList concreteAddresses
-                                      , let aab = withProvenance wp
+                                      , let aab = withoutProvenance wp
                                       , let sb = lbBlock aab
                                       , let ca = lbAt aab
                                       ]
@@ -77,7 +77,7 @@ concretize strat startAddr blocks injectedCode blockInfo = do
   let brittleMap = M.fromList [ (ca, (concreteBlockAddress oa, nm))
                               | wp <- F.toList concreteAddresses
                               , let oa = originalBlock wp
-                              , let aab = withProvenance wp
+                              , let aab = withoutProvenance wp
                               , let ca = lbAt aab
                               , nm <- maybeToList $ Map.lookup (concreteBlockAddress oa) symmap
                               ]
@@ -146,7 +146,7 @@ concretizeJumps concreteAddressMap wp
       return $ WithProvenance cb cb' status
   where
     cb = originalBlock wp
-    aab = withProvenance wp
+    aab = withoutProvenance wp
     sb = lbBlock aab
     baddr = lbAt aab
     maxSize = lbSize aab

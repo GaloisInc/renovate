@@ -106,7 +106,7 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
   -- the parallel layout as a special case of compact.
   isa <- askISA
 
-  let newBlocks = map (map withProvenance) blockChunks'
+  let newBlocks = map (map withoutProvenance) blockChunks'
       sortedBlocks = case allocator strat of
         Compact SortedOrder        -> L.sortOn    (bySize isa mem) newBlocks
         Compact (RandomOrder seed) -> randomOrder seed             newBlocks
@@ -188,7 +188,7 @@ noFallthroughPair wpSym = WithProvenance origBlock fb status
                           (symbolicBlockSymbolicAddress sb)
                           (fmap noFallthrough (symbolicBlockInstructions sb))
     status = rewriteStatus wpSym
-    sb = withProvenance wpSym
+    sb = withoutProvenance wpSym
     origBlock = originalBlock wpSym
 
 -- | Some grouping strategies may ask modified and immutable blocks to be
@@ -335,7 +335,7 @@ assignConcreteAddress assignedAddrs wp
       return $ WithProvenance cb (AddressAssignedBlock fb (concreteBlockAddress cb) 0) status
   where
     cb = originalBlock wp
-    fb = withProvenance wp
+    fb = withoutProvenance wp
     status = rewriteStatus wp
     keyOf fblock = SymbolicInfo (fallthroughSymbolicAddress fblock) (fallthroughOriginalAddress fblock)
 
@@ -461,7 +461,7 @@ addExplicitFallthrough mem symSucIdx wp = do
   return $! WithProvenance cb (lastInstructionFallthrough lift sb) Modified
   where
     cb = originalBlock wp
-    sb = withProvenance wp
+    sb = withoutProvenance wp
     status = rewriteStatus wp
     -- We explicitly match on all constructor patterns so that if/when new ones
     -- are added this will break instead of having some default case that does
@@ -623,7 +623,7 @@ addOriginalBlock isa jumpSize pRedirect (h, wps) wp
   | otherwise = (h, wp:wps)
   where
     cb        = originalBlock wp
-    sb        = withProvenance wp
+    sb        = withoutProvenance wp
     status    = rewriteStatus wp
     bsize     = concreteBlockSize isa cb
     spaceSize :: Int

@@ -43,7 +43,7 @@ redirectBlock input =
   case rewriteStatus input of
     Modified -> do
       let origBlock = originalBlock input
-      let instrBlock = withProvenance input
+      let instrBlock = withoutProvenance input
 
       isa <- askISA
       let origBlockSize = concreteBlockSize isa origBlock
