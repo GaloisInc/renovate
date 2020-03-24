@@ -10,6 +10,7 @@ module Renovate.Redirect.Symbolize (
   ) where
 
 import qualified Data.Foldable as F
+import qualified Data.List.NonEmpty as DLN
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Map as M
 import           Data.Maybe ( fromMaybe )
@@ -51,7 +52,7 @@ symbolizeBasicBlocks isa mem symAlloc0 concreteBlocks =
   (symAlloc1, fmap (symbolizeJumps isa mem blockAddressIndex) symBlocks)
   where
     (symAlloc1, symBlocks) = T.mapAccumL allocateSymbolicAddress symAlloc0 concreteBlocks
-    blockAddressIndex = M.fromList [ (basicBlockAddress b, symAddr)
+    blockAddressIndex = M.fromList [ (concreteBlockAddress b, symAddr)
                                    | (b, symAddr) <- F.toList symBlocks
                                    ]
 
@@ -77,11 +78,10 @@ symbolizeJumps :: (InstructionConstraints arch)
                -> (ConcreteBlock arch, SymbolicAddress arch)
                -> (ConcreteBlock arch, SymbolicBlock arch)
 symbolizeJumps isa mem symAddrMap (cb, symAddr) =
-  (cb, BasicBlock { basicBlockAddress = SymbolicInfo { symbolicAddress = symAddr
-                                                     , concreteAddress = basicBlockAddress cb
-                                                     }
-                  , basicBlockInstructions = concat insns
-                  })
+  case DLN.nonEmpty (concat insns) of
+    Nothing -> error ("Created empty block while symbolizing block at: " ++ show (concreteBlockAddress cb))
+    Just insnList ->
+      (cb, symbolicBlock (concreteBlockAddress cb) symAddr insnList)
   where
     lookupSymAddr ca = M.lookup ca symAddrMap
     insns = fmap symbolize (instructionAddresses isa cb)

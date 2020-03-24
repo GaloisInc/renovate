@@ -13,7 +13,7 @@ import qualified Renovate.Address as RA
 import qualified Renovate.BasicBlock as RB
 import qualified Renovate.ISA as RI
 
-import           Renovate.Redirect.LayoutBlocks.Types ( SymbolicPair(..), lpNew, lpOrig )
+import           Renovate.Redirect.LayoutBlocks.Types
 
 newtype SuccessorMap arch = SuccessorMap (M.Map (RA.SymbolicAddress arch) (RA.SymbolicAddress arch))
 
@@ -22,21 +22,22 @@ newtype SuccessorMap arch = SuccessorMap (M.Map (RA.SymbolicAddress arch) (RA.Sy
 -- unconditional jump)
 successorMap :: (Foldable t, MC.MemWidth (MC.ArchAddrWidth arch))
              => RI.ISA arch
-             -> t (SymbolicPair arch)
+             -> t (WithProvenance RB.SymbolicBlock arch)
              -> SuccessorMap arch
 successorMap isa symPairs =
   SuccessorMap (F.foldl' indexSymbolicSuccessors M.empty symPairs)
   where
-    concToSymMap = M.fromList [ (RB.concreteAddress symInfo, RB.symbolicAddress symInfo)
-                              | SymbolicPair lp <- F.toList symPairs
-                              , let symBlock = lpNew lp
-                              , let symInfo = RB.basicBlockAddress symBlock
+    concToSymMap = M.fromList [ ( RB.symbolicBlockOriginalAddress b0
+                                , RB.symbolicBlockSymbolicAddress b0
+                                )
+                              | wp <- F.toList symPairs
+                              , let b0 = withProvenance wp
                               ]
-    indexSymbolicSuccessors m (SymbolicPair lp) =
-      let concBlock = lpOrig lp
-          symBlock = lpNew lp
-          symAddr = RB.symbolicAddress (RB.basicBlockAddress symBlock)
-          nextAbsAddr = RB.basicBlockAddress concBlock `RA.addressAddOffset` fromIntegral (RB.concreteBlockSize isa concBlock)
+    indexSymbolicSuccessors m wp =
+      let concBlock = originalBlock wp
+          symBlock = withProvenance wp
+          symAddr = RB.symbolicBlockSymbolicAddress symBlock
+          nextAbsAddr = RB.concreteBlockAddress concBlock `RA.addressAddOffset` fromIntegral (RB.concreteBlockSize isa concBlock)
       in case M.lookup nextAbsAddr concToSymMap of
         Nothing -> M.insert symAddr (RA.StableAddress nextAbsAddr) m
         Just symSuccessor -> M.insert symAddr symSuccessor m
@@ -48,4 +49,4 @@ lookupSuccessor :: SuccessorMap arch
                 -> RB.SymbolicBlock arch
                 -> Maybe (RA.SymbolicAddress arch)
 lookupSuccessor (SuccessorMap sm) sb =
-  M.lookup (RB.symbolicAddress (RB.basicBlockAddress sb)) sm
+  M.lookup (RB.symbolicBlockSymbolicAddress sb) sm

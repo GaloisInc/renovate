@@ -234,7 +234,7 @@ blockInfo recovery mem textAddrRange di = do
   -- We collect not only the blocks, but also the addresses of functions
   -- containing untranslatable blocks so that they can be marked as incomplete.
   (incomp, blocks) <- partitionEithers <$> mapM (blockBuilder blockStarts) (M.elems macawBlocks)
-  let addBlock m b = M.insert (basicBlockAddress b) b m
+  let addBlock m b = M.insert (concreteBlockAddress b) b m
   let blockIndex = F.foldl' addBlock M.empty blocks
   let funcBlocks = M.fromList [ (funcAddr, (mapMaybe (\a -> M.lookup a blockIndex) blockAddrs, PU.Some dfi))
                               | PU.Some dfi <- validFuncs
@@ -450,30 +450,34 @@ buildBlock dis1 asm1 mem blockStarts (funcAddr, (PU.Some pb))
         Left err -> C.throwM (MemoryError err)
         Right [MC.ByteRegion bs] -> do
           let stopAddr = blockStopAddress blockStarts pb concAddr
-          bb <- go concAddr concAddr stopAddr bs []
-          -- If we can't re-assemble all of the instructions we have found,
-          -- pretend we never saw this block.  Note that the caller will have to
-          -- remember this to note that the function containing this block is
-          -- incomplete.
-          --
-          -- We do this to avoid re-assembly errors later, where we can't do
-          -- anything about it.
-          case all (canAssemble asm1) (basicBlockInstructions bb) of
-            True -> return (Right bb)
-            False -> return (Left funcAddr)
+          insns <- go concAddr stopAddr bs []
+          case NEL.nonEmpty insns of
+            Nothing -> C.throwM (EmptyBlock concAddr)
+            Just nonEmptyInsns -> do
+              -- bb <- go concAddr concAddr stopAddr bs []
+              let bb = concreteBlock concAddr nonEmptyInsns pb
+
+              -- If we can't re-assemble all of the instructions we have found,
+              -- pretend we never saw this block.  Note that the caller will have to
+              -- remember this to note that the function containing this block is
+              -- incomplete.
+              --
+              -- We do this to avoid re-assembly errors later, where we can't do
+              -- anything about it.
+              case all (canAssemble asm1) (concreteBlockInstructions bb) of
+                True -> return (Right bb)
+                False -> return (Left funcAddr)
         _ -> C.throwM (NoByteRegionAtAddress (MC.segoffAddr segAddr))
   | otherwise = return (Left funcAddr)
   where
     segAddr = MC.pblockAddr pb
     addOff       = addressAddOffset
-    go blockAbsAddr insnAddr stopAddr bs insns = do
+    go insnAddr stopAddr bs insns = do
       case dis1 bs of
         -- Actually, we should probably never hit this case.  We
         -- should have hit a terminator instruction or end of block
         -- before running out of bytes...
-        Nothing -> return BasicBlock { basicBlockAddress = blockAbsAddr
-                                     , basicBlockInstructions = reverse insns
-                                     }
+        Nothing -> return (reverse insns)
         Just (bytesRead, i)
           -- We have parsed an instruction that crosses a block boundary. We
           -- should probably give up -- this executable is too wonky.
@@ -484,12 +488,10 @@ buildBlock dis1 asm1 mem blockStarts (funcAddr, (PU.Some pb))
           -- block, OR the instruction we just decoded is a
           -- terminator, so end the block and stop decoding
           | nextAddr == stopAddr -> do
-            return BasicBlock { basicBlockAddress      = blockAbsAddr
-                              , basicBlockInstructions = reverse (i : insns)
-                              }
+              return (reverse (i : insns))
 
           -- Otherwise, we just keep decoding
-          | otherwise -> go blockAbsAddr nextAddr stopAddr (B.drop bytesRead bs) (i : insns)
+          | otherwise -> go nextAddr stopAddr (B.drop bytesRead bs) (i : insns)
           where
           nextAddr = insnAddr `addOff` fromIntegral bytesRead
 

@@ -40,8 +40,7 @@ module Renovate
   -- * Basic Blocks
   B.SymbolicBlock,
   B.ConcreteBlock,
-  B.BasicBlock(..),
-  B.SymbolicInfo(..),
+  B.ConcretizedBlock,
   Recovery.BlockInfo(..),
   Recovery.isIncompleteBlockAddress,
   Recovery.numBlockRegions,
@@ -63,7 +62,7 @@ module Renovate
   B.ConcreteFallthrough,
   B.addFallthrough,
   B.noFallthrough,
-  B.FallthroughTag(..),
+  B.FallthroughType(..),
   B.Instruction,
   B.InstructionAnnotation,
   B.RegisterType,
@@ -107,7 +106,8 @@ module Renovate
   -- * Results
   RW.RewriteInfo(..),
   RW.RewriteSite(..),
-  E.SomeBlocks(..),
+  E.SomeConcreteBlocks(..),
+  E.SomeConcretizedBlocks(..),
   E.RewriterInfo,
   E.RewriterEnv,
   E.SectionInfo(..),

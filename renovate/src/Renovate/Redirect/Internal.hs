@@ -12,9 +12,7 @@ import           Prelude
 import           Renovate.BasicBlock
 import           Renovate.ISA
 import           Renovate.Redirect.Monad
-import           Renovate.Redirect.LayoutBlocks.Types ( Status(..)
-                                                      , ConcretePair(..)
-                                                      , LayoutPair(..) )
+import           Renovate.Redirect.LayoutBlocks.Types
 
 -- | Overwrite the entry points of each original block with a pointer
 -- to the instrumented block, if possible.
@@ -25,12 +23,12 @@ import           Renovate.Redirect.LayoutBlocks.Types ( Status(..)
 --
 -- This is a low level helper mostly exposed for testing
 redirectOriginalBlocks :: (Monad m, T.Traversable t, InstructionConstraints arch)
-                       => t (ConcretePair arch)
-                       -> RewriterT arch m (t (ConcretePair arch))
+                       => t (WithProvenance ConcretizedBlock arch)
+                       -> RewriterT arch m (t (WithProvenance ConcretizedBlock arch))
 redirectOriginalBlocks = T.traverse redirectBlock
 
--- | Given an original 'ConcreteBlock' and an instrumented
--- 'ConcreteBlock', rewrite the original block to redirect to the
+-- | Given an original 'ConcreteBlock' (in the 'WithProvenance' wrapper) and an
+-- instrumented 'ConcretizedBlock', rewrite the original block to redirect to the
 -- instrumented version, if possible.
 --
 -- This function will generate diagnostics for blocks that cannot be
@@ -39,25 +37,31 @@ redirectOriginalBlocks = T.traverse redirectBlock
 -- Note that the address of the jump instruction is the address of the
 -- original block (since it will be the first instruction).
 redirectBlock :: (Monad m, InstructionConstraints arch)
-              => ConcretePair arch
-              -> RewriterT arch m (ConcretePair arch)
-redirectBlock input@(ConcretePair (LayoutPair origBlock instrBlock Modified)) = do
-  isa <- askISA
-  let origBlockSize = concreteBlockSize isa origBlock
-      jmpInsns = isaMakeRelativeJumpTo isa (basicBlockAddress origBlock) (basicBlockAddress instrBlock)
-      jmpSize = instructionStreamSize isa jmpInsns
-  -- FIXME: Can we do this check at a higher level and earlier? It would
-  -- probably fit very well in the top-level redirect loop
-  case origBlockSize < jmpSize of
-    True -> do
-      recordUnrelocatableSize
-      logDiagnostic $ BlockTooSmallForRedirection isa jmpSize origBlock instrBlock
+              => WithProvenance ConcretizedBlock arch
+              -> RewriterT arch m (WithProvenance ConcretizedBlock arch)
+redirectBlock input =
+  case rewriteStatus input of
+    Modified -> do
+      let origBlock = originalBlock input
+      let instrBlock = withProvenance input
+
+      isa <- askISA
+      let origBlockSize = concreteBlockSize isa origBlock
+          jmpInsns = isaMakeRelativeJumpTo isa (concreteBlockAddress origBlock) (concretizedBlockAddress instrBlock)
+          jmpSize = instructionStreamSize isa jmpInsns
+      -- FIXME: Can we do this check at a higher level and earlier? It would
+      -- probably fit very well in the top-level redirect loop
+      case origBlockSize < jmpSize of
+        True -> do
+          recordUnrelocatableSize
+          logDiagnostic $ BlockTooSmallForRedirection isa jmpSize origBlock instrBlock
+          return input
+        False -> do
+          let origBlock' = origBlock { concreteBlockInstructions = jmpInsns }
+          return $ WithProvenance origBlock' instrBlock Modified
+    Unmodified -> return input
+    Immutable -> return input
+    Subsumed ->
+      -- The consumer ignores the concrete block of a Subsumed block, so we
+      -- don't need to figure out how to redirect it
       return input
-    False -> do
-      let origBlock' = origBlock { basicBlockInstructions = jmpInsns }
-      return (ConcretePair (LayoutPair origBlock' instrBlock Modified))
-redirectBlock unmodified@(ConcretePair (LayoutPair _ _ Unmodified)) = return unmodified
-redirectBlock unmodified@(ConcretePair (LayoutPair _ _ Immutable )) = return unmodified
--- The consumer ignores the concrete block of a Subsumed pair, so we don't need
--- to bother figuring out how to redirect it.
-redirectBlock subsumed@(ConcretePair (LayoutPair _ _ Subsumed)) = return subsumed
