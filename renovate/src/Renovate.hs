@@ -38,8 +38,16 @@ module Renovate
   E.rewriteElf,
   E.analyzeElf,
   -- * Basic Blocks
-  B.SymbolicBlock,
+  -- ** Concrete blocks
   B.ConcreteBlock,
+  B.concreteBlockAddress,
+  B.concreteBlockInstructions,
+  -- ** Symbolic blocks
+  B.SymbolicBlock,
+  B.symbolicBlockInstructions,
+  B.symbolicBlockOriginalAddress,
+  B.symbolicBlockSymbolicAddress,
+  B.symbolicBlockInstructions,
   B.ConcretizedBlock,
   Recovery.BlockInfo(..),
   Recovery.isIncompleteBlockAddress,

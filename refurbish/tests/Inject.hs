@@ -7,7 +7,9 @@ module Inject (
   ) where
 
 import qualified Data.ByteString as BS
+import qualified Data.Foldable as F
 import           Data.Functor.Const ( Const(..) )
+import qualified Data.List.NonEmpty as DLN
 import qualified System.Exit as E
 import qualified Test.Tasty.HUnit as T
 
@@ -20,7 +22,7 @@ import qualified Renovate as R
 import qualified Renovate.Arch.PPC as RP
 
 injectionAnalysis :: BS.ByteString
-                  -> (forall env . (R.HasAnalysisEnv env) => env arch binFmt -> Const () arch -> InjectedAddr arch -> R.SymbolicBlock arch -> R.RewriteM lm arch (Maybe ([R.TaggedInstruction arch (R.InstructionAnnotation arch)])))
+                  -> (forall env . (R.HasAnalysisEnv env) => env arch binFmt -> Const () arch -> InjectedAddr arch -> R.SymbolicBlock arch -> R.RewriteM lm arch (Maybe (DLN.NonEmpty (R.TaggedInstruction arch (R.InstructionAnnotation arch)))))
                   -> R.AnalyzeAndRewrite lm arch binFmt (Const ())
 injectionAnalysis injCode injRewrite =
   R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
@@ -35,6 +37,13 @@ injectPreRewrite :: (R.HasAnalysisEnv env) => BS.ByteString -> env arch binFmt -
 injectPreRewrite injCode _ _ = do
   InjectedAddr <$> R.injectFunction "newExit" injCode
 
+-- | Prepend a possibly-empty list to a non-empty list, which produces a non-empty list
+prepend :: [a] -> DLN.NonEmpty a -> DLN.NonEmpty a
+prepend l nel =
+  case l of
+    [] -> nel
+    elt : elts -> elt DLN.:| (elts ++ F.toList nel)
+
 -- | This rewriter is PPC64-specific because it has to generate machine instructions
 --
 -- We'll need to add one per architecture
@@ -43,9 +52,9 @@ ppc64Inject :: (R.HasAnalysisEnv env)
             -> b RP.PPC64
             -> InjectedAddr RP.PPC64
             -> R.SymbolicBlock RP.PPC64
-            -> R.RewriteM lm RP.PPC64 (Maybe ([R.TaggedInstruction RP.PPC64 (R.InstructionAnnotation RP.PPC64)]))
+            -> R.RewriteM lm RP.PPC64 (Maybe ((DLN.NonEmpty (R.TaggedInstruction RP.PPC64 (R.InstructionAnnotation RP.PPC64)))))
 ppc64Inject env _ (InjectedAddr addr) sb = do
-  return (Just (newCall ++ R.basicBlockInstructions sb))
+  return (Just (prepend newCall (R.symbolicBlockInstructions sb)))
   where
     mem = MBL.memoryImage (R.analysisLoadedBinary env)
     isa = R.analysisISA env
