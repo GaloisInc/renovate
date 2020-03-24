@@ -26,6 +26,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import           Data.Coerce ( coerce )
 import           Data.Int ( Int32 )
+import qualified Data.List.NonEmpty as DLN
 import qualified Data.Text.Prettyprint.Doc as PP
 import           Data.Word ( Word8, Word64 )
 import           Text.Printf ( printf )
@@ -114,13 +115,13 @@ ppcMakePadding nBytes
 
 -- | Make an unconditional relative jump from the given @srcAddr@ to the
 -- @targetAddr@.
-ppcMakeRelativeJumpTo :: (MM.MemWidth (MM.ArchAddrWidth arch)) => R.ConcreteAddress arch -> R.ConcreteAddress arch -> [Instruction ()]
+ppcMakeRelativeJumpTo :: (MM.MemWidth (MM.ArchAddrWidth arch)) => R.ConcreteAddress arch -> R.ConcreteAddress arch -> DLN.NonEmpty (Instruction ())
 ppcMakeRelativeJumpTo srcAddr targetAddr
   | offset `mod` 4 /= 0 =
     error (printf "Unaligned jump with source=%s and target=%s" (show srcAddr) (show targetAddr))
   | offset > fromIntegral ppcMaxRelativeJumpSize =
     error (printf "Jump target is too far away with source=%s and target=%s" (show srcAddr) (show targetAddr))
-  | otherwise = [fromInst jumpInstr]
+  | otherwise = fromInst jumpInstr DLN.:| []
   where
     -- We are limited to 24 + 2 bits of offset, where the low two bits must be zero.
     offset :: Integer
@@ -290,11 +291,11 @@ ppcModifyJumpTarget :: (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch), R.Ins
 ppcModifyJumpTarget srcAddr (R.FallthroughInstruction i tag) =
   case unI i of
     D.Instruction opc operands -> case tag of
-      R.FallthroughTag Nothing Nothing -> die "Probable bug: ppcModifyJumpTarget called with no modified jump targets"
-      R.FallthroughTag Nothing (Just fallthroughAddr) -> do
+      R.InternalInstruction -> die "Probable bug: ppcModifyJumpTarget called with no modified jump targets"
+      R.UnconditionalFallthrough fallthroughAddr -> do
         ftB <- b 1 fallthroughAddr
         return [i, ftB]
-      R.FallthroughTag (Just targetAddr) Nothing -> do
+      R.UnconditionalJump targetAddr -> do
         off <- absoluteOff 0 targetAddr
         case operands of
           D.Annotated a (D.Calltarget (D.BT _offset)) D.:< D.Nil ->
@@ -302,7 +303,7 @@ ppcModifyJumpTarget srcAddr (R.FallthroughInstruction i tag) =
           D.Annotated a (D.Directbrtarget (D.BT _offset)) D.:< D.Nil ->
             Just [I (D.Instruction opc (D.Annotated a (D.Directbrtarget off) D.:< D.Nil))]
           _ -> die "Unexpected unconditional jump in ppcModifyJumpTarget"
-      R.FallthroughTag (Just targetAddr) (Just fallthroughAddr) -> case operands of
+      R.ConditionalFallthrough targetAddr fallthroughAddr -> case operands of
         D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< rest -> case newJumpOffset 16 srcAddr targetAddr of
           Right tgtOff4 -> do
             ftB <- b 2 fallthroughAddr

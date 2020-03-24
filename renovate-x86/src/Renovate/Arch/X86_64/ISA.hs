@@ -19,6 +19,7 @@ import qualified Data.ByteString.Lazy as LB
 import qualified Data.Functor.Identity as I
 import           Data.Int ( Int32 )
 import           Data.List ( genericReplicate )
+import qualified Data.List.NonEmpty as DLN
 import           Data.Maybe
 import           Data.Parameterized.Some
 import           Data.Parameterized.NatRepr
@@ -230,7 +231,7 @@ fixJumpOffset _ o@(D.RelativeOffset {}) = error ("Relative offsets for relocatio
 -- +/- 2GB.
 --
 -- See Note [RelativeJump]
-x64MakeRelativeJumpTo :: R.ConcreteAddress X86.X86_64 -> R.ConcreteAddress X86.X86_64 -> [Instruction ()]
+x64MakeRelativeJumpTo :: R.ConcreteAddress X86.X86_64 -> R.ConcreteAddress X86.X86_64 -> DLN.NonEmpty (Instruction ())
 x64MakeRelativeJumpTo srcAddr targetAddr
   | abs jmpOffset > i32Max =
     L.error ("Relative branch is out of range: from " ++ show srcAddr ++
@@ -239,7 +240,7 @@ x64MakeRelativeJumpTo srcAddr targetAddr
     L.error ("BUG! The 'jmp' instruction size is not as expected! " ++
              "Expected " ++ show jmpInstrSizeGuess ++ " but got " ++
              show jmpInstrSize)
-  | otherwise = [jmpInstr]
+  | otherwise = jmpInstr DLN.:| []
   where
     jmpInstr = makeInstr "jmp"
       [D.JumpOffset D.JSize32 (D.FixedOffset (fromIntegral jmpOffset))]
@@ -282,18 +283,18 @@ x64MakeSymbolicJumpOrCall op_code sym_addr =
 
 x64ModifyJumpTarget :: R.ConcreteAddress X86.X86_64 -> R.ConcreteFallthrough X86.X86_64 () -> Maybe [Instruction ()]
 x64ModifyJumpTarget srcAddr (R.FallthroughInstruction insn@(XI ii) tag) = case tag of
-  R.FallthroughTag Nothing Nothing
+  R.InternalInstruction
     | R.NoJump <- x64JumpTypeRaw insn srcAddr -> Just [insn]
     | otherwise ->
       L.error ("Possible bug: x64ModifyJumpTarget was given a jump but no modified target. " ++
                "What should it do in that case?\n" ++
                "Address: " ++ show srcAddr ++ "\nInstruction: " ++ show insn)
-  R.FallthroughTag Nothing (Just fallthroughAddr) ->
+  R.UnconditionalFallthrough fallthroughAddr ->
     Just (insn : jmpOrNop insn fallthroughAddr)
-  R.FallthroughTag (Just targetAddr) Nothing
+  R.UnconditionalJump targetAddr
     | 'j' : _ <- D.iiOp ii -> Just [extendDirectJump targetAddr]
     | otherwise -> Nothing
-  R.FallthroughTag (Just targetAddr) (Just fallthroughAddr) -> case D.iiOp ii of
+  R.ConditionalFallthrough targetAddr fallthroughAddr -> case D.iiOp ii of
     "jmp" -> L.error "BUG! Unconditional jump given both a target and a fallthrough."
     'j':_ -> let insn' = extendDirectJump targetAddr in
       Just (insn' : jmpOrNop insn' fallthroughAddr)
