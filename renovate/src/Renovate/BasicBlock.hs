@@ -12,7 +12,6 @@ module Renovate.BasicBlock (
   concreteBlockAddress,
   concreteBlockInstructions,
   concreteDiscoveryBlock,
-  concreteBlockSize,
   -- * Symbolic blocks
   SymbolicBlock,
   symbolicBlock,
@@ -43,7 +42,12 @@ module Renovate.BasicBlock (
   concretizedBlock,
   concretizedBlockAddress,
   concretizedBlockInstructions,
-  concretizedBlockSize,
+  -- ** Concrete block helpers
+  HasConcreteAddresses,
+  blockAddress,
+  blockSize,
+  instructionAddresses,
+  instructionAddresses',
   -- * Instructions
   Instruction,
   InstructionAnnotation,
@@ -52,8 +56,6 @@ module Renovate.BasicBlock (
   AddressAssignedBlock(..),
   SymbolicInfo(..),
   instructionStreamSize,
-  instructionAddresses,
-  instructionAddresses',
   terminatorType,
   TaggedInstruction,
   tagInstruction,
@@ -80,17 +82,33 @@ import           Renovate.Address
 import           Renovate.BasicBlock.Types
 import           Renovate.ISA
 
--- | Compute the addresses for each instruction in a 'BasicBlock'.
---
--- We cannot simply make a @Map a Address@ because two identical
--- instructions could easily occur within the same 'BasicBlock', to
--- say nothing of the entire program.
-instructionAddresses :: (MC.MemWidth (MC.ArchAddrWidth arch))
-                     => ISA arch
-                     -> ConcreteBlock arch
-                     -> DLN.NonEmpty (Instruction arch (), ConcreteAddress arch)
-instructionAddresses isa bb =
-  instructionAddresses' isa id (concreteBlockAddress bb) (concreteBlockInstructions bb)
+-- | Functions that work on any block that has unannotated instructions and concrete addresses
+class HasConcreteAddresses b where
+  -- | Compute the addresses for each instruction in a 'BasicBlock'.
+  --
+  -- We cannot simply make a @Map a Address@ because two identical
+  -- instructions could easily occur within the same 'BasicBlock', to
+  -- say nothing of the entire program.
+  instructionAddresses :: (MC.MemWidth (MC.ArchAddrWidth arch))
+                       => ISA arch
+                       -> b arch
+                       -> DLN.NonEmpty (Instruction arch (), ConcreteAddress arch)
+  -- | Compute the size of a block in bytes.
+  blockSize :: ISA arch -> b arch -> Word64
+
+  blockAddress :: b arch -> ConcreteAddress arch
+
+instance HasConcreteAddresses ConcreteBlock where
+  instructionAddresses isa bb =
+    instructionAddresses' isa id (concreteBlockAddress bb) (concreteBlockInstructions bb)
+  blockSize isa = instructionStreamSize isa . F.toList . concreteBlockInstructions
+  blockAddress = concreteBlockAddress
+
+instance HasConcreteAddresses ConcretizedBlock where
+  instructionAddresses isa bb =
+    instructionAddresses' isa id (concretizedBlockAddress bb) (concretizedBlockInstructions bb)
+  blockSize isa = instructionStreamSize isa . F.toList . concretizedBlockInstructions
+  blockAddress = concretizedBlockAddress
 
 -- | Compute the addresses of each instruction in a list, given a
 -- concrete start address.
@@ -109,22 +127,14 @@ instructionAddresses' :: (MC.MemWidth (MC.ArchAddrWidth arch)
 instructionAddresses' isa accessor startAddr insns =
   snd $ T.mapAccumL computeAddress startAddr insns
   where
-    addressAddOffset' = addressAddOffset
     computeAddress addr instr =
-      let absAddr = addr `addressAddOffset'` fromIntegral (isaInstructionSize isa (accessor instr))
+      let absAddr = addr `addressAddOffset` fromIntegral (isaInstructionSize isa (accessor instr))
       in (absAddr, (instr, addr))
 
 -- | Compute the size of a list of instructions, in bytes.
 instructionStreamSize :: (Functor f, F.Foldable f) => ISA arch -> f (Instruction arch t) -> Word64
 instructionStreamSize isa insns =
   sum $ fmap (fromIntegral . isaInstructionSize isa) insns
-
--- | Compute the size of a 'ConcreteBlock' in bytes.
-concreteBlockSize :: ISA arch -> ConcreteBlock arch -> Word64
-concreteBlockSize isa = instructionStreamSize isa . F.toList . concreteBlockInstructions
-
-concretizedBlockSize :: ISA arch -> ConcretizedBlock arch -> Word64
-concretizedBlockSize isa = instructionStreamSize isa . F.toList . concretizedBlockInstructions
 
 -- | Given a 'ConcreteBlock', compute its size *after* its jump(s) are
 -- rewritten.

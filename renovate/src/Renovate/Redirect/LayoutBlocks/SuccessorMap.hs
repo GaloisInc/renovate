@@ -37,7 +37,7 @@ successorMap isa symPairs =
       let concBlock = originalBlock wp
           symBlock = withoutProvenance wp
           symAddr = RB.symbolicBlockSymbolicAddress symBlock
-          nextAbsAddr = RB.concreteBlockAddress concBlock `RA.addressAddOffset` fromIntegral (RB.concreteBlockSize isa concBlock)
+          nextAbsAddr = RB.concreteBlockAddress concBlock `RA.addressAddOffset` fromIntegral (RB.blockSize isa concBlock)
       in case M.lookup nextAbsAddr concToSymMap of
         Nothing -> M.insert symAddr (RA.StableAddress nextAbsAddr) m
         Just symSuccessor -> M.insert symAddr symSuccessor m

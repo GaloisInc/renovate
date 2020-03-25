@@ -89,9 +89,9 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
   RM.recordSection "text" (RM.SectionInfo textStart textEnd)
   RM.recordFunctionBlocks (map concreteBlockAddress . fst <$> biFunctions blockInfo)
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
-    let blockSize :: Int
-        blockSize = sum (fmap (fromIntegral . isaInstructionSize isa) (concreteBlockInstructions cb))
-    RM.recordDiscoveredBlock (concreteBlockAddress cb) blockSize
+    let bsz :: Int
+        bsz = sum (fmap (fromIntegral . isaInstructionSize isa) (concreteBlockInstructions cb))
+    RM.recordDiscoveredBlock (concreteBlockAddress cb) bsz
     -- We only want to instrument blocks that:
     --
     -- 1. Live in the .text
@@ -110,7 +110,7 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
        insns' <- lift $ instrumentor sb
        case insns' of
          Just insns'' -> do
-           RM.recordInstrumentedBytes blockSize
+           RM.recordInstrumentedBytes bsz
            let sb' = sb { symbolicBlockInstructions = insns'' }
            return $! WithProvenance cb sb' Modified
          Nothing      ->

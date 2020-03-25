@@ -174,7 +174,7 @@ processWorklist = do
 nextBlockAddress :: (MM.MemWidth (MM.ArchAddrWidth arch)) => ConcreteBlock arch -> M arch (ConcreteAddress arch)
 nextBlockAddress b = do
   isa <- RWS.asks envISA
-  let sz     = concreteBlockSize isa b
+  let sz     = blockSize isa b
   return (concreteBlockAddress b `addressAddOffset` fromIntegral sz)
 
 markFunctionIncomplete :: M arch ()

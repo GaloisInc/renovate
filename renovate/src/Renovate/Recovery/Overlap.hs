@@ -83,6 +83,6 @@ disjoint isa (BlockRegions im) cb =
     1 -> True
     _ -> False
   where
-    blockSize = concreteBlockSize isa cb
+    sz = blockSize isa cb
     baddr = concreteBlockAddress cb
-    i = IM.IntervalCO baddr (baddr `addressAddOffset` fromIntegral blockSize)
+    i = IM.IntervalCO baddr (baddr `addressAddOffset` fromIntegral sz)

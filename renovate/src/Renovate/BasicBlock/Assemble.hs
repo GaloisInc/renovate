@@ -240,7 +240,7 @@ blockEndAddress :: (MM.MemWidth (MM.ArchAddrWidth arch))
                 -> ConcretizedBlock arch
                 -> ConcreteAddress arch
 blockEndAddress isa b =
-  concretizedBlockAddress b `addressAddOffset` fromIntegral (concretizedBlockSize isa b)
+  concretizedBlockAddress b `addressAddOffset` fromIntegral (blockSize isa b)
 
 -- | Assemble a block with its overlapping blocks into the text section.
 --
@@ -304,8 +304,8 @@ lookupOverlappingBlocks :: forall arch m
                         -> Assembler arch m [Chunk arch]
 lookupOverlappingBlocks b = do
   isa <- St.gets asISA
-  let blockSize = chunkSize isa b
-      blockEnd  = chunkAddress b `addressAddOffset` fromIntegral blockSize
+  let sz = chunkSize isa b
+      blockEnd  = chunkAddress b `addressAddOffset` fromIntegral sz
   go isa blockEnd
   where
     -- Look up the next block and see if it overlaps the current block @b@.
@@ -460,7 +460,7 @@ chunkAddress c =
 chunkSize :: ISA arch -> Chunk arch -> Word64
 chunkSize isa c =
   case c of
-    BlockChunk b -> concretizedBlockSize isa b
+    BlockChunk b -> blockSize isa b
     RawChunk _ b -> fromIntegral (B.length b)
 
 data AssembleState arch =

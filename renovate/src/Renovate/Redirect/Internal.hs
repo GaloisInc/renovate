@@ -46,7 +46,7 @@ redirectBlock input =
       let instrBlock = withoutProvenance input
 
       isa <- askISA
-      let origBlockSize = concreteBlockSize isa origBlock
+      let origBlockSize = blockSize isa origBlock
           jmpInsns = isaMakeRelativeJumpTo isa (concreteBlockAddress origBlock) (concretizedBlockAddress instrBlock)
           jmpSize = instructionStreamSize isa jmpInsns
       -- FIXME: Can we do this check at a higher level and earlier? It would

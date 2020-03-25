@@ -44,11 +44,20 @@ module Renovate
   B.concreteBlockInstructions,
   -- ** Symbolic blocks
   B.SymbolicBlock,
-  B.symbolicBlockInstructions,
   B.symbolicBlockOriginalAddress,
   B.symbolicBlockSymbolicAddress,
   B.symbolicBlockInstructions,
+  -- ** Concretized blocks
   B.ConcretizedBlock,
+  B.concretizedBlockAddress,
+  B.concretizedBlockInstructions,
+  -- ** Block helpers
+  B.HasConcreteAddresses,
+  B.blockAddress,
+  B.blockSize,
+  B.instructionAddresses,
+  B.instructionAddresses',
+  -- ** Others
   Recovery.BlockInfo(..),
   Recovery.isIncompleteBlockAddress,
   Recovery.numBlockRegions,
@@ -56,9 +65,6 @@ module Renovate
   Recovery.SymbolicRegCFG,
   Recovery.getSymbolicCFG,
   Recovery.getSymbolicRegCFG,
-  B.instructionAddresses,
-  B.instructionAddresses',
-  B.concreteBlockSize,
   B.symbolicBlockSize,
   -- * Instructions
   B.TaggedInstruction,

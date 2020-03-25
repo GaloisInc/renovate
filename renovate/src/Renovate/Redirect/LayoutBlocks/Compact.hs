@@ -506,7 +506,7 @@ buildAddressHeap strat startAddr blocks = do
         [ concreteBlockAddress cb
         | wp <- blocks
         , let cb = originalBlock wp
-        , concreteBlockSize isa cb < jumpSize
+        , blockSize isa cb < jumpSize
         ]
       relocatedFunctions = findRelocatedFunctions blockToFunctions functionToBlocks blocks
       redirectableFunctions = (disjointFunctions S.\\ smallBlocks) `S.intersection` relocatedFunctions
@@ -625,7 +625,7 @@ addOriginalBlock isa jumpSize pRedirect (h, wps) wp
     cb        = originalBlock wp
     sb        = withoutProvenance wp
     status    = rewriteStatus wp
-    bsize     = concreteBlockSize isa cb
+    bsize     = blockSize isa cb
     spaceSize :: Int
     spaceSize = fromIntegral (bsize - jumpSize)
     addr      = origAddr `addressAddOffset` fromIntegral jumpSize
