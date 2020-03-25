@@ -77,6 +77,7 @@ import qualified SemMC.Architecture as SA
 
 import           Renovate.Address
 
+
 -- | The type of instructions for an architecture
 --
 -- Instructions are parameterized by an annotation type that is usually either

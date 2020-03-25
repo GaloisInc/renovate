@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE LambdaCase #-}
 -- | This module is the entry point for binary code redirection
 module Renovate.Redirect (
   redirect,
@@ -31,10 +32,13 @@ import qualified Data.List as L
 import qualified Data.List.NonEmpty as DLN
 import           Data.Ord ( comparing )
 import qualified Data.Traversable as T
+import           Data.Parameterized.Some
 
 import           Prelude
 
 import qualified Data.Macaw.CFG as MM
+import qualified Data.Macaw.CFG as MC
+import qualified Data.Macaw.Discovery.State as MDS
 
 import           Renovate.Address
 import           Renovate.BasicBlock
@@ -67,7 +71,11 @@ import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions )
 -- The function runs in an arbitrary 'Monad' to allow instrumentors to
 -- carry around their own state.
 --
-redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch)
+redirect :: (MonadIO m
+            , InstructionConstraints arch
+            , HasInjectedFunctions m arch
+            , MC.ArchConstraints arch
+            )
          => ISA arch
          -- ^ Information about the ISA in use
          -> BlockInfo arch
@@ -102,7 +110,7 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
     -- Also, see Note [PIC Jump Tables]
     case and [ textStart <= concreteBlockAddress cb
              , concreteBlockAddress cb < textEnd
-             , isRelocatableTerminatorType (terminatorType isa mem cb)
+             , hasRelocatableTerminatorType isa mem cb
              , not (isIncompleteBlockAddress blockInfo (concreteBlockAddress cb))
              , disjoint isa (biOverlap blockInfo) cb
              ] of
@@ -116,7 +124,7 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
          Nothing      ->
            return $! WithProvenance cb sb Unmodified
      False -> do
-       when (not (isRelocatableTerminatorType (terminatorType isa mem cb))) $ do
+       when (not (hasRelocatableTerminatorType isa mem cb)) $ do
          RM.recordUnrelocatableTermBlock
        when (isIncompleteBlockAddress blockInfo (concreteBlockAddress cb)) $ do
          RM.recordIncompleteBlock
@@ -152,11 +160,19 @@ toBlockMapping wps =
   , let concBlock = withoutProvenance wp
   ]
 
-isRelocatableTerminatorType :: JumpType arch -> Bool
-isRelocatableTerminatorType jt =
-  case jt of
-    IndirectJump {} -> False
-    _ -> True
+hasRelocatableTerminatorType ::
+  (MC.ArchConstraints arch)
+  => ISA arch
+  -> MC.Memory (MC.ArchAddrWidth arch)
+  -> ConcreteBlock arch
+  -> Bool
+hasRelocatableTerminatorType isa mem cb
+  | isRelocatableTerminatorType (terminatorType isa mem cb) = True
+  | Some parsedBlock <- concreteDiscoveryBlock cb
+  , MDS.ParsedLookupTable{} <- MDS.pblockTermStmt parsedBlock = True
+  | otherwise = False
+  where isRelocatableTerminatorType IndirectJump{} = False
+        isRelocatableTerminatorType _              = True
 
 {- Note [Redirection]
 
