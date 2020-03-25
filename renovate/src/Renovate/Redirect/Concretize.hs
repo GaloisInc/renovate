@@ -16,7 +16,7 @@ import qualified Data.Map as M
 import qualified Data.Traversable as T
 import qualified Data.Map as Map
 import           Data.Maybe ( maybeToList )
-import           Data.Monoid ( Sum(Sum), (<>))
+import           Data.Monoid ( Sum(Sum) )
 import           Data.Word ( Word64 )
 
 import           Renovate.Address
