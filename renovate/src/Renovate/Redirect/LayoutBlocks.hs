@@ -16,7 +16,7 @@ import           Data.Map ( Map )
 import qualified Data.Traversable as T
 
 import           Renovate.Address
-import           Renovate.BasicBlock ( InstructionConstraints )
+import           Renovate.BasicBlock ( InstructionConstraints, AddressAssignedBlock, SymbolicBlock )
 import           Renovate.Recovery ( SymbolicCFG )
 import           Renovate.Redirect.Monad
 import           Renovate.Redirect.LayoutBlocks.Compact ( Layout(..), compactLayout )
@@ -25,8 +25,8 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , Allocator(..)
                                                       , TrampolineStrategy(..)
                                                       , CompactOrdering(..)
-                                                      , SymbolicPair
-                                                      , AddressAssignedPair )
+                                                      , WithProvenance
+                                                      )
 
 -- | Compute a concrete address for each 'SymbolicBlock'.
 --
@@ -36,9 +36,9 @@ layoutBlocks :: (MonadIO m, T.Traversable t, InstructionConstraints arch)
              => LayoutStrategy
              -> ConcreteAddress arch
              -- ^ Address to begin block layout of instrumented blocks
-             -> t (SymbolicPair arch)
+             -> t (WithProvenance SymbolicBlock arch)
              -> t (SymbolicAddress arch, BS.ByteString)
              -> Map (ConcreteAddress arch) (SymbolicCFG arch)
-             -> RewriterT arch m (Layout AddressAssignedPair arch)
+             -> RewriterT arch m (Layout AddressAssignedBlock arch)
 layoutBlocks strat startAddr blocks injectedCode cfgs =
   compactLayout startAddr strat blocks injectedCode cfgs

@@ -26,7 +26,8 @@ module Renovate.BinaryFormat.ELF (
   analyzeElf,
   RewriterInfo,
   RewriterEnv,
-  SomeBlocks(..),
+  SomeConcreteBlocks(..),
+  SomeConcretizedBlocks(..),
   RE.SectionInfo(..),
   reSegmentMaximumSize,
   reSegmentVirtualAddress,
@@ -896,9 +897,9 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
     let isa = analysisISA aenv
     let mem = MBL.memoryImage (analysisLoadedBinary aenv)
     let blockInfo = analysisBlockInfo aenv
-    let blocks = L.sortBy (O.comparing RE.basicBlockAddress) (R.biBlocks blockInfo)
+    let blocks = L.sortBy (O.comparing B.concreteBlockAddress) (R.biBlocks blockInfo)
     let (symAlloc1, baseSymBlocks) = RS.symbolizeBasicBlocks isa mem RS.symbolicAddressAllocator blocks
-    let symbolicBlockMap = Map.fromList [ (RE.basicBlockAddress cb, sb)
+    let symbolicBlockMap = Map.fromList [ (B.concreteBlockAddress cb, sb)
                                         | (cb, sb) <- baseSymBlocks
                                         ]
     newCodeAddr <- fromIntegral <$> R.asks reSegmentVirtualAddress
@@ -939,8 +940,8 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
         riInstrumentationSites L..= RW.infoSites info
         riLogMsgs L..= RW.logMsgs info
         riStats L..= RE.rwsStats s1
-        riRecoveredBlocks L..= Just (SomeBlocks isa blocks)
-        riOutputBlocks L..= Just (SomeBlocks isa allBlocks)
+        riRecoveredBlocks L..= Just (SomeConcreteBlocks isa blocks)
+        riOutputBlocks L..= Just (SomeConcretizedBlocks isa allBlocks)
         riIncompleteFunctions L..= RM.incompleteFunctions mem blockInfo
         riTransitivelyIncompleteBlocks L..= RM.transitivelyIncompleteBlocks blockInfo
         case cfg of

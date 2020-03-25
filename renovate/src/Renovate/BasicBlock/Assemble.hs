@@ -27,6 +27,7 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Foldable as F
 import qualified Data.List as L
 import           Data.Monoid
+import           Data.Semigroup ( sconcat )
 import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Word ( Word64 )
 
@@ -108,7 +109,7 @@ assembleBlocks :: (L.HasCallStack, C.MonadThrow m, InstructionConstraints arch)
                -- ^ The address to start laying out extra blocks at
                -> (forall m' . (C.MonadThrow m') => Instruction arch () -> m' B.ByteString)
                -- ^ A function to assemble a single instruction to bytes
-               -> [ConcreteBlock arch]
+               -> [ConcretizedBlock arch]
                -> [(SymbolicAddress arch, ConcreteAddress arch, B.ByteString)]
                -> m (B.ByteString, B.ByteString)
 assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble blocks injectedCode = do
@@ -236,10 +237,10 @@ assembleAsText c = do
 -- | Compute the end address of a basic block
 blockEndAddress :: (MM.MemWidth (MM.ArchAddrWidth arch))
                 => ISA arch
-                -> ConcreteBlock arch
+                -> ConcretizedBlock arch
                 -> ConcreteAddress arch
 blockEndAddress isa b =
-  basicBlockAddress b `addressAddOffset` fromIntegral (concreteBlockSize isa b)
+  concretizedBlockAddress b `addressAddOffset` fromIntegral (blockSize isa b)
 
 -- | Assemble a block with its overlapping blocks into the text section.
 --
@@ -261,7 +262,6 @@ checkedOverlappingAssemble c overlays = do
     BlockChunk b -> withInstructionConstraints $ do
       isa <- St.gets asISA
       let blockEnd = blockEndAddress isa b
-      let reversedInstructions = reverse (basicBlockInstructions b)
       -- Assert that the overlays (i.e., blocks that overlay this current block
       -- that we are assembling) are all completely contained in the first block.
       --
@@ -275,7 +275,7 @@ checkedOverlappingAssemble c overlays = do
           RawChunk {} -> assertM False
           BlockChunk overlayBlock -> do
             let overlayEnd = blockEndAddress isa overlayBlock
-            assertM (basicBlockAddress overlayBlock > basicBlockAddress b)
+            assertM (concretizedBlockAddress overlayBlock > concretizedBlockAddress b)
             assertM (overlayEnd == blockEnd)
             bytesB <- bytesFor b
             bytesOverlay <- bytesFor overlayBlock
@@ -304,8 +304,8 @@ lookupOverlappingBlocks :: forall arch m
                         -> Assembler arch m [Chunk arch]
 lookupOverlappingBlocks b = do
   isa <- St.gets asISA
-  let blockSize = chunkSize isa b
-      blockEnd  = chunkAddress b `addressAddOffset` fromIntegral blockSize
+  let sz = chunkSize isa b
+      blockEnd  = chunkAddress b `addressAddOffset` fromIntegral sz
   go isa blockEnd
   where
     -- Look up the next block and see if it overlaps the current block @b@.
@@ -404,14 +404,14 @@ padLastBlock = do
                             }
      else return ()
 
-bytesFor :: (C.MonadThrow m) => ConcreteBlock arch -> Assembler arch m B.ByteString
+bytesFor :: (C.MonadThrow m) => ConcretizedBlock arch -> Assembler arch m B.ByteString
 bytesFor b = do
   asm1 <- St.gets asAssemble
-  case mapM asm1 (basicBlockInstructions b) of
+  case mapM asm1 (concretizedBlockInstructions b) of
     Left err -> C.throwM (AssemblyError err)
-    Right strs -> return (mconcat strs)
+    Right strs -> return (sconcat strs)
 
-assembleBlock :: (L.HasCallStack, C.MonadThrow m) => Chunk arch -> Assembler arch m (B.ByteString)
+assembleBlock :: (L.HasCallStack, C.MonadThrow m) => Chunk arch -> Assembler arch m B.ByteString
 assembleBlock c =
   case c of
     BlockChunk b -> bytesFor b
@@ -446,7 +446,7 @@ newtype Assembler arch m a = Assembler { unA :: St.StateT (AssembleState arch) m
                                        C.MonadThrow,
                                        St.MonadState (AssembleState arch) )
 
-data Chunk arch = BlockChunk (ConcreteBlock arch)
+data Chunk arch = BlockChunk (ConcretizedBlock arch)
                 | RawChunk (ConcreteAddress arch) B.ByteString
 
 deriving instance (InstructionConstraints arch) => Show (Chunk arch)
@@ -454,13 +454,13 @@ deriving instance (InstructionConstraints arch) => Show (Chunk arch)
 chunkAddress :: Chunk arch -> ConcreteAddress arch
 chunkAddress c =
   case c of
-    BlockChunk b -> basicBlockAddress b
+    BlockChunk b -> concretizedBlockAddress b
     RawChunk addr _ -> addr
 
 chunkSize :: ISA arch -> Chunk arch -> Word64
 chunkSize isa c =
   case c of
-    BlockChunk b -> concreteBlockSize isa b
+    BlockChunk b -> blockSize isa b
     RawChunk _ b -> fromIntegral (B.length b)
 
 data AssembleState arch =

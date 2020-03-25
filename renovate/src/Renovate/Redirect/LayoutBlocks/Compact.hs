@@ -8,8 +8,6 @@ module Renovate.Redirect.LayoutBlocks.Compact (
   compactLayout
   ) where
 
-import qualified GHC.Err.Located as L
-
 import           Control.Monad.State ( gets )
 
 import qualified Data.ByteString as BS
@@ -25,6 +23,7 @@ import qualified Data.Foldable as F
 import qualified Data.Functor.Compose as C
 import qualified Data.Heap as H
 import qualified Data.List as L
+import qualified Data.List.NonEmpty as DLN
 import qualified Data.Map.Strict as M
 import           Data.Set (Set)
 import qualified Data.Set as S
@@ -67,10 +66,10 @@ compactLayout :: forall m t arch
               => ConcreteAddress arch
               -- ^ Address to begin block layout of instrumented blocks
               -> LayoutStrategy
-              -> t (SymbolicPair arch)
+              -> t (WithProvenance SymbolicBlock arch)
               -> t (SymbolicAddress arch, BS.ByteString)
               -> M.Map (ConcreteAddress arch) (SymbolicCFG arch)
-              -> RewriterT arch m (Layout AddressAssignedPair arch)
+              -> RewriterT arch m (Layout AddressAssignedBlock arch)
 compactLayout startAddr strat blocks0 injectedCode cfgs = do
   -- Augment all symbolic blocks such that fallthrough behavior is explicitly
   -- represented with symbolic unconditional jumps.
@@ -107,7 +106,7 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
   -- the parallel layout as a special case of compact.
   isa <- askISA
 
-  let newBlocks = map (map (lpNew . unFallthroughPair)) blockChunks'
+  let newBlocks = map (map withoutProvenance) blockChunks'
       sortedBlocks = case allocator strat of
         Compact SortedOrder        -> L.sortOn    (bySize isa mem) newBlocks
         Compact (RandomOrder seed) -> randomOrder seed             newBlocks
@@ -131,9 +130,10 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
     Randomized _ -> overwriteAll
     _ -> return (h1, blocks1)
 
-  let paddingBlocks :: [ConcreteBlock arch]
-      paddingBlocks = [ BasicBlock (isaMakePadding isa (fromIntegral size)) addr
+  let paddingBlocks :: [PaddingBlock arch]
+      paddingBlocks = [ paddingBlock addr insns
                       | H.Entry (Down size) addr <- H.toUnsortedList h2
+                      , Just insns <- return (DLN.nonEmpty (isaMakePadding isa (fromIntegral size)))
                       ]
 
   -- Traverse the original container and update it with the addresses allocated
@@ -160,8 +160,8 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
 groupBlocks :: forall arch f m. (MM.MemWidth (MM.ArchAddrWidth arch), F.Foldable f, MonadIO m) =>
   Grouping ->
   M.Map (ConcreteAddress arch) (SymbolicCFG arch) ->
-  f (SymbolicPair arch) ->
-  RewriterT arch m [[SymbolicPair arch]]
+  f (WithProvenance SymbolicBlock arch) ->
+  RewriterT arch m [[WithProvenance SymbolicBlock arch]]
 groupBlocks BlockGrouping _cfgs blocks = return (foldMap (\block -> [[block]]) blocks)
 groupBlocks LoopGrouping cfgs_ blocks = do
   cfgs <- traverse (liftIO . getSymbolicCFG) cfgs_
@@ -181,12 +181,15 @@ groupBlocks FunctionGrouping _cfgs blocks = do
 -- with 'noFallthrough' -- that is, as not a conditional jump. This is safe if
 -- the pair is unmodified, since then it won't be rewritten and these
 -- annotations will be ignored anyway.
-noFallthroughPair :: SymbolicPair arch -> FallthroughPair arch
-noFallthroughPair (SymbolicPair lp) = FallthroughPair lp
-  { lpNew = (lpNew lp)
-    { basicBlockInstructions = map noFallthrough (basicBlockInstructions (lpNew lp))
-    }
-  }
+noFallthroughPair :: WithProvenance SymbolicBlock arch -> WithProvenance FallthroughBlock arch
+noFallthroughPair wpSym = WithProvenance origBlock fb status
+  where
+    fb = fallthroughBlock (symbolicBlockOriginalAddress sb)
+                          (symbolicBlockSymbolicAddress sb)
+                          (fmap noFallthrough (symbolicBlockInstructions sb))
+    status = rewriteStatus wpSym
+    sb = withoutProvenance wpSym
+    origBlock = originalBlock wpSym
 
 -- | Some grouping strategies may ask modified and immutable blocks to be
 -- "chunked up" and relocated together. We can't honor that request, but we'll
@@ -196,16 +199,17 @@ noFallthroughPair (SymbolicPair lp) = FallthroughPair lp
 -- So given a collection of blocks, this gives back 0 or 1 chunks of blocks
 -- that should be treated as modified, and a collection of blocks that can be
 -- treated as unmodified.
-splitChunk :: [SymbolicPair arch] -> ([[SymbolicPair arch]], [SymbolicPair arch])
-splitChunk pairs = case foldMap summarize pairs of
+splitChunk :: [WithProvenance SymbolicBlock arch]
+           -> ([[WithProvenance SymbolicBlock arch]], [WithProvenance SymbolicBlock arch])
+splitChunk wps = case foldMap summarize wps of
   (immutable, modifiable, Any True) -> ([modifiable], immutable)
-  (_, _, Any False) -> ([], pairs)
+  (_, _, Any False) -> ([], wps)
   where
-  summarize pair = case lpStatus (unSymbolicPair pair) of
-    Modified   -> ([], [pair], Any True)
-    Unmodified -> ([], [pair], Any False)
-    Immutable  -> ([pair], [], Any False)
-    Subsumed   -> ([], [pair], Any True) -- should never happen
+  summarize wp = case rewriteStatus wp of
+    Modified   -> ([], [wp], Any True)
+    Unmodified -> ([], [wp], Any False)
+    Immutable  -> ([wp], [], Any False)
+    Subsumed   -> ([], [wp], Any True) -- should never happen
 
 -- | Group together blocks that are part of a loop. The arguments are a map
 -- that tells which loop each block is part of, and a collection of blocks to
@@ -221,8 +225,8 @@ splitChunk pairs = case foldMap summarize pairs of
 groupByRep ::
   Foldable t =>
   M.Map (ConcreteAddress arch) (ConcreteAddress arch) ->
-  t (SymbolicPair arch) ->
-  M.Map (ConcreteAddress arch) [SymbolicPair arch]
+  t (WithProvenance SymbolicBlock arch) ->
+  M.Map (ConcreteAddress arch) [WithProvenance SymbolicBlock arch]
 groupByRep repMap blocks = L.sortOn origAddr
   <$> M.fromListWith (++)
       [ (rep, [b])
@@ -231,7 +235,7 @@ groupByRep repMap blocks = L.sortOn origAddr
             rep = M.findWithDefault addr addr repMap
       ]
   where
-  origAddr = basicBlockAddress . lpOrig . unSymbolicPair
+    origAddr = concreteBlockAddress . originalBlock
 
 functionHeads :: forall arch.
   MM.MemWidth (MM.ArchAddrWidth arch) =>
@@ -318,16 +322,22 @@ insertLookupA k fv m = C.getCompose (M.alterF (pairSelf . maybe fv pure) k m) wh
 -- point.
 assignConcreteAddress :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
                       => M.Map (SymbolicInfo arch) (ConcreteAddress arch, Word64)
-                      -> FallthroughPair arch
-                      -> RewriterT arch m (AddressAssignedPair arch)
-assignConcreteAddress assignedAddrs (FallthroughPair (LayoutPair cb fb status))
-  | changed status = case M.lookup (basicBlockAddress fb) assignedAddrs of
-    Nothing -> L.error $ printf "Expected an assigned address for symbolic block %s (derived from concrete block %s)"
-                                (show (basicBlockAddress fb))
-                                (show (basicBlockAddress cb))
-    Just (addr, size) -> return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb addr size) status))
+                      -> WithProvenance FallthroughBlock arch
+                      -> RewriterT arch m (WithProvenance AddressAssignedBlock arch)
+assignConcreteAddress assignedAddrs wp
+  | changed status = case M.lookup (keyOf fb) assignedAddrs of
+    Nothing -> error $ printf "Expected an assigned address for symbolic block %s (derived from concrete block %s)"
+                                (show (keyOf fb))
+                                (show (concreteBlockAddress cb))
+    Just (addr, size) ->
+      return $ WithProvenance cb (AddressAssignedBlock fb addr size) status
   | otherwise =
-    return (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock fb (basicBlockAddress cb) 0) status))
+      return $ WithProvenance cb (AddressAssignedBlock fb (concreteBlockAddress cb) 0) status
+  where
+    cb = originalBlock wp
+    fb = withoutProvenance wp
+    status = rewriteStatus wp
+    keyOf fblock = SymbolicInfo (fallthroughSymbolicAddress fblock) (fallthroughOriginalAddress fblock)
 
 allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch), F.Foldable t, Functor t)
                                => ConcreteAddress arch
@@ -342,7 +352,8 @@ allocateSymbolicBlockAddresses startAddr h0 blocksBySize injectedCode = do
   isa <- askISA
   mem <- askMem
   let blockItemSize = symbolicBlockSize isa mem startAddr
-  let blockItemKey = basicBlockAddress
+  let blockItemKey fb =
+        SymbolicInfo (fallthroughSymbolicAddress fb) (fallthroughOriginalAddress fb)
   let blockItemVal addr size _block = (addr, size)
   let injectedItemVal addr _size code = (addr, code)
   (nextStart, h1, m1) <- F.foldlM (allocateBlockGroupAddresses blockItemSize blockItemKey blockItemVal) (startAddr, h0, M.empty) blocksBySize
@@ -416,11 +427,11 @@ reifyFallthroughSuccessors :: ( Traversable t, Traversable t', Traversable t''
                               , Monad m, MM.MemWidth (MM.ArchAddrWidth arch)
                               )
                            => MM.Memory (MM.ArchAddrWidth arch)
-                           -> t (t' (SymbolicPair arch))
+                           -> t (t' (WithProvenance SymbolicBlock arch))
                            -- ^ The modified blocks
-                           -> t'' (SymbolicPair arch)
+                           -> t'' (WithProvenance SymbolicBlock arch)
                            -- ^ All blocks (which we need to compute the fallthrough address index)
-                           -> RewriterT arch m (t (t' (FallthroughPair arch)))
+                           -> RewriterT arch m (t (t' (WithProvenance FallthroughBlock arch)))
 reifyFallthroughSuccessors mem modifiedBlocks allBlocks = do
   isa <- askISA
   let symSuccIdx = LBSM.successorMap isa allBlocks
@@ -429,13 +440,13 @@ reifyFallthroughSuccessors mem modifiedBlocks allBlocks = do
 addExplicitFallthrough :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
                        => MM.Memory (MM.ArchAddrWidth arch)
                        -> LBSM.SuccessorMap arch
-                       -> SymbolicPair arch
-                       -> RewriterT arch m (FallthroughPair arch)
-addExplicitFallthrough mem symSucIdx (SymbolicPair (LayoutPair cb sb status)) = do
+                       -> WithProvenance SymbolicBlock arch
+                       -> RewriterT arch m (WithProvenance FallthroughBlock arch)
+addExplicitFallthrough mem symSucIdx wp = do
   -- quick sanity check
   unless (changeable status) . error $ printf
     "Attempted to modify an immutable block (at address %s) by adding explicit fallthrough information"
-    (show (basicBlockAddress cb))
+    (show (concreteBlockAddress cb))
 
   isa <- askISA
   -- We pass in a fake relative address since we don't need the resolution of
@@ -445,10 +456,13 @@ addExplicitFallthrough mem symSucIdx (SymbolicPair (LayoutPair cb sb status)) = 
         else case LBSM.lookupSuccessor symSucIdx sb of
                Just sucAddr -> addFallthrough sucAddr
                Nothing -> error (printf "Expected a successor block for symbolic block %s (derived from block %s)"
-                               (show (basicBlockAddress sb))
-                               (show (basicBlockAddress cb)))
-  return (FallthroughPair (LayoutPair cb (lastInstructionFallthrough lift sb) Modified))
+                               (show (symbolicBlockSymbolicAddress sb))
+                               (show (concreteBlockAddress cb)))
+  return $! WithProvenance cb (lastInstructionFallthrough lift sb) Modified
   where
+    cb = originalBlock wp
+    sb = withoutProvenance wp
+    status = rewriteStatus wp
     -- We explicitly match on all constructor patterns so that if/when new ones
     -- are added this will break instead of having some default case that does
     -- (potentially) the wrong thing on the new cases.
@@ -464,35 +478,35 @@ addExplicitFallthrough mem symSucIdx (SymbolicPair (LayoutPair cb sb status)) = 
     isUnconditionalCond Conditional   = False
 
     fakeAddress = concreteFromAbsolute 0
-    lastInsn
-      | null (basicBlockInstructions sb) = L.error (printf "Empty block for symbolic block %s (derived from block %s)"
-                                                           (show (basicBlockAddress sb))
-                                                           (show (basicBlockAddress cb)))
-      | otherwise = projectInstruction $ last (basicBlockInstructions sb)
+    lastInsn = projectInstruction (DLN.last (symbolicBlockInstructions sb))
 
 lastInstructionFallthrough ::
   (TaggedInstruction arch (InstructionAnnotation arch) -> SymbolicFallthrough arch (InstructionAnnotation arch)) ->
   (SymbolicBlock arch -> FallthroughBlock arch)
-lastInstructionFallthrough fallthrough sb = sb { basicBlockInstructions = insns } where
-  insns = case basicBlockInstructions sb of
-    [] -> []
-    is -> map noFallthrough (init is) ++ [fallthrough (last is)]
+lastInstructionFallthrough fallthrough sb =
+  let insns = case DLN.reverse (symbolicBlockInstructions sb) of
+                lastInsn DLN.:| restInsns ->
+                  DLN.reverse (fallthrough lastInsn DLN.:| fmap noFallthrough restInsns)
+  in fallthroughBlock (symbolicBlockOriginalAddress sb)
+                      (symbolicBlockSymbolicAddress sb)
+                      insns
 
 buildAddressHeap :: (MM.MemWidth (MM.ArchAddrWidth arch), Monad m, Typeable arch)
                  => TrampolineStrategy
                  -> ConcreteAddress arch
-                 -> [FallthroughPair arch]
-                 -> RewriterT arch m (AddressHeap arch, [FallthroughPair arch])
+                 -> [WithProvenance FallthroughBlock arch]
+                 -> RewriterT arch m (AddressHeap arch, [WithProvenance FallthroughBlock arch])
 buildAddressHeap strat startAddr blocks = do
   functionToBlocks <- gets (functionBlocks . rwsStats)
   isa <- askISA
   let dummyJump = isaMakeRelativeJumpTo  isa startAddr startAddr
-      jumpSize = fromIntegral $ sum (map (isaInstructionSize isa) dummyJump)
+      jumpSize = fromIntegral $ sum (fmap (isaInstructionSize isa) dummyJump)
       (blockToFunctions, disjointFunctions) = findRelocatableFunctionBlocks functionToBlocks
       smallBlocks = S.fromList
-        [ addr
-        | FallthroughPair (LayoutPair cb@(BasicBlock _ addr) _ _) <- blocks
-        , concreteBlockSize isa cb < jumpSize
+        [ concreteBlockAddress cb
+        | wp <- blocks
+        , let cb = originalBlock wp
+        , blockSize isa cb < jumpSize
         ]
       relocatedFunctions = findRelocatedFunctions blockToFunctions functionToBlocks blocks
       redirectableFunctions = (disjointFunctions S.\\ smallBlocks) `S.intersection` relocatedFunctions
@@ -537,15 +551,17 @@ findRelocatableFunctionBlocks m = go M.empty (M.keysSet m) . concat . M.mapWithK
 findRelocatedFunctions ::
   M.Map (ConcreteAddress arch) [ConcreteAddress arch] ->
   M.Map (ConcreteAddress arch) [ConcreteAddress arch] ->
-  [FallthroughPair arch] ->
+  [WithProvenance FallthroughBlock arch] ->
   S.Set (ConcreteAddress arch)
 findRelocatedFunctions entryPointMap initBlockMap = go (S.fromList <$> initBlockMap) where
   go unrelocatedBlockMap [] = M.keysSet (M.filter S.null unrelocatedBlockMap)
-  go ubm (FallthroughPair (LayoutPair (BasicBlock _ addr) _ status) : pairs)
-    | changed status = case M.lookup addr entryPointMap of
-      Nothing -> go ubm pairs
-      Just entryPoints -> go (foldr (M.adjust (S.delete addr)) ubm entryPoints) pairs
-    | otherwise = go ubm pairs
+  go ubm (wp : wps)
+    | changed (rewriteStatus wp) = case M.lookup (concreteBlockAddress (originalBlock wp)) entryPointMap of
+      Nothing -> go ubm wps
+      Just entryPoints ->
+        let cb = originalBlock wp
+        in go (foldr (M.adjust (S.delete (concreteBlockAddress cb))) ubm entryPoints) wps
+    | otherwise = go ubm wps
 
 -- | A pre-address heap stores blocks of free space in a format that's
 -- efficient for coalescing neighboring blocks, but inefficient for finding the
@@ -588,21 +604,32 @@ addOriginalBlock :: (MM.MemWidth (MM.ArchAddrWidth arch))
                  => ISA arch
                  -> Word64
                  -> (ConcreteAddress arch -> Bool)
-                 -> (PreAddressHeap arch, [FallthroughPair arch])
-                 -> FallthroughPair arch
-                 -> (PreAddressHeap arch, [FallthroughPair arch])
-addOriginalBlock isa jumpSize pRedirect (h, pairs) pair@(FallthroughPair (LayoutPair cb sb status))
+                 -- ^ A predicate that returns True if the rewriter should
+                 -- generate a redirection from the original block to the new
+                 -- one.
+                 --
+                 -- This is used to implement the rewriting strategy that elides
+                 -- those trampolines when keeping function bodies together
+                 -> (PreAddressHeap arch, [WithProvenance FallthroughBlock arch])
+                 -- -> FallthroughPair arch
+                 -> WithProvenance FallthroughBlock arch
+                 -> (PreAddressHeap arch, [WithProvenance FallthroughBlock arch])
+addOriginalBlock isa jumpSize pRedirect (h, wps) wp
   | status == Modified && not (pRedirect origAddr) =
-    (M.insert origAddr (fromIntegral bsize) h, FallthroughPair (LayoutPair cb sb Subsumed) : pairs)
+    let wp' = WithProvenance cb sb Subsumed
+    in (M.insert origAddr (fromIntegral bsize) h, wp' : wps)
   | bsize > jumpSize && status == Modified =
-    (M.insert addr spaceSize h, pair:pairs)
-  | otherwise = (h, pair:pairs)
+    (M.insert addr spaceSize h, wp:wps)
+  | otherwise = (h, wp:wps)
   where
-    bsize     = concreteBlockSize isa cb
+    cb        = originalBlock wp
+    sb        = withoutProvenance wp
+    status    = rewriteStatus wp
+    bsize     = blockSize isa cb
     spaceSize :: Int
     spaceSize = fromIntegral (bsize - jumpSize)
     addr      = origAddr `addressAddOffset` fromIntegral jumpSize
-    origAddr  = basicBlockAddress cb
+    origAddr  = concreteBlockAddress cb
 
 randomOrder :: RandomSeed -> [a] -> [a]
 randomOrder seed initial = runST $ do

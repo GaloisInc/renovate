@@ -11,11 +11,12 @@ import           Control.Monad.IO.Class ( MonadIO )
 import qualified Control.Monad.State as S
 import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
+import qualified Data.List.NonEmpty as DLN
 import qualified Data.Map as M
 import qualified Data.Traversable as T
 import qualified Data.Map as Map
 import           Data.Maybe ( maybeToList )
-import           Data.Monoid ( Sum(Sum), (<>))
+import           Data.Monoid ( Sum(Sum) )
 import           Data.Word ( Word64 )
 
 import           Renovate.Address
@@ -23,12 +24,10 @@ import           Renovate.BasicBlock
 import           Renovate.ISA
 import           Renovate.Recovery ( BlockInfo(biCFG) )
 import           Renovate.Redirect.LayoutBlocks ( Layout(..), layoutBlocks )
-import           Renovate.Redirect.LayoutBlocks.Types ( LayoutPair(..)
-                                                      , SymbolicPair(..)
-                                                      , AddressAssignedPair(..)
-                                                      , ConcretePair(..)
+import           Renovate.Redirect.LayoutBlocks.Types ( WithProvenance(..)
                                                       , changed
-                                                      , LayoutStrategy )
+                                                      , LayoutStrategy
+                                                      )
 import           Renovate.Redirect.Monad
 
 -- | Take the rewritten symbolic blocks and assign them concrete
@@ -52,10 +51,10 @@ concretize :: (MonadIO m, T.Traversable t, InstructionConstraints arch)
            => LayoutStrategy
            -> ConcreteAddress arch
            -- ^ The start address of the concretized (instrumented) blocks
-           -> t (SymbolicPair arch)
+           -> t (WithProvenance SymbolicBlock arch)
            -> t (SymbolicAddress arch, BS.ByteString)
            -> BlockInfo arch
-           -> RewriterT arch m (Layout ConcretePair arch)
+           -> RewriterT arch m (Layout ConcretizedBlock arch)
 concretize strat startAddr blocks injectedCode blockInfo = do
   -- First, build up a mapping of symbolic address to new concrete
   -- address
@@ -63,8 +62,11 @@ concretize strat startAddr blocks injectedCode blockInfo = do
   layout <- layoutBlocks strat startAddr blocks injectedCode (biCFG blockInfo)
   let concreteAddresses = programBlockLayout layout
   let injectedAddresses = injectedBlockLayout layout
-  let concreteAddressMap = M.fromList [ (symbolicAddress (basicBlockAddress sb), ca)
-                                      | AddressAssignedPair (LayoutPair _ (AddressAssignedBlock sb ca _) _) <- F.toList concreteAddresses
+  let concreteAddressMap = M.fromList [ (fallthroughSymbolicAddress sb, ca)
+                                      | wp <- F.toList concreteAddresses
+                                      , let aab = withoutProvenance wp
+                                      , let sb = lbBlock aab
+                                      , let ca = lbAt aab
                                       ]
   let injectedAddressMap = M.fromList [ (symAddr, concAddr)
                                       | (symAddr, concAddr, _) <- injectedAddresses
@@ -72,9 +74,12 @@ concretize strat startAddr blocks injectedCode blockInfo = do
   let concToSymAddrMap = concreteAddressMap <> injectedAddressMap
       -- Make note of symbolic names for each embrittled function. We can
       -- use this to make new symtab entries for them.
-  let brittleMap = M.fromList [ (ca, (basicBlockAddress oa, nm))
-                              | AddressAssignedPair (LayoutPair oa (AddressAssignedBlock _sb ca _) _) <- F.toList concreteAddresses
-                              , nm <- maybeToList $ Map.lookup (basicBlockAddress oa) symmap
+  let brittleMap = M.fromList [ (ca, (concreteBlockAddress oa, nm))
+                              | wp <- F.toList concreteAddresses
+                              , let oa = originalBlock wp
+                              , let aab = withoutProvenance wp
+                              , let ca = lbAt aab
+                              , nm <- maybeToList $ Map.lookup (concreteBlockAddress oa) symmap
                               ]
   -- TODO: JED: Should this be a put or an append?
   putNewSymbolsMap brittleMap
@@ -121,21 +126,31 @@ these could be sentinels that require translation back to IP relative
 -- this transformation, but the idea might be worth considering.
 concretizeJumps :: (Monad m, InstructionConstraints arch)
                 => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
-                -> AddressAssignedPair arch
-                -> RewriterT arch m (ConcretePair arch)
-concretizeJumps concreteAddressMap (AddressAssignedPair (LayoutPair cb (AddressAssignedBlock sb baddr maxSize) status))
+                -> WithProvenance AddressAssignedBlock arch
+                -> RewriterT arch m (WithProvenance ConcretizedBlock arch)
+concretizeJumps concreteAddressMap wp
   | changed status = do
-    let insnAddrs = basicBlockInstructions sb
+    let insnAddrs = fallthroughInstructions sb
     concretizedInstrsSizes <- S.evalStateT (T.traverse (mapJumpAddressDriver concreteAddressMap) insnAddrs) baddr
     let Sum concretizedSize = foldMap snd concretizedInstrsSizes
         concretizedInstrs = foldMap fst concretizedInstrsSizes
     assert (concretizedSize <= maxSize) (return ())
     isa <- askISA
-    let sb' = sb { basicBlockAddress = baddr
-                 , basicBlockInstructions = concretizedInstrs ++ isaMakePadding isa (maxSize - concretizedSize)
-                 }
-    return (ConcretePair (LayoutPair cb sb' status))
-  | otherwise = return (ConcretePair (LayoutPair cb cb status))
+    case DLN.nonEmpty (concretizedInstrs ++ isaMakePadding isa (maxSize - concretizedSize)) of
+      Nothing -> error ("Empty block created at " ++ show baddr)
+      Just instrs -> do
+        let sb' = concretizedBlock baddr instrs
+        return $ WithProvenance cb sb' status
+  | otherwise = do
+      let cb' = concretizedBlock (concreteBlockAddress cb) (concreteBlockInstructions cb)
+      return $ WithProvenance cb cb' status
+  where
+    cb = originalBlock wp
+    aab = withoutProvenance wp
+    sb = lbBlock aab
+    baddr = lbAt aab
+    maxSize = lbSize aab
+    status = rewriteStatus wp
 
 mapJumpAddressDriver ::
   forall m arch.
@@ -175,8 +190,8 @@ resolveSymbolicFallthrough
   SymbolicFallthrough arch a ->
   RewriterT arch m (ConcreteFallthrough arch a)
 resolveSymbolicFallthrough concreteAddressMap insnAddr sf = do
-  ftTag' <- traverse (resolveSymbolicAddr concreteAddressMap insnAddr) (ftTag sf)
-  return sf { ftTag = ftTag' }
+  ftTag' <- traverse (resolveSymbolicAddr concreteAddressMap insnAddr) (fallthroughType sf)
+  return sf { fallthroughType = ftTag' }
 
 -- | We need the address of the instruction, so we need to pre-compute
 -- all instruction addresses above.
@@ -194,9 +209,9 @@ mapJumpAddress concreteAddressMap (sf, insnAddr) = do
   isa <- askISA
   mem <- askMem
   cf_ <- resolveSymbolicFallthrough concreteAddressMap insnAddr sf
-  let cf = cf_ { ftInstruction = isaConcretizeAddresses isa mem insnAddr (ftInstruction cf_) }
-  case (ftTag cf, isaModifyJumpTarget isa insnAddr cf) of
-    (FallthroughTag Nothing Nothing, _) -> return [ftInstruction cf]
+  let cf = cf_ { fallthroughInstruction = isaConcretizeAddresses isa mem insnAddr (fallthroughInstruction cf_) }
+  case (fallthroughType cf, isaModifyJumpTarget isa insnAddr cf) of
+    (InternalInstruction, _) -> return [fallthroughInstruction cf]
     (_, Nothing) -> do
       let err :: Diagnostic
           err = InstructionIsNotJump isa i
@@ -204,5 +219,4 @@ mapJumpAddress concreteAddressMap (sf, insnAddr) = do
       throwError err
     (_, Just insns) -> return insns
   where
-    i = ftInstruction sf
-
+    i = fallthroughInstruction sf

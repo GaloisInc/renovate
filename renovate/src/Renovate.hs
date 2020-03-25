@@ -38,10 +38,26 @@ module Renovate
   E.rewriteElf,
   E.analyzeElf,
   -- * Basic Blocks
-  B.SymbolicBlock,
+  -- ** Concrete blocks
   B.ConcreteBlock,
-  B.BasicBlock(..),
-  B.SymbolicInfo(..),
+  B.concreteBlockAddress,
+  B.concreteBlockInstructions,
+  -- ** Symbolic blocks
+  B.SymbolicBlock,
+  B.symbolicBlockOriginalAddress,
+  B.symbolicBlockSymbolicAddress,
+  B.symbolicBlockInstructions,
+  -- ** Concretized blocks
+  B.ConcretizedBlock,
+  B.concretizedBlockAddress,
+  B.concretizedBlockInstructions,
+  -- ** Block helpers
+  B.HasConcreteAddresses,
+  B.blockAddress,
+  B.blockSize,
+  B.instructionAddresses,
+  B.instructionAddresses',
+  -- ** Others
   Recovery.BlockInfo(..),
   Recovery.isIncompleteBlockAddress,
   Recovery.numBlockRegions,
@@ -49,9 +65,6 @@ module Renovate
   Recovery.SymbolicRegCFG,
   Recovery.getSymbolicCFG,
   Recovery.getSymbolicRegCFG,
-  B.instructionAddresses,
-  B.instructionAddresses',
-  B.concreteBlockSize,
   B.symbolicBlockSize,
   -- * Instructions
   B.TaggedInstruction,
@@ -63,7 +76,7 @@ module Renovate
   B.ConcreteFallthrough,
   B.addFallthrough,
   B.noFallthrough,
-  B.FallthroughTag(..),
+  B.FallthroughType(..),
   B.Instruction,
   B.InstructionAnnotation,
   B.RegisterType,
@@ -107,7 +120,8 @@ module Renovate
   -- * Results
   RW.RewriteInfo(..),
   RW.RewriteSite(..),
-  E.SomeBlocks(..),
+  E.SomeConcreteBlocks(..),
+  E.SomeConcretizedBlocks(..),
   E.RewriterInfo,
   E.RewriterEnv,
   E.SectionInfo(..),

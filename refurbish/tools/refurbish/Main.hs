@@ -206,17 +206,17 @@ mainWithOptions o = do
 
 data REPLInfo =
   REPLInfo { rewriterInfo :: Some (R.RewriterInfo ())
-           , discoveredIndex :: Maybe SomeBlockIndex
-           , outputIndex :: Maybe SomeBlockIndex
+           , discoveredIndex :: Maybe (SomeBlockIndex R.ConcreteBlock)
+           , outputIndex :: Maybe (SomeBlockIndex R.ConcretizedBlock)
            , blockMapping :: BlockMapping
            }
 
 data BlockMapping = forall arch. MM.MemWidth (MM.ArchAddrWidth arch) =>
   BlockMapping (M.Map (R.ConcreteAddress arch) (R.ConcreteAddress arch))
 
-data SomeBlockIndex =
+data SomeBlockIndex b =
   forall arch . (MM.MemWidth (MM.ArchAddrWidth arch), R.InstructionConstraints arch) =>
-  SomeBlockIndex { _blockIndex :: IM.IntervalMap (R.ConcreteAddress arch) (R.ConcreteBlock arch)
+  SomeBlockIndex { _blockIndex :: IM.IntervalMap (R.ConcreteAddress arch) (b arch)
                  , _blockISA :: R.ISA arch
                  }
 
@@ -232,11 +232,11 @@ runREPL ri = H.runInputT settings' (repl hdlrs)
                     , discoveredIndex =
                       case ri ^. R.riRecoveredBlocks of
                         Nothing -> Nothing
-                        Just (R.SomeBlocks isa bs) -> Just (SomeBlockIndex (indexBlocks isa bs) isa)
+                        Just (R.SomeConcreteBlocks isa bs) -> Just (SomeBlockIndex (indexBlocks isa bs) isa)
                     , outputIndex =
                       case ri ^. R.riOutputBlocks of
                         Nothing -> Nothing
-                        Just (R.SomeBlocks isa bs) -> Just (SomeBlockIndex (indexBlocks isa bs) isa)
+                        Just (R.SomeConcretizedBlocks isa bs) -> Just (SomeBlockIndex (indexBlocks isa bs) isa)
                     , blockMapping = BlockMapping (M.fromList (ri ^. R.riBlockMapping))
                     }
 
@@ -326,7 +326,7 @@ replPrintDiscoveredBlock ri =
               Nothing -> H.outputStrLn "No discovered blocks"
               Just (SomeBlockIndex idx isa) -> do
                 let caddr = R.concreteFromAbsolute (fromIntegral addr)
-                F.forM_ (IM.elems (IM.containing idx caddr)) $ printOutputBlock H.outputStr isa
+                F.forM_ (IM.elems (IM.containing idx caddr)) $ printConcreteBlock H.outputStr isa
         _ -> invalidArguments cmd
 
 replPrintOutputBlock :: REPLInfo -> CommandHandler
@@ -344,7 +344,7 @@ replPrintOutputBlock ri =
               Nothing -> H.outputStrLn "No output blocks"
               Just (SomeBlockIndex idx isa) -> do
                 let caddr = R.concreteFromAbsolute (fromIntegral addr)
-                F.forM_ (IM.elems (IM.containing idx caddr)) $ printOutputBlock H.outputStr isa
+                F.forM_ (IM.elems (IM.containing idx caddr)) $ printConcretizedBlock H.outputStr isa
         _ -> invalidArguments cmd
 
 replAddressInfo :: REPLInfo -> CommandHandler
@@ -398,7 +398,7 @@ replOriginalBlockInfo :: (R.InstructionConstraints arch)
                       -> H.InputT IO ()
 replOriginalBlockInfo ri isa waddr addr bs = do
   H.outputStrLn ("The instruction at " +|| PD.pretty addr ||+ " was in the original text section in block" +| plurality bs |+ ":")
-  F.forM_ bs (printOutputBlock H.outputStr isa)
+  F.forM_ bs (printConcreteBlock H.outputStr isa)
   case (outputIndex ri, blockMapping ri) of
     (Nothing, _) -> H.outputStrLn "There are no output blocks"
     (Just (SomeBlockIndex idx isa'), BlockMapping bm) -> do
@@ -410,16 +410,16 @@ replOriginalBlockInfo ri isa waddr addr bs = do
           let outBlockAddr' = R.concreteFromAbsolute (fromIntegral (R.absoluteAddress outputBlockAddr))
           let obs = IM.elems (IM.containing idx outBlockAddr')
           H.outputStrLn ("It occurs in the following output block" +| plurality obs |+ "")
-          F.forM_ obs (printOutputBlock H.outputStr isa')
+          F.forM_ obs (printConcretizedBlock H.outputStr isa')
 
 replOutputBlockInfo :: (R.InstructionConstraints arch)
                     => R.ISA arch
                     -> R.ConcreteAddress arch
-                    -> [R.ConcreteBlock arch]
+                    -> [R.ConcretizedBlock arch]
                     -> H.InputT IO ()
 replOutputBlockInfo isa addr bs = do
   H.outputStrLn ("The instruction at " +|| PD.pretty addr ||+ " is in a block added by the rewriter")
-  F.forM_ bs (printOutputBlock H.outputStr isa)
+  F.forM_ bs (printConcretizedBlock H.outputStr isa)
 
 invalidArguments :: String -> H.InputT IO ()
 invalidArguments cmd =
@@ -434,11 +434,11 @@ printInfo :: (MM.MemWidth (MM.ArchAddrWidth arch))
           -> IO ()
 printInfo o ri = do
   withHandleWhen (oBlockMappingFile o) (printBlockMapping (ri ^. R.riBlockMapping))
-  F.forM_ (ri ^. R.riOutputBlocks) (printRequestedBlocks (oPrintOutputBlocks o) (oOutputBlockFile o))
-  F.forM_ (ri ^. R.riRecoveredBlocks) (printRequestedBlocks (oPrintDiscoveredBlocks o) (oDiscoveredBlockFile o))
+  F.forM_ (ri ^. R.riOutputBlocks) (printConcretizedBlocks (oPrintOutputBlocks o) (oOutputBlockFile o))
+  F.forM_ (ri ^. R.riRecoveredBlocks) (printConcreteBlocks (oPrintDiscoveredBlocks o) (oDiscoveredBlockFile o))
 
-printRequestedBlocks :: [Word64] -> Maybe FilePath -> R.SomeBlocks -> IO ()
-printRequestedBlocks reqs mOutFile (R.SomeBlocks isa blocks) = do
+printConcreteBlocks :: [Word64] -> Maybe FilePath -> R.SomeConcreteBlocks -> IO ()
+printConcreteBlocks reqs mOutFile (R.SomeConcreteBlocks isa blocks) = do
   let idx = indexBlocks isa blocks
   let cbs = [ b
             | addrWord <- reqs
@@ -446,18 +446,32 @@ printRequestedBlocks reqs mOutFile (R.SomeBlocks isa blocks) = do
             , b <- IM.elems (IM.containing idx caddr)
             ]
   withHandleWhen (Just (fromMaybe "-" mOutFile)) $ \h ->
-    F.forM_ cbs (printOutputBlock (IO.hPutStr h) isa)
+    F.forM_ cbs (printConcreteBlock (IO.hPutStr h) isa)
+
+printConcretizedBlocks :: [Word64] -> Maybe FilePath -> R.SomeConcretizedBlocks -> IO ()
+printConcretizedBlocks reqs mOutFile (R.SomeConcretizedBlocks isa blocks) = do
+  let idx = indexBlocks isa blocks
+  let cbs = [ b
+            | addrWord <- reqs
+            , let caddr = R.concreteFromAbsolute (fromIntegral addrWord)
+            , b <- IM.elems (IM.containing idx caddr)
+            ]
+  withHandleWhen (Just (fromMaybe "-" mOutFile)) $ \h ->
+    F.forM_ cbs (printConcretizedBlock (IO.hPutStr h) isa)
+
 
 -- | Index a collection of blocks into an 'IM.IntervalMap' by the range of addresses they contain
-indexBlocks :: (MM.MemWidth (MM.ArchAddrWidth arch))
+indexBlocks :: ( MM.MemWidth (MM.ArchAddrWidth arch)
+               , R.HasConcreteAddresses b
+               )
             => R.ISA arch
-            -> [R.ConcreteBlock arch]
-            -> IM.IntervalMap (R.ConcreteAddress arch) (R.ConcreteBlock arch)
+            -> [b arch]
+            -> IM.IntervalMap (R.ConcreteAddress arch) (b arch)
 indexBlocks isa = foldr indexBlock IM.empty
   where
     indexBlock cb im =
-      let sz = R.concreteBlockSize isa cb
-          addr0 = R.basicBlockAddress cb
+      let sz = R.blockSize isa cb
+          addr0 = R.blockAddress cb
           i = IM.IntervalCO addr0 (addr0 `R.addressAddOffset` fromIntegral sz)
       in IM.insert i cb im
 
@@ -479,26 +493,37 @@ analysis opts =
                       , R.arAnalyze = \_ _ -> return (Const ())
                       , R.arPreRewrite = \_ _ -> return (Const ())
                       , R.arRewrite = \_ _ _ b -> return
-                        $ if R.concreteAddress (R.basicBlockAddress b) `S.member` addrs
+                        $ if R.symbolicBlockOriginalAddress b `S.member` addrs
                           then Nothing
-                          else Just (R.basicBlockInstructions b)
+                          else Just (R.symbolicBlockInstructions b)
                       }
   where
   addrs = S.fromList (map (R.concreteFromAbsolute . MM.memWord) (oBlocksToSkip opts))
 
 -- | Format a 'R.ConcreteBlock' to the given 'IO.Handle'
-printOutputBlock :: (Monad m, R.InstructionConstraints arch)
+printConcreteBlock :: (Monad m, R.InstructionConstraints arch)
                  => (String -> m ())
                  -> R.ISA arch
                  -> R.ConcreteBlock arch
                  -> m ()
-printOutputBlock put isa cb = do
-  put (Fmt.fmtLn ("bb:" +|| PD.pretty (R.basicBlockAddress cb) ||+ ""))
+printConcreteBlock put isa cb = do
+  put (Fmt.fmtLn ("bb:" +|| PD.pretty (R.concreteBlockAddress cb) ||+ ""))
   F.forM_ (R.instructionAddresses isa cb) $ \(i, addr) -> do
     put (Fmt.fmtLn (PD.pretty addr ||+ ": " +| R.isaPrettyInstruction isa i |+ ""))
   put "\n"
   return ()
 
+printConcretizedBlock :: (Monad m, R.InstructionConstraints arch)
+                 => (String -> m ())
+                 -> R.ISA arch
+                 -> R.ConcretizedBlock arch
+                 -> m ()
+printConcretizedBlock put isa cb = do
+  put (Fmt.fmtLn ("bb:" +|| PD.pretty (R.concretizedBlockAddress cb) ||+ ""))
+  F.forM_ (R.instructionAddresses isa cb) $ \(i, addr) -> do
+    put (Fmt.fmtLn (PD.pretty addr ||+ ": " +| R.isaPrettyInstruction isa i |+ ""))
+  put "\n"
+  return ()
 -- | Print out a mapping of original block addresses to rewritten block addresses to the given 'IO.Handle'
 printBlockMapping :: (MM.MemWidth (MM.ArchAddrWidth arch))
                   => [(R.ConcreteAddress arch, R.ConcreteAddress arch)]

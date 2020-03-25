@@ -14,7 +14,8 @@ module Renovate.ISA
   , StackAddress(..)
   ) where
 
-import Data.Word ( Word8, Word64 )
+import qualified Data.List.NonEmpty as DLN
+import           Data.Word ( Word8, Word64 )
 
 import           Data.Parameterized.Some
 import qualified Data.Macaw.CFG as MM
@@ -108,7 +109,7 @@ data ISA arch = ISA
     --
     -- The 'Address' parameter is the address of the instruction,
     -- which is needed to resolve relative jumps.
-  , isaMakeRelativeJumpTo :: ConcreteAddress arch -> ConcreteAddress arch -> [Instruction arch ()]
+  , isaMakeRelativeJumpTo :: ConcreteAddress arch -> ConcreteAddress arch -> DLN.NonEmpty (Instruction arch ())
     -- ^ Create a relative jump from the first 'ConcreteAddress'
     -- to the second.  This will call error if the range is too
     -- far (see 'isaMaxRelativeJumpSize').

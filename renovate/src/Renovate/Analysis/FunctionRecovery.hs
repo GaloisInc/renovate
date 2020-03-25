@@ -25,6 +25,7 @@ import qualified GHC.Err.Located as L
 import           Control.Applicative
 import qualified Control.Monad.RWS.Strict as RWS
 import qualified Data.Foldable as F
+import qualified Data.List.NonEmpty as DLN
 import qualified Data.Map.Strict as M
 import           Data.Semigroup
 import qualified Data.Set as S
@@ -145,38 +146,36 @@ processWorklist = do
       isa <- RWS.asks envISA
       mem <- RWS.asks envMem
       let addOff = addressAddOffset
-      case instructionAddresses isa b of
-        [] -> L.error "Empty basic block"
-        insns -> do
-          let (lastInsn, insnAddr) = last insns
-              addSuccessor = nextBlockAddress b >>= addCFGEdge addr
-              addCond Unconditional = return ()
-              addCond Conditional = addSuccessor
-          case isaJumpType isa lastInsn mem insnAddr of
-            -- Fallthrough to the next block
-            NoJump -> addSuccessor
-            Return cond -> do
-              addReturnBlock addr
-              addCond cond
-            RelativeJump cond jaddr off -> do
-              let target = jaddr `addOff` off
-              addCFGEdge addr target
-              addCond cond
-            AbsoluteJump cond dst -> do
-              addCFGEdge addr dst
-              addCond cond
-            IndirectJump cond -> do
-              addCond cond
-              markFunctionIncomplete
-            DirectCall {} -> addSuccessor
-            IndirectCall -> addSuccessor
-          processWorklist
+      let insns = instructionAddresses isa b
+      let (lastInsn, insnAddr) = DLN.last insns
+          addSuccessor = nextBlockAddress b >>= addCFGEdge addr
+          addCond Unconditional = return ()
+          addCond Conditional = addSuccessor
+      case isaJumpType isa lastInsn mem insnAddr of
+        -- Fallthrough to the next block
+        NoJump -> addSuccessor
+        Return cond -> do
+          addReturnBlock addr
+          addCond cond
+        RelativeJump cond jaddr off -> do
+          let target = jaddr `addOff` off
+          addCFGEdge addr target
+          addCond cond
+        AbsoluteJump cond dst -> do
+          addCFGEdge addr dst
+          addCond cond
+        IndirectJump cond -> do
+          addCond cond
+          markFunctionIncomplete
+        DirectCall {} -> addSuccessor
+        IndirectCall -> addSuccessor
+      processWorklist
 
 nextBlockAddress :: (MM.MemWidth (MM.ArchAddrWidth arch)) => ConcreteBlock arch -> M arch (ConcreteAddress arch)
 nextBlockAddress b = do
   isa <- RWS.asks envISA
-  let sz     = concreteBlockSize isa b
-  return (basicBlockAddress b `addressAddOffset` fromIntegral sz)
+  let sz     = blockSize isa b
+  return (concreteBlockAddress b `addressAddOffset` fromIntegral sz)
 
 markFunctionIncomplete :: M arch ()
 markFunctionIncomplete = do
@@ -242,5 +241,4 @@ runM isa mem blockInfo act = fst $ RWS.evalRWS (unM act) env emptyFunctionState
                  , envISA = isa
                  , envMem = mem
                  }
-    addBlock m b = M.insert (basicBlockAddress b) b m
-
+    addBlock m b = M.insert (concreteBlockAddress b) b m

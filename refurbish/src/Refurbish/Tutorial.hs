@@ -67,6 +67,7 @@ An example rewriter looks something like:
 >>> import qualified Data.ByteString as BS
 >>> import           Data.Functor.Const ( Const(..) )
 >>> import qualified Data.ElfEdit as E                   -- (elf-edit)
+>>> import qualified Data.List.NonEmpty as DLN           -- (base)
 >>> import qualified Data.Macaw.BinaryLoader as MBL      -- (macaw-loader)
 >>> import           Data.Macaw.BinaryLoader.X86 ()      -- (macaw-loader-x86)
 >>> import qualified Data.Parameterized.NatRepr as NR    -- (parameterized-utils)
@@ -121,9 +122,9 @@ myRewriter :: (R.HasAnalysisEnv env)
            -> Const Int arch
            -> RewriteState arch
            -> R.SymbolicBlock arch
-           -> R.RewriteM lm arch (Maybe [R.TaggedInstruction arch (R.InstructionAnnotation arch)])
+           -> R.RewriteM lm arch (Maybe (DLN.NonEmpty (R.TaggedInstruction arch (R.InstructionAnnotation arch))))
 myRewriter env nBlocks (RewriteState newFuncAddr) symBlock =
-  return (Just (R.basicBlockInstructions symBlock))
+  return (Just (R.symbolicBlockInstructions symBlock))
 :}
 
 >>> :{
