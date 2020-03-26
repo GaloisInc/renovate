@@ -108,7 +108,12 @@ data ISA arch = ISA
   , isaSymbolizeLookupJump ::
       SymbolicLookupTableInfo arch
       -> Maybe [TaggedInstruction arch (InstructionAnnotation arch)]
-  -- ^ TODO DESCRIBE
+  -- ^ Attempts to return a series of instructions which
+  -- mimic a jump-table-lookup indirect jump (described by
+  -- the given @SymbolicLookupTableInfo@) via a series of
+  -- comparisons and direct jumps. This allows the related
+  -- blocks to be safely relocated and the corresponding
+  -- jumps can be updated to reflect the new location(s).
   
   , isaJumpType :: forall t . Instruction arch t -> MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> JumpType arch
     -- ^ Test if an instruction is a jump; if it is, return some
