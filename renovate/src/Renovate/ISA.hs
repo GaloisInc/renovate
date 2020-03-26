@@ -22,7 +22,7 @@ import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.Types as MT
 
 import Renovate.Address
-import Renovate.BasicBlock.Types ( ConcreteFallthrough, Instruction, InstructionAnnotation, RegisterType, TaggedInstruction )
+import Renovate.BasicBlock.Types ( Instruction, InstructionAnnotation, RegisterType, TaggedInstruction )
 
 -- | The variety of a jump: either conditional or unconditional.  This
 -- is used as a tag for 'JumpType's.  One day, we could model the type
@@ -118,7 +118,22 @@ data ISA arch = ISA
     -- New code blocks will be laid out in virtual address space within this
     -- many bytes of the original code blocks, so that the two can jump to each
     -- other as necessary.
-  , isaModifyJumpTarget :: ConcreteAddress arch -> ConcreteFallthrough arch () -> Maybe [Instruction arch ()]
+  , isaModifyJumpTarget :: ConcreteAddress arch -> Instruction arch () -> Maybe (DLN.NonEmpty (Instruction arch ()))
+  -- , isaModifyJumpTarget :: ConcreteAddress arch -> ConcreteFallthrough arch () -> Maybe [Instruction arch ()]
+    -- ^ Modify the given jump instruction, accounting for any fallthrough behavior specified
+    --
+    -- The first argument is the address of the original jump instruction
+    --
+    -- The second argument is the jump instruction itself
+    --
+    -- The fallthrough target is the address that control flow would fall
+    -- through to if the block does not end in an unconditional jump.  Note that
+    -- calls have a fallthrough target, as they return control flow to the point
+    -- after the call.
+    --
+    -- This function can 1) change the target address of a jump and 2) insert
+
+
     -- ^ Modify the given jump instruction, rather than creating
     -- an entirely new one.  This differs from
     -- 'isaMakeRelativeJumpTo' in that it preserves the jump type

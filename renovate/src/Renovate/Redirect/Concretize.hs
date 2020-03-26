@@ -15,13 +15,14 @@ import qualified Data.List.NonEmpty as DLN
 import qualified Data.Map as M
 import qualified Data.Traversable as T
 import qualified Data.Map as Map
-import           Data.Maybe ( maybeToList )
+import           Data.Maybe ( fromMaybe, maybeToList )
 import           Data.Monoid ( Sum(Sum) )
 import           Data.Word ( Word64 )
 
 import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
+import qualified Renovate.Panic as RP
 import           Renovate.Recovery ( BlockInfo(biCFG) )
 import           Renovate.Redirect.LayoutBlocks ( Layout(..), layoutBlocks )
 import           Renovate.Redirect.LayoutBlocks.Types ( WithProvenance(..)
@@ -62,7 +63,7 @@ concretize strat startAddr blocks injectedCode blockInfo = do
   layout <- layoutBlocks strat startAddr blocks injectedCode (biCFG blockInfo)
   let concreteAddresses = programBlockLayout layout
   let injectedAddresses = injectedBlockLayout layout
-  let concreteAddressMap = M.fromList [ (fallthroughSymbolicAddress sb, ca)
+  let concreteAddressMap = M.fromList [ (symbolicBlockSymbolicAddress sb, ca)
                                       | wp <- F.toList concreteAddresses
                                       , let aab = withoutProvenance wp
                                       , let sb = lbBlock aab
@@ -124,23 +125,63 @@ these could be sentinels that require translation back to IP relative
 -- something like @push XXX ; ret@, the @ret@ restores the stack
 -- height and gets rid of the extra value.  We wouldn't change that in
 -- this transformation, but the idea might be worth considering.
+--
+-- NOTE: The implementation of concretization MUST match the logic used to
+-- compute block sizes in 'symbolicBlockSize' in Renovate.BasicBlock.
 concretizeJumps :: (Monad m, InstructionConstraints arch)
                 => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
                 -> WithProvenance AddressAssignedBlock arch
                 -> RewriterT arch m (WithProvenance ConcretizedBlock arch)
 concretizeJumps concreteAddressMap wp
   | changed status = do
-    let insnAddrs = fallthroughInstructions sb
-    concretizedInstrsSizes <- S.evalStateT (T.traverse (mapJumpAddressDriver concreteAddressMap) insnAddrs) baddr
-    let Sum concretizedSize = foldMap snd concretizedInstrsSizes
-        concretizedInstrs = foldMap fst concretizedInstrsSizes
-    assert (concretizedSize <= maxSize) (return ())
+    let symInsns = symbolicBlockInstructions sb
+
+    -- Concretize all of the instructions (including jumps)
+    let concretizeInstrs = T.traverse mapJumpAddress symInsns
+    (concretizedInstrsWithSizes, nextAddr) <- S.runStateT concretizeInstrs firstInstrAddr
+    let Sum baseBlockSize = foldMap snd concretizedInstrsWithSizes
+    let baseBlockInstrs = foldMap (F.toList . fst) concretizedInstrsWithSizes
+
+    -- Now figure out if we have a fallthrough target; if we do, we'll put an
+    -- unconditional jump to the fallthrough target at the end of our new
+    -- instruction stream.
+    --
+    -- This handling of fallthrough is totally disjoint from the rest of the
+    -- instruction stream, which means that we can support rewriting workflows
+    -- like inserting instrumentation after a function call (which is a block
+    -- terminator), while still correcting fallthrough control flow when needed.
+    let mConcreteFallthroughTarget =
+          case symbolicBlockSymbolicSuccessor sb of
+            Nothing -> Nothing
+            -- Stable addresses are not in the map
+            Just (StableAddress concSucc) -> Just concSucc
+            Just symSucc
+              | Just concSucc <- M.lookup symSucc concreteAddressMap -> Just concSucc
+              | otherwise ->
+                RP.panic RP.Concretize "concretizeJumps" [ "Could not find symbolic successor for original block: " ++ show firstInstrAddr
+                                                         ]
+
     isa <- askISA
-    case DLN.nonEmpty (concretizedInstrs ++ isaMakePadding isa (maxSize - concretizedSize)) of
-      Nothing -> error ("Empty block created at " ++ show baddr)
-      Just instrs -> do
-        let sb' = concretizedBlock baddr instrs
-        return $ WithProvenance cb sb' status
+    let (instrs, concretizedBlockSize) = fromMaybe (baseBlockInstrs, baseBlockSize) $ do
+          concreteFallthroughTarget <- mConcreteFallthroughTarget
+          -- The fallthrough will be at 'nextAddr' (following the last instruction)
+          let jmp = isaMakeRelativeJumpTo isa nextAddr concreteFallthroughTarget
+          let jmpSize = sum (fmap (isaInstructionSize isa) jmp)
+          return (baseBlockInstrs ++ F.toList jmp, baseBlockSize + fromIntegral jmpSize)
+
+    -- We computed a maximum possible size earlier; ensure that we stay within
+    -- that bound (if we exceed it, all of the address calculations are off and
+    -- the layout is invalid and broken)
+    assert (concretizedBlockSize <= maxSize) (return ())
+
+    case DLN.nonEmpty instrs of
+      Nothing ->
+        RP.panic RP.Concretize "concretizeJumps" [ "Generated an empty basic block at address: " ++ show firstInstrAddr
+                                                 , "  for original block: " ++ show (concreteBlockAddress cb)
+                                                 ]
+      Just instrs' -> do
+        let sb' = concretizedBlock firstInstrAddr instrs'
+        return $! WithProvenance cb sb' status
   | otherwise = do
       let cb' = concretizedBlock (concreteBlockAddress cb) (concreteBlockInstructions cb)
       return $ WithProvenance cb cb' status
@@ -148,50 +189,9 @@ concretizeJumps concreteAddressMap wp
     cb = originalBlock wp
     aab = withoutProvenance wp
     sb = lbBlock aab
-    baddr = lbAt aab
+    firstInstrAddr = lbAt aab
     maxSize = lbSize aab
     status = rewriteStatus wp
-
-mapJumpAddressDriver ::
-  forall m arch.
-  (Monad m, InstructionConstraints arch) =>
-  M.Map (SymbolicAddress arch) (ConcreteAddress arch) ->
-  SymbolicFallthrough arch (InstructionAnnotation arch) ->
-  S.StateT (ConcreteAddress arch) (RewriterT arch m) ([Instruction arch ()], Sum Word64)
-mapJumpAddressDriver concreteAddressMap sf = do
-  addr <- S.get
-  isa <- S.lift askISA
-  insns <- S.lift $ mapJumpAddress concreteAddressMap (sf, addr)
-  let totalSize = sum . map (fromIntegral . isaInstructionSize isa) $ insns
-  S.put $ addressAddOffset addr (fromInteger totalSize)
-  return (insns, fromInteger totalSize)
-
-resolveSymbolicAddr
-  :: forall m arch.
-  (Monad m, InstructionConstraints arch) =>
-  M.Map (SymbolicAddress arch) (ConcreteAddress arch) ->
-  ConcreteAddress arch ->
-  SymbolicAddress arch ->
-  RewriterT arch m (ConcreteAddress arch)
-resolveSymbolicAddr _concreteAddressMap _insnAddr (StableAddress concAddr) = return concAddr
-resolveSymbolicAddr concreteAddressMap insnAddr symAddr = case M.lookup symAddr concreteAddressMap of
-  Nothing -> do
-    let err :: Diagnostic
-        err = NoConcreteAddressForSymbolicTarget insnAddr symAddr "concretizeJumps"
-    logDiagnostic err
-    throwError err
-  Just concAddr -> return concAddr
-
-resolveSymbolicFallthrough
-  :: forall m arch a.
-  (Monad m, InstructionConstraints arch) =>
-  M.Map (SymbolicAddress arch) (ConcreteAddress arch) ->
-  ConcreteAddress arch ->
-  SymbolicFallthrough arch a ->
-  RewriterT arch m (ConcreteFallthrough arch a)
-resolveSymbolicFallthrough concreteAddressMap insnAddr sf = do
-  ftTag' <- traverse (resolveSymbolicAddr concreteAddressMap insnAddr) (fallthroughType sf)
-  return sf { fallthroughType = ftTag' }
 
 -- | We need the address of the instruction, so we need to pre-compute
 -- all instruction addresses above.
@@ -202,21 +202,17 @@ resolveSymbolicFallthrough concreteAddressMap insnAddr sf = do
 -- to 32 bit offset).
 mapJumpAddress :: forall m arch
                 . (Monad m, InstructionConstraints arch)
-               => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
-               -> (SymbolicFallthrough arch (InstructionAnnotation arch), ConcreteAddress arch)
-               -> RewriterT arch m [Instruction arch ()]
-mapJumpAddress concreteAddressMap (sf, insnAddr) = do
-  isa <- askISA
-  mem <- askMem
-  cf_ <- resolveSymbolicFallthrough concreteAddressMap insnAddr sf
-  let cf = cf_ { fallthroughInstruction = isaConcretizeAddresses isa mem insnAddr (fallthroughInstruction cf_) }
-  case (fallthroughType cf, isaModifyJumpTarget isa insnAddr cf) of
-    (InternalInstruction, _) -> return [fallthroughInstruction cf]
-    (_, Nothing) -> do
-      let err :: Diagnostic
-          err = InstructionIsNotJump isa i
-      logDiagnostic err
-      throwError err
-    (_, Just insns) -> return insns
-  where
-    i = fallthroughInstruction sf
+               => TaggedInstruction arch (InstructionAnnotation arch)
+               -> S.StateT (ConcreteAddress arch) (RewriterT arch m) (DLN.NonEmpty (Instruction arch ()), Sum Word64)
+mapJumpAddress sf = do
+  insnAddr <- S.get
+  isa <- S.lift askISA
+  mem <- S.lift askMem
+  let concreteInstr = isaConcretizeAddresses isa mem insnAddr (projectInstruction sf)
+  case isaModifyJumpTarget isa insnAddr concreteInstr of
+    Nothing -> RP.panic RP.Concretize "mapJumpAddress" [ "Instruction is not a jump: " ++ isaPrettyInstruction isa concreteInstr
+                                                       ]
+    Just insns -> do
+      let totalSize = sum $ fmap (fromIntegral . isaInstructionSize isa) insns
+      S.put $ addressAddOffset insnAddr (fromInteger totalSize)
+      return (insns, fromInteger totalSize)
