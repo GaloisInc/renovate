@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 -- | Tools for working with 'BasicBlock's
 --
 -- This includes functions to convert between concrete and symbolic
@@ -61,6 +62,7 @@ module Renovate.BasicBlock (
 import qualified Data.Foldable as F
 import qualified Data.List.NonEmpty as DLN
 import           Data.Maybe ( fromMaybe )
+import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Text.Prettyprint.Doc as PD
 import qualified Data.Traversable as T
 import           Data.Word ( Word64 )
@@ -159,71 +161,88 @@ symbolicBlockSize :: (HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch))
                   -> SymbolicBlock arch
                   -> Word64
 symbolicBlockSize isa mem addr sb =
-  fromIntegral (basicInstSize + jumpSizes + fallthroughSize)
+  fromIntegral (basicInstSize + jumpSizes)
   where
     origAddr = symbolicBlockOriginalAddress sb
 
     instrs0 = fmap projectInstruction (symbolicBlockInstructions sb)
-    (standardInstructions, jumps) = DLN.partition (isNotJumpInstruction isa mem fakeTarget) instrs0
+    concreteInstrs = fmap (isaConcretizeAddresses isa mem origAddr) instrs0
 
-    basicInstSize = sum $ fmap (fromIntegral . isaInstructionSize isa . isaConcretizeAddresses isa mem addr) standardInstructions
-    concreteJumps = fmap (isaConcretizeAddresses isa mem origAddr) jumps
-    jumpSizes = sum $ fmap (computeJumpSize isa origAddr addr) concreteJumps
-
-    fallthroughSize = fromMaybe 0 $ do
+    -- Determine what (if any) sequence of instructions we need to add to handle
+    -- control flow fallthrough.
+    fallthroughInstrSeq = fromMaybe [] $ do
       -- Guard; fail if there is no symbolic successor (and then return 0 via
       -- the fromMaybe)
       _ <- symbolicBlockSymbolicSuccessor sb
-      let fallthroughJump = isaMakeRelativeJumpTo isa origAddr fakeTarget
-      return $ sum $ fmap (computeJumpSize isa origAddr addr) fallthroughJump
+      return (F.toList (isaMakeRelativeJumpTo isa origAddr fakeTarget))
+
+    -- Split the instructions into normal instructions and jump instructions
+    -- that need to be modified (while keeping around the type-level evidence
+    -- that the jumps are actually jumps)
+    (standardInstructions, taggedJumps) =
+      foldr (partitionModifiableJumps isa mem fakeTarget) ([], []) (F.toList concreteInstrs <> fallthroughInstrSeq)
+
+    -- Before processing the standard instructions, we throw away the tags (we
+    -- only kept them as a type-level proof that we didn't mix any instruction
+    -- types)
+    basicInstSize = sum $ fmap (fromIntegral . isaInstructionSize isa) (fmap fst standardInstructions)
+    jumpSizes = sum $ fmap (computeJumpSize isa origAddr addr) taggedJumps
 
     -- We don't have the real fallthrough address because it hasn't been
     -- allocated yet.  We can substitute in a fake value here to compute the
     -- size that the jump will ultimately require
     fakeTarget = addr `addressAddOffset` fromIntegral (isaMaxRelativeJumpSize isa)
 
--- | Return 'False' if this is an instruction that needs to be subject to 'isaModifyJumpTarget'
+-- | Split instructions into regular instructions and jumps that need to be
+-- fixed up, while retaining type-level evidence that the jumps are actually jumps
 --
--- We elide instructions that are not control flow instructions.  We also elide
--- returns, as they do not need to be fixed up.  Likewise indirect calls; while
--- they return, there is no fixup necessary for indirect calls that are not
--- terminal in blocks (terminal indirect calls may need to have a fallthrough
--- jump inserted).
+-- NOTE: This function does not maintain the ordering of instructions as
+-- 'symbolicBlockSize' only needs to count up sizes.
 --
--- NOTE: If an indirect jump makes it this far, we are not rewriting it and have
--- no way to fix it up.  In fact, it would be an error to see one here, as no
--- blocks with indirect jumps remaining should be modified.
-isNotJumpInstruction :: ISA arch -> MC.Memory (MC.ArchAddrWidth arch) -> ConcreteAddress arch -> Instruction arch a -> Bool
-isNotJumpInstruction isa mem addr i =
-  case isaJumpType isa i mem addr of
-    NoJump -> True
-    Return {} -> True
-    RelativeJump {} -> False
-    AbsoluteJump {} -> False
-    DirectCall {} -> False
-    IndirectCall {} -> False
-    IndirectJump {} ->
-      RP.panic RP.BasicBlockSize "isNotJumpInstruction" [ "Indirect jumps should not be relocated at this point: "
-                                                        , "  " ++ isaPrettyInstruction isa i
-                                                        ]
+-- NOTE: We keep the jump type results for regular instructions to prove to
+-- ourselves that we didn't accidentally include an instruction that could be
+-- modified in the regular instructions list (the type-level tags prevent it)
+partitionModifiableJumps :: ISA arch
+                         -> MC.Memory (MC.ArchAddrWidth arch)
+                         -> ConcreteAddress arch
+                         -> Instruction arch t
+                         -> ( [(Instruction arch t, JumpType arch NoModifiableTarget)]
+                            , [(Instruction arch t, JumpType arch HasModifiableTarget)]
+                            )
+                         -> ( [(Instruction arch t, JumpType arch NoModifiableTarget)]
+                            , [(Instruction arch t, JumpType arch HasModifiableTarget)]
+                            )
+partitionModifiableJumps isa mem addr instr (regularInstrs, jumpInstrs) =
+  case isaJumpType isa instr mem addr of
+    Some jt@NoJump -> ((instr, jt) : regularInstrs, jumpInstrs)
+    Some (jt@Return {}) -> ((instr, jt) : regularInstrs, jumpInstrs)
+    Some (jt@IndirectCall {}) -> ((instr, jt) : regularInstrs, jumpInstrs)
+    -- While we shouldn't really see any indirect jumps from the original code
+    -- here, it is possible that callers of renovate have inserted their own
+    -- indirect jumps.  Thus, we don't panic here (though it is on clients to
+    -- ensure that what they added was safe)
+    Some (jt@IndirectJump {}) -> ((instr, jt) : regularInstrs, jumpInstrs)
+    Some (jt@RelativeJump {}) -> (regularInstrs, (instr, jt) : jumpInstrs)
+    Some (jt@AbsoluteJump {}) -> (regularInstrs, (instr, jt) : jumpInstrs)
+    Some (jt@DirectCall {}) -> (regularInstrs, (instr, jt) : jumpInstrs)
 
--- | Compute the size of a jump instruction (accounting for its ultimate target
--- and any necessary reified fallthrough).
+-- | Compute the size of a jump instruction (accounting for its ultimate target)
 --
--- NOTE: The fallthrough address, if provided, is a faked one that simply allows
--- us to compute the correct instruction sequence sizes.
+-- Note that we compute the size using 'isaModifyJumpTarget', which requires a
+-- jump target (if the instruction is really a jump).  Thus, we unconditionally
+-- provide a (faked) target.
 computeJumpSize :: ( HasCallStack
                    , MC.MemWidth (MC.ArchAddrWidth arch)
                    )
                 => ISA arch
                 -> ConcreteAddress arch
                 -> ConcreteAddress arch
-                -> Instruction arch ()
+                -> (Instruction arch (), JumpType arch HasModifiableTarget)
                 -> Int
-computeJumpSize isa origAddr addr insn =
+computeJumpSize isa origAddr addr (insn, jt) =
   -- Add any necessary fallthroughs; this step requires a concrete
   -- instruction, which is why we concretized first
-  case isaModifyJumpTarget isa addr insn of
+  case isaModifyJumpTarget isa addr insn jt fakeTarget of
     Nothing ->
       RP.panic RP.BasicBlockSize "computeJumpSize" [ "Jump cannot be modified: "
                                                    , "  Instruction: " ++ isaPrettyInstruction isa insn
@@ -232,11 +251,12 @@ computeJumpSize isa origAddr addr insn =
     Just jmpSeq -> sum (fmap instrSize jmpSeq)
   where
     instrSize = fromIntegral . isaInstructionSize isa
+    fakeTarget = addr `addressAddOffset` fromIntegral (isaMaxRelativeJumpSize isa)
 
 -- | Return the 'JumpType' of the terminator instruction (if any)
 --
 -- Note that blocks cannot be empty
-terminatorType :: (MC.MemWidth (MC.ArchAddrWidth arch)) => ISA arch -> MC.Memory (MC.ArchAddrWidth arch) -> ConcreteBlock arch -> JumpType arch
+terminatorType :: (MC.MemWidth (MC.ArchAddrWidth arch)) => ISA arch -> MC.Memory (MC.ArchAddrWidth arch) -> ConcreteBlock arch -> Some (JumpType arch)
 terminatorType isa mem b =
   let (termInsn, addr) = DLN.last (instructionAddresses isa b)
   in isaJumpType isa termInsn mem addr

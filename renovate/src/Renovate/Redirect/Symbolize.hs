@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 -- | Lift concrete blocks into relocatable symbolic blocks
 module Renovate.Redirect.Symbolize (
   SymbolicAddressAllocator,
@@ -14,6 +15,7 @@ import qualified Data.List.NonEmpty as DLN
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Map as M
 import           Data.Maybe ( fromMaybe )
+import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Traversable as T
 import           Data.Word ( Word64 )
 
@@ -22,6 +24,7 @@ import           Prelude
 import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
+import qualified Renovate.Panic as RP
 import qualified Renovate.Redirect.ReifyFallthrough as RRR
 
 newtype SymbolicAddressAllocator arch = SymbolicAddressAllocator Word64
@@ -80,32 +83,40 @@ symbolizeJumps :: (InstructionConstraints arch)
                -> (ConcreteBlock arch, SymbolicBlock arch)
 symbolizeJumps isa mem symAddrMap (cb, symAddr) =
   case DLN.nonEmpty (concat insns) of
-    Nothing -> error ("Created empty block while symbolizing block at: " ++ show (concreteBlockAddress cb))
+    Nothing ->
+      RP.panic RP.Symbolize "symbolizeJumps" [ "Created empty block while symbolizing block at: " ++ show (concreteBlockAddress cb)
+                                             ]
     Just insnList ->
-      let msucc = lookupSymAddr =<< RRR.reifyFallthrough isa mem cb
-      in (cb, symbolicBlock cb symAddr insnList msucc)
+      case RRR.reifyFallthrough isa mem cb of
+        Nothing -> (cb, symbolicBlock cb symAddr insnList Nothing)
+        Just concreteFallthrough
+          | Just symSucc <- lookupSymAddr concreteFallthrough ->
+              (cb, symbolicBlock cb symAddr insnList (Just symSucc))
+          | otherwise ->
+              RP.panic RP.Symbolize "symbolizeJumps" [ "Missing symbolic target for concrete fallthrough address: " ++ show concreteFallthrough
+                                                     ]
   where
     lookupSymAddr ca = M.lookup ca symAddrMap
     insns = fmap symbolize (instructionAddresses isa cb)
 
     symbolize (i, addr) =
       case isaJumpType isa i mem addr of
-        AbsoluteJump _ target ->
+        Some (AbsoluteJump _ target) ->
           let symTarget = lookupSymbolicAddress target
           in isaSymbolizeAddresses isa mem lookupSymAddr addr (Just symTarget) i
-        RelativeJump _ _ offset ->
+        Some (RelativeJump _ _ offset) ->
           let symTarget = lookupSymbolicAddress (addr `addressAddOffset` offset)
           in isaSymbolizeAddresses isa mem lookupSymAddr addr (Just symTarget) i
-        IndirectJump _ ->
+        Some (IndirectJump _) ->
           -- We do not know the destination of indirect jumps, so we
           -- can't tag them (or rewrite them later)
           isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
-        DirectCall _ offset ->
+        Some (DirectCall _ offset) ->
           let symTarget = lookupSymbolicAddress (addr `addressAddOffset` offset)
           in isaSymbolizeAddresses isa mem lookupSymAddr addr (Just symTarget) i
-        IndirectCall -> isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
-        Return _ -> isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
-        NoJump -> isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
+        Some IndirectCall -> isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
+        Some (Return _) -> isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
+        Some NoJump -> isaSymbolizeAddresses isa mem lookupSymAddr addr Nothing i
 
     lookupSymbolicAddress target = fromMaybe (StableAddress target) (M.lookup target symAddrMap)
 

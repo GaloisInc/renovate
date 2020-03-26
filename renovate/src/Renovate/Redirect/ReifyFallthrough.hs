@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 module Renovate.Redirect.ReifyFallthrough (
   reifyFallthrough
   ) where
@@ -37,14 +38,14 @@ reifyFallthrough isa mem cb
 -- We explicitly match on all constructor patterns so that if/when new ones
 -- are added this will break instead of having some default case that does
 -- (potentially) the wrong thing on the new cases.
-isUnconditionalJT :: RI.JumpType arch -> Bool
-isUnconditionalJT (RI.Return       cond    ) = isUnconditionalCond cond
-isUnconditionalJT (RI.IndirectJump cond    ) = isUnconditionalCond cond
-isUnconditionalJT (RI.AbsoluteJump cond _  ) = isUnconditionalCond cond
-isUnconditionalJT (RI.RelativeJump cond _ _) = isUnconditionalCond cond
-isUnconditionalJT (RI.IndirectCall         ) = False
-isUnconditionalJT (RI.DirectCall {}        ) = False
-isUnconditionalJT (RI.NoJump               ) = False
+isUnconditionalJT :: Some (RI.JumpType arch) -> Bool
+isUnconditionalJT (Some (RI.Return       cond    )) = isUnconditionalCond cond
+isUnconditionalJT (Some (RI.IndirectJump cond    )) = isUnconditionalCond cond
+isUnconditionalJT (Some (RI.AbsoluteJump cond _  )) = isUnconditionalCond cond
+isUnconditionalJT (Some (RI.RelativeJump cond _ _)) = isUnconditionalCond cond
+isUnconditionalJT (Some (RI.IndirectCall         )) = False
+isUnconditionalJT (Some (RI.DirectCall {}        )) = False
+isUnconditionalJT (Some (RI.NoJump               )) = False
 
 isUnconditionalCond :: RI.JumpCondition -> Bool
 isUnconditionalCond RI.Unconditional = True

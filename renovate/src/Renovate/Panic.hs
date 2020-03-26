@@ -9,6 +9,7 @@ import qualified Panic as P
 data RenovatePanic = Layout
                    | BasicBlockSize
                    | Concretize
+                   | Symbolize
   deriving (Show)
 
 instance P.PanicComponent RenovatePanic where
