@@ -93,6 +93,7 @@ isa =
         , R.isaMakeSymbolicJump = ppcMakeSymbolicJump
         , R.isaConcretizeAddresses = ppcConcretizeAddresses
         , R.isaSymbolizeAddresses = ppcSymbolizeAddresses
+        , R.isaSymbolizeLookupJump = ppcSymbolizeLookupJump
         }
 
 ppcPrettyInstruction :: Instruction a -> String
@@ -150,6 +151,13 @@ ppcMakeSymbolicJump symAddr = [R.tagInstruction (Just symAddr) i]
     -- instruction.
     jmp = D.Instruction D.B (D.Directbrtarget (D.BT 0) D.:< D.Nil)
     i = annotateInstr (fromInst jmp) NoAddress
+
+
+ppcSymbolizeLookupJump ::
+  R.SymbolicLookupTableInfo arch
+  -> Maybe [R.TaggedInstruction arch (TargetAddress arch)]
+ppcSymbolizeLookupJump _ = Nothing -- not implemented yet
+
 
 -- | This function converts symbolic address references in operands back to
 -- concrete values.  As with 'ppcSymbolizeAddresses', it is a no-op on PowerPC.
