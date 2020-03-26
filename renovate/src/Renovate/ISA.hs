@@ -119,7 +119,6 @@ data ISA arch = ISA
     -- many bytes of the original code blocks, so that the two can jump to each
     -- other as necessary.
   , isaModifyJumpTarget :: ConcreteAddress arch -> Instruction arch () -> Maybe (DLN.NonEmpty (Instruction arch ()))
-  -- , isaModifyJumpTarget :: ConcreteAddress arch -> ConcreteFallthrough arch () -> Maybe [Instruction arch ()]
     -- ^ Modify the given jump instruction, accounting for any fallthrough behavior specified
     --
     -- The first argument is the address of the original jump instruction
