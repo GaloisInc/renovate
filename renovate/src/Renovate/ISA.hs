@@ -22,7 +22,12 @@ import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.Types as MT
 
 import Renovate.Address
-import Renovate.BasicBlock.Types ( ConcreteFallthrough, Instruction, InstructionAnnotation, RegisterType, TaggedInstruction )
+import Renovate.BasicBlock.Types ( ConcreteFallthrough
+                                 , Instruction
+                                 , InstructionAnnotation
+                                 , RegisterType
+                                 , TaggedInstruction
+                                 )
 
 -- | The variety of a jump: either conditional or unconditional.  This
 -- is used as a tag for 'JumpType's.  One day, we could model the type
@@ -98,6 +103,18 @@ data ISA arch = ISA
     -- has the worst case size behavior.
   , isaConcretizeAddresses :: MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> Instruction arch (InstructionAnnotation arch) -> Instruction arch ()
     -- ^ Remove the annotation, with possible post-processing.
+
+  
+  , isaSymbolizeLookupJump ::
+      SymbolicLookupTableInfo arch
+      -> Maybe [TaggedInstruction arch (InstructionAnnotation arch)]
+  -- ^ Attempts to return a series of instructions which
+  -- mimic a jump-table-lookup indirect jump (described by
+  -- the given @SymbolicLookupTableInfo@) via a series of
+  -- comparisons and direct jumps. This allows the related
+  -- blocks to be safely relocated and the corresponding
+  -- jumps can be updated to reflect the new location(s).
+  
   , isaJumpType :: forall t . Instruction arch t -> MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> JumpType arch
     -- ^ Test if an instruction is a jump; if it is, return some
     -- metadata about the jump (destination or offset).

@@ -23,6 +23,7 @@ library
   -- other-extensions:    
   build-depends:       base >=4.10 && <5,
                        bytestring,
+                       vector,
                        flexdis86 >=0.1.4,
                        macaw-x86,
                        macaw-x86-symbolic,

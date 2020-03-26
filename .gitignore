@@ -1,3 +1,5 @@
 cabal.project
 stack.yaml
 dist-newstyle
+dist
+*.DS_STORE
