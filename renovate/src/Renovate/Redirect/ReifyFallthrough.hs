@@ -22,20 +22,15 @@ reifyFallthrough :: (MM.MemWidth (MC.ArchAddrWidth arch))
                  => RI.ISA arch
                  -> MM.Memory (MC.ArchAddrWidth arch)
                  -> RB.ConcreteBlock arch
-                 -> RB.ExplicitFallthroughBlock arch
+                 -> Maybe (RA.ConcreteAddress arch)
 reifyFallthrough isa mem cb
-  | isUnconditionalJT (RI.isaJumpType isa lastInsn mem lastInsnAddr) =
-      RB.explicitFallthroughBlock (RB.concreteBlockAddress cb)
-                                  (RB.concreteBlockInstructions cb)
-                                  Nothing
+  | isUnconditionalJT (RI.isaJumpType isa lastInsn mem lastInsnAddr) = Nothing
   | otherwise =
       case RB.concreteDiscoveryBlock cb of
         Some pb -> do
           let sz = MD.blockSize pb
               succAddr = RB.concreteBlockAddress cb `RA.addressAddOffset` fromIntegral sz
-            in RB.explicitFallthroughBlock (RB.concreteBlockAddress cb)
-                                           (RB.concreteBlockInstructions cb)
-                                           (Just succAddr)
+            in Just succAddr
   where
     (lastInsn, lastInsnAddr) = DLN.last (RB.instructionAddresses isa cb)
 

@@ -82,11 +82,9 @@ symbolizeJumps isa mem symAddrMap (cb, symAddr) =
   case DLN.nonEmpty (concat insns) of
     Nothing -> error ("Created empty block while symbolizing block at: " ++ show (concreteBlockAddress cb))
     Just insnList ->
-      let msucc = lookupSymAddr =<< explicitFallthroughSuccessor fallthrough
+      let msucc = lookupSymAddr =<< RRR.reifyFallthrough isa mem cb
       in (cb, symbolicBlock cb symAddr insnList msucc)
   where
-    fallthrough = RRR.reifyFallthrough isa mem cb
-
     lookupSymAddr ca = M.lookup ca symAddrMap
     insns = fmap symbolize (instructionAddresses isa cb)
 

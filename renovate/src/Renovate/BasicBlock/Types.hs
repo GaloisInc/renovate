@@ -19,12 +19,6 @@ module Renovate.BasicBlock.Types (
   concreteBlockAddress,
   concreteBlockInstructions,
   concreteDiscoveryBlock,
-  -- * Explicit fallthrough blocks
-  ExplicitFallthroughBlock,
-  explicitFallthroughBlock,
-  explicitFallthroughAddress,
-  explicitFallthroughInstructions,
-  explicitFallthroughSuccessor,
   -- * Symbolic blocks
   SymbolicBlock,
   symbolicBlock,
@@ -226,40 +220,6 @@ symbolicBlockWithoutSuccessor sb =
   case symbolicBlockSymbolicSuccessor sb of
     Nothing -> sb
     Just _ -> sb { symbolicBlockSymbolicSuccessor = Nothing }
-
--- | A concrete basic block with its fallthrough target explicitly recorded
---
--- A fallthrough occurs when a basic block ends in either a conditional branch
--- or no branch.  In either of those cases, execution can "fall through" to the
--- next instruction following the block.
---
--- We make fallthrough behavior explicit, as many rewriting modes move blocks
--- around almost arbitrarily.  If the original successor block is moved to
--- another location, the layout/concretization code needs to know the original
--- successor in order to fix control flow.  This block provides a place to
--- record the fallthrough successor, if any.
---
--- Note that this block holds the concrete successor address, as these blocks
--- are constructed from 'ConcreteBlock's before they are turned into
--- 'SymbolicBlocks'
-data ExplicitFallthroughBlock arch =
-  ExplicitFallthroughBlock { explicitFallthroughAddress :: ConcreteAddress arch
-                           -- ^ The address of the basic block
-                           , explicitFallthroughInstructions :: DLN.NonEmpty (Instruction arch ())
-                           -- ^ The instructions of the block
-                           , explicitFallthroughSuccessor :: Maybe (ConcreteAddress arch)
-                           -- ^ The fallthrough successor address, if any.  A
-                           -- block lacks an explicit fallthrough successor if
-                           -- it is an unconditional jump.  Note that calls have
-                           -- a fallthrough successor, as they return.
-                           }
-
-explicitFallthroughBlock :: ConcreteAddress arch
-                         -> DLN.NonEmpty (Instruction arch ())
-                         -> Maybe (ConcreteAddress arch)
-                         -> ExplicitFallthroughBlock arch
-explicitFallthroughBlock = ExplicitFallthroughBlock
-
 
 -- | Some algorithms (such as layout) will need to assigned an address
 -- to symbolic blocks and then make the blocks concrete. This type

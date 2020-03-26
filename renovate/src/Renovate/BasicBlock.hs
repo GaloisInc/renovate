@@ -12,12 +12,6 @@ module Renovate.BasicBlock (
   concreteBlockAddress,
   concreteBlockInstructions,
   concreteDiscoveryBlock,
-  -- ** Explicit fallthrough blocks
-  ExplicitFallthroughBlock,
-  explicitFallthroughBlock,
-  explicitFallthroughAddress,
-  explicitFallthroughInstructions,
-  explicitFallthroughSuccessor,
   -- * Symbolic blocks
   SymbolicBlock,
   symbolicBlock,
