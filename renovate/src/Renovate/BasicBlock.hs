@@ -174,7 +174,7 @@ symbolicBlockSize isa mem addr sb =
       -- Guard; fail if there is no symbolic successor (and then return 0 via
       -- the fromMaybe)
       _ <- symbolicBlockSymbolicSuccessor sb
-      return (F.toList (isaMakeRelativeJumpTo isa origAddr fakeTarget))
+      return (F.toList (isaMakeRelativeJumpTo isa origAddr origAddr))
 
     -- Split the instructions into normal instructions and jump instructions
     -- that need to be modified (while keeping around the type-level evidence
