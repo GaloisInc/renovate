@@ -281,12 +281,8 @@ x64MakeSymbolicJumpOrCall op_code sym_addr =
   R.tagInstruction (Just sym_addr) $
     noAddr $ makeInstr op_code [D.JumpOffset D.JSize32 $ D.FixedOffset 0]
 
--- NOTE: This is called on all instructions, even non-jumps. It should be robust
--- against that (and simply return the instruction)
---
--- It should only fail if it is rewriting a jump but is unable to, or if the
--- jump classifier tells us an instruction is a jump and we don't know what to
--- do about that (in that case, we should panic).
+-- NOTE: This is called only on jump instructions (the 'R.JumpType' argument is
+-- intended to be evidence of that).
 x64ModifyJumpTarget :: R.ConcreteAddress X86.X86_64 -> R.Instruction X86.X86_64 () -> R.JumpType arch R.HasModifiableTarget -> R.ConcreteAddress X86.X86_64 -> Maybe (DLN.NonEmpty (Instruction ()))
 x64ModifyJumpTarget srcAddr (XI ii) _jt newTarget =
   case D.iiOp ii of
