@@ -89,12 +89,15 @@ symbolizeJumps isa mem symAddrMap (cb, symAddr) =
     Just insnList ->
       case RRR.reifyFallthrough isa mem cb of
         Nothing -> (cb, symbolicBlock cb symAddr insnList Nothing)
-        Just concreteFallthrough
-          | Just symSucc <- lookupSymAddr concreteFallthrough ->
-              (cb, symbolicBlock cb symAddr insnList (Just symSucc))
-          | otherwise ->
-              RP.panic RP.Symbolize "symbolizeJumps" [ "Missing symbolic target for concrete fallthrough address: " ++ show concreteFallthrough
-                                                     ]
+        Just concreteFallthrough ->
+          -- NOTE: It is not a failure if there is no symbolic address for a
+          -- fallthrough address.  That simply means that code discovery was
+          -- unable to discover that code for some reason.  We call that
+          -- fallthrough a 'StableAddress' and make sure that, wherever we move
+          -- the block with this fallthrough to, it will go back to the address
+          -- it originally fell through to.
+          let symSucc = lookupSymbolicAddress concreteFallthrough
+          in (cb, symbolicBlock cb symAddr insnList (Just symSucc))
   where
     lookupSymAddr ca = M.lookup ca symAddrMap
     insns = fmap symbolize (instructionAddresses isa cb)
