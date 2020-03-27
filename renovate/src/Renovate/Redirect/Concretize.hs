@@ -264,8 +264,10 @@ lookupConcreteTarget :: (InstructionConstraints arch)
                      -> SymbolicAddress arch
                      -> ConcreteAddress arch
 lookupConcreteTarget symAddrMap symAddr =
-  case M.lookup symAddr symAddrMap of
-    Just concAddr -> concAddr
-    Nothing ->
-      RP.panic RP.Concretize "lookupConcreteTarget" [ "No concrete target found for symbolic address: " ++ show symAddr
-                                                    ]
+  case symAddr of
+    StableAddress concAddr -> concAddr
+    SymbolicAddress {}
+      | Just concAddr <- M.lookup symAddr symAddrMap -> concAddr
+      | otherwise ->
+        RP.panic RP.Concretize "lookupConcreteTarget" [ "No concrete target found for symbolic address: " ++ show symAddr
+                                                      ]
