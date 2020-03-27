@@ -137,11 +137,7 @@ instructionStreamSize isa insns =
 --
 -- The fallthrough jump, if any, will be placed after the last instruction in
 -- the block.  We need to compute all of the rewritten jumps, in case the user
--- has inserted some jumps of their own.  However, we only need to account for
--- the fallthrough target with the last instruction.  Thus, we'll peel off the
--- last instruction and treat it specially (computing its modified jump using
--- the fallthrough successor of the block), while simply saying that the
--- remaining jumps have no fallthrough successor.
+-- has inserted some jumps of their own.
 --
 -- NOTE: Each 'SymbolicBlock' can only have one possible fallthrough, which was
 -- computed earlier.  Fallthroughs are only patched in at the end of a block.
