@@ -110,6 +110,8 @@ module Renovate
   ISA.ISA(..),
   ISA.JumpType(..),
   ISA.JumpCondition(..),
+  ISA.HasModifiableTarget,
+  ISA.NoModifiableTarget,
   ISA.StackAddress(..),
   -- * Results
   RW.RewriteInfo(..),

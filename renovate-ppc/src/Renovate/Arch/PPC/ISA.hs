@@ -38,6 +38,7 @@ import qualified Data.Parameterized.TraversableFC as FC
 import qualified Dismantle.PPC as D
 
 import qualified Renovate as R
+import qualified Renovate.Arch.PPC.Panic as RP
 
 data TargetAddress arch = NoAddress
                         | AbsoluteAddress (R.ConcreteAddress arch)
@@ -196,78 +197,78 @@ ppcJumpType :: (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch))
             => Instruction t
             -> MM.Memory (MM.ArchAddrWidth arch)
             -> R.ConcreteAddress arch
-            -> R.JumpType arch
+            -> Some (R.JumpType arch)
 ppcJumpType i _mem insnAddr =
   case toInst i of
     D.Instruction opc operands ->
       case operands of
         D.Calltarget (D.BT offset) D.:< D.Nil ->
-          R.DirectCall insnAddr (fromIntegral (offset `shiftL` 2))
+          Some (R.DirectCall insnAddr (fromIntegral (offset `shiftL` 2)))
         D.Directbrtarget (D.BT offset) D.:< D.Nil ->
-          R.RelativeJump R.Unconditional insnAddr (fromIntegral (offset `shiftL` 2))
+          Some (R.RelativeJump R.Unconditional insnAddr (fromIntegral (offset `shiftL` 2)))
         -- GBC has an extra argument generalizing to include a branch hint
         D.Condbrtarget (D.CBT offset) D.:< _crbit D.:< _bh D.:< D.Nil ->
-          R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2))
+          Some (R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2)))
         D.Condbrtarget (D.CBT offset) D.:< _crbit D.:< D.Nil ->
-          R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2))
+          Some (R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2)))
         D.Condbrtarget (D.CBT offset) D.:< D.Nil ->
           case opc of
             D.BCLalways ->
-              R.RelativeJump R.Unconditional insnAddr (fromIntegral (offset `shiftL` 2))
+              Some (R.RelativeJump R.Unconditional insnAddr (fromIntegral (offset `shiftL` 2)))
             _ ->
-              R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2))
+              Some (R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2)))
         D.Absdirectbrtarget (D.ABT addr) D.:< D.Nil ->
-          R.AbsoluteJump R.Unconditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2)))
+          Some (R.AbsoluteJump R.Unconditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2))))
         D.Abscondbrtarget (D.ACBT addr) D.:< D.Nil ->
-          R.AbsoluteJump R.Conditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2)))
+          Some (R.AbsoluteJump R.Conditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2))))
         D.Abscondbrtarget (D.ACBT addr) D.:< _ D.:< _ D.:< D.Nil ->
-          R.AbsoluteJump R.Conditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2)))
+          Some (R.AbsoluteJump R.Conditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2))))
         D.Nil ->
           case opc of
-            D.BCTR -> R.IndirectJump R.Unconditional
-            D.BCTRL -> R.IndirectCall
-            D.TRAP -> R.IndirectCall
+            D.BCTR -> Some (R.IndirectJump R.Unconditional)
+            D.BCTRL -> Some R.IndirectCall
+            D.TRAP -> Some R.IndirectCall
             -- Conditional branches to link register
-            D.BDNZLR -> R.IndirectCall    -- Some kind of conditional return
-            D.BDNZLRL -> R.IndirectCall   -- Conditional return and link
-            D.BDNZLRLm -> R.IndirectCall
-            D.BDNZLRLp -> R.IndirectCall
-            D.BDNZLRm -> R.IndirectCall
-            D.BDNZLRp -> R.IndirectCall
-            D.BDZLR -> R.IndirectCall
-            D.BDZLRL -> R.IndirectCall
-            D.BDZLRLm -> R.IndirectCall
-            D.BDZLRLp -> R.IndirectCall
-            D.BDZLRm -> R.IndirectCall
-            D.BDZLRp -> R.IndirectCall
+            D.BDNZLR -> Some R.IndirectCall    -- Some kind of conditional return
+            D.BDNZLRL -> Some R.IndirectCall   -- Conditional return and link
+            D.BDNZLRLm -> Some R.IndirectCall
+            D.BDNZLRLp -> Some R.IndirectCall
+            D.BDNZLRm -> Some R.IndirectCall
+            D.BDNZLRp -> Some R.IndirectCall
+            D.BDZLR -> Some R.IndirectCall
+            D.BDZLRL -> Some R.IndirectCall
+            D.BDZLRLm -> Some R.IndirectCall
+            D.BDZLRLp -> Some R.IndirectCall
+            D.BDZLRm -> Some R.IndirectCall
+            D.BDZLRp -> Some R.IndirectCall
             -- Normal return (branch to link register)
-            D.BLR -> R.Return R.Unconditional
-            D.BLRL -> R.Return R.Unconditional
-            _ -> R.NoJump
+            D.BLR -> Some (R.Return R.Unconditional)
+            D.BLRL -> Some (R.Return R.Unconditional)
+            _ -> Some R.NoJump
         (_ D.:< _) ->
           -- In this case, we handle all of the branches that don't need to inspect
           -- operands (because they are indirect)
           case opc of
             -- Conditional branch through the CTR register
-            D.BCCTR -> R.IndirectJump R.Conditional
-            D.GBCCTR -> R.IndirectJump R.Conditional
+            D.BCCTR -> Some (R.IndirectJump R.Conditional)
+            D.GBCCTR -> Some (R.IndirectJump R.Conditional)
             -- This is a call because it is setting the link register and could
             -- return to the next instruction
-            D.BCCTRL -> R.IndirectCall
-            D.BCL -> R.IndirectCall
-            D.GBCL -> R.IndirectCall
-            D.GBCCTRL -> R.IndirectCall
+            D.BCCTRL -> Some R.IndirectCall
+            D.BCL -> Some R.IndirectCall
+            D.GBCL -> Some R.IndirectCall
+            D.GBCCTRL -> Some R.IndirectCall
             -- Syscall
-            D.SC -> R.IndirectCall
+            D.SC -> Some R.IndirectCall
             -- Traps
-            D.TW -> R.IndirectCall
-            D.TWI -> R.IndirectCall
-            D.TD -> R.IndirectCall
-            D.TDI -> R.IndirectCall
+            D.TW -> Some R.IndirectCall
+            D.TWI -> Some R.IndirectCall
+            D.TD -> Some R.IndirectCall
+            D.TDI -> Some R.IndirectCall
             -- Returns with extra operands
-            D.GBCLR -> R.Return R.Conditional
-            D.GBCLRL -> R.Return R.Conditional
-            _ -> R.NoJump
+            D.GBCLR -> Some (R.Return R.Conditional)
+            D.GBCLRL -> Some (R.Return R.Conditional)
+            _ -> Some R.NoJump
 
 -- | Given a jump instruction and a new target address, update the jump
 -- instruction to target the new address.
@@ -285,106 +286,71 @@ ppcJumpType i _mem insnAddr =
 ppcModifyJumpTarget :: (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch), R.Instruction arch ~ Instruction)
                     => R.ConcreteAddress arch
                     -- ^ The address of the instruction
-                    -> R.ConcreteFallthrough arch ()
+                    -> R.Instruction arch ()
                     -- ^ The instruction to modify, with new targets attached
-                    -> Maybe [Instruction ()]
-ppcModifyJumpTarget srcAddr (R.FallthroughInstruction i tag) =
+                    -> R.JumpType arch R.HasModifiableTarget
+                    -> R.ConcreteAddress arch
+                    -> Maybe (DLN.NonEmpty (Instruction ()))
+ppcModifyJumpTarget srcAddr i _jt targetAddr =
   case unI i of
-    D.Instruction opc operands -> case tag of
-      R.InternalInstruction -> die "Probable bug: ppcModifyJumpTarget called with no modified jump targets"
-      R.UnconditionalFallthrough fallthroughAddr -> do
-        ftB <- b 1 fallthroughAddr
-        return [i, ftB]
-      R.UnconditionalJump targetAddr -> do
-        off <- absoluteOff 0 targetAddr
-        case operands of
-          D.Annotated a (D.Calltarget (D.BT _offset)) D.:< D.Nil ->
-            Just [I (D.Instruction opc (D.Annotated a (D.Calltarget off) D.:< D.Nil))]
-          D.Annotated a (D.Directbrtarget (D.BT _offset)) D.:< D.Nil ->
-            Just [I (D.Instruction opc (D.Annotated a (D.Directbrtarget off) D.:< D.Nil))]
-          _ -> die "Unexpected unconditional jump in ppcModifyJumpTarget"
-      R.ConditionalFallthrough targetAddr fallthroughAddr -> case operands of
-        D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< rest -> case newJumpOffset 16 srcAddr targetAddr of
-          Right tgtOff4 -> do
-            ftB <- b 2 fallthroughAddr
-            -- Why put a nop? Because we have reserved the space for three
-            -- instructions, and we want ftB to be a nop in case the
-            -- fallthrough block is laid out next.
-            --
-            -- With a bit more effort, we could consider testing whether that's
-            -- the case to choose between [i, nop, nop] and [i, ftB] (thus
-            -- getting one extra attn instruction to catch bugs).
-            Just
-              [ I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (tgtOff4 `shiftR` 2))) D.:< rest))
-              , nop
-              , ftB
-              ]
-          Left _ -> case rest of
-            crbitrc D.:< D.Annotated a' (D.U5imm condition) D.:< D.Nil
-              -- Try inverting the condition. Maybe the fallthrough address is
-              -- nearby but the target address is far.
-              | Just condition' <- negateCondition condition
-              , Right ftOff4 <- newJumpOffset 16 srcAddr fallthroughAddr
-              -> do
-                -- No sense putting a nop and hoping tgtB becomes a nop as we
-                -- did above: we know by the time we get to this address that
-                -- targetAddr is far away from srcAddr.
-                tgtB <- b 1 targetAddr
-                Just
-                  [ I . D.Instruction opc
-                    $    D.Annotated a (D.Condbrtarget (D.CBT (ftOff4 `shiftR` 2)))
-                    D.:< crbitrc
-                    D.:< D.Annotated a' (D.U5imm condition')
-                    D.:< D.Nil
-                  , tgtB
-                  ]
-            _ -> do -- Worst case. Use unconditional branches for everything.
-              ftB <- b 1 fallthroughAddr
-              tgtB <- b 2 targetAddr
-              Just
-                [ I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT 2)) D.:< rest))
-                , ftB
-                , tgtB
-                ]
-        D.Annotated a (D.Calltarget _) D.:< D.Nil -> do
-          tgtOff <- absoluteOff 0 targetAddr
-          ftB <- b 1 fallthroughAddr
-          Just
-            [ I (D.Instruction opc (D.Annotated a (D.Calltarget tgtOff) D.:< D.Nil))
-            , ftB
-            ]
-        _ -> die "Unexpected conditional jump in ppcModifyJumpTarget"
+    D.Instruction opc operands ->
+      case operands of
+        D.Annotated a (D.Calltarget (D.BT _offset)) D.:< D.Nil -> do
+          off <- absoluteOff 0 targetAddr
+          return (I (D.Instruction opc (D.Annotated a (D.Calltarget off) D.:< D.Nil)) DLN.:| [])
+        D.Annotated a (D.Directbrtarget (D.BT _offset)) D.:< D.Nil -> do
+          off <- absoluteOff 0 targetAddr
+          return (I (D.Instruction opc (D.Annotated a (D.Directbrtarget off) D.:< D.Nil)) DLN.:| [])
+        D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< rest ->
+          case newJumpOffset 16 srcAddr targetAddr of
+            Right tgtOff4 -> do
+              -- In this case, the jump target is within range of a 16 bit
+              -- offset for a conditional branch. That means that we can simply
+              -- update the target of the conditional branch directly.
+              return (I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (tgtOff4 `shiftR` 2))) D.:< rest)) DLN.:| [])
+            Left _ -> do
+              -- Otherwise, the target is too far away for a conditional branch.
+              -- Instead, we'll conditionally branch to an unconditional branch
+              -- that takes us to the desired target.
+              --
+              -- > bc +4      ; Skip the next instruction to the long jump
+              -- > b +4       ; Skip the next instruction (going to the natural fallthrough)
+              -- > b <target> ; Long jump to the actual target
+              --
+              -- Note: the branch values for the first two instructions are 2 because:
+              --
+              -- 1. The jump offset encoded in the instruction has 0b00
+              --    concatenated as the low bits in the CPU (equivalent to shift
+              --    left by two)
+              -- 2. The offset must also skip the instruction it is executing
+              --    (i.e., br 0 is an infinite loop)
+              --
+              -- NOTE: The offset is computed at an offset of 2 from the first
+              -- instruction we generate
+              off <- absoluteOff 2 targetAddr
+              return (        I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT 2)) D.:< rest))
+                     DLN.:| [ I (D.Instruction D.B (D.Annotated () (D.Directbrtarget (D.BT 2)) D.:< D.Nil))
+                            , I (D.Instruction D.B (D.Annotated () (D.Directbrtarget off) D.:< D.Nil))
+                            ]
+                     )
+        _ -> RP.panic RP.PPCISA "ppcModifyJumpTarget" [ "Unexpected branch type: " ++ show opc
+                                                      , "  allocated to address: " ++ show srcAddr
+                                                      , "  jumping to address:   " ++ show targetAddr
+                                                      ]
   where
   die :: String -> a
-  die s = error . unlines $
+  die s = RP.panic RP.PPCISA "ppcModifyJumpTarget"
     [ s
     , "Address: " ++ show srcAddr
     , "Instruction: " ++ ppcPrettyInstruction i
-    , "Tag: " ++ show tag
     ]
+  -- This @n@ is the index of the generated instruction that the computed offset
+  -- will be used from.  For example, if the offset will be used in the first
+  -- instruction generated by 'ppcModifyJumpTarget', @n = 0@.  If it is to be
+  -- used in the third instruction, @n = 2@.
   absoluteOff n addr = case newJumpOffset 26 (R.addressAddOffset srcAddr (4*n)) addr of
     Left err -> die err
     Right off4 -> Just (D.BT (off4 `shiftR` 2))
-  b n addr
-    | addr == R.addressAddOffset srcAddr (4*(n+1)) = return nop
-    | otherwise = (\off -> I (D.Instruction D.B (D.Annotated () (D.Directbrtarget off) D.:< D.Nil))) <$> absoluteOff n addr
-  nop = I . D.Instruction D.ORI
-    $    D.Annotated () (D.Gprc (D.GPR 0))
-    D.:< D.Annotated () (D.U16imm 0)
-    D.:< D.Annotated () (D.Gprc (D.GPR 0))
-    D.:< D.Nil
-
-  negateCondition w = case map (testBit w) [4,3,2,1,0] of
-    [False, False, True , a    , t    ] -> Just (12 + negateBranchHint 2 a t)
-    [False, True , True , a    , t    ] -> Just ( 4 + negateBranchHint 2 a t)
-    [True , a    , False, False, t    ] -> Just (18 + negateBranchHint 8 a t)
-    [True , a    , False, True , t    ] -> Just (16 + negateBranchHint 8 a t)
-    _ -> Nothing
-
-  negateBranchHint aBit = f where
-    f False _ = 0
-    f True False = aBit + 1
-    f True True  = aBit
 
 -- | Compute a new jump offset between the @srcAddr@ and @targetAddr@.
 --

@@ -19,11 +19,13 @@ library
   exposed-modules:     Renovate.Arch.PPC
   other-modules:       Renovate.Arch.PPC.ISA
                        Renovate.Arch.PPC.ABI
+                       Renovate.Arch.PPC.Panic
   -- other-extensions:    
   build-depends:       base >=4.10 && <5,
                        bytestring,
                        prettyprinter,
                        exceptions,
+                       panic >= 0.4 && < 0.5,
                        parameterized-utils,
                        macaw-base,
                        macaw-symbolic,
