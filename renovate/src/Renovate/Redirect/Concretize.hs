@@ -177,7 +177,8 @@ concretizeJumps concreteAddressMap wp
     -- the layout is invalid and broken)
     assert (concretizedBlockSize <= maxSize) (return ())
 
-    case DLN.nonEmpty instrs of
+    let padding = isaMakePadding isa (maxSize - concretizedBlockSize)
+    case DLN.nonEmpty (instrs ++ padding) of
       Nothing ->
         RP.panic RP.Concretize "concretizeJumps" [ "Generated an empty basic block at address: " ++ show firstInstrAddr
                                                  , "  for original block: " ++ show (concreteBlockAddress cb)
