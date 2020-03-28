@@ -302,12 +302,40 @@ ppcModifyJumpTarget srcAddr i _jt targetAddr =
           off <- absoluteOff 0 targetAddr
           return (I (D.Instruction opc (D.Annotated a (D.Directbrtarget off) D.:< D.Nil)) DLN.:| [])
         D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< rest ->
-          case newJumpOffset 16 srcAddr targetAddr of
+          -- We add 8 to the "source" address because, in the case we use this
+          -- computed address, the conditional branch actually comes after two
+          -- more instructions (noops).  Thus, we correct the srcAddr by two
+          -- instructions.
+          case newJumpOffset 16 (srcAddr `R.addressAddOffset` 8) targetAddr of
             Right tgtOff4 -> do
               -- In this case, the jump target is within range of a 16 bit
               -- offset for a conditional branch. That means that we can simply
               -- update the target of the conditional branch directly.
-              return (I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (tgtOff4 `shiftR` 2))) D.:< rest)) DLN.:| [])
+              --
+              -- NOTE: We have to add two no-ops here to keep the block size the
+              -- same between both this good case and the pessimistic (Left)
+              -- case.  The underlying problem is that we compute the maximum
+              -- possible block size pre-layout by calling this function with a
+              -- fake jump target (since we don't know where the real target
+              -- will ultimately be yet).  If we did not add the no-ops here to
+              -- preserve the size of the block, the layout code would be
+              -- required to add padding instructions at the end of the block to
+              -- keep the layout consistent.  This is a problem in block that
+              -- have a fallthrough successor (e.g., this case), as it would
+              -- insert traps between the conditional branch and the
+              -- fallthrough, causing crashes.  Long story short, we add no-ops
+              -- to preserve the integrity of the instruction address layout.
+              let nop = I (D.Instruction D.ORI (    D.Annotated () (D.Gprc (D.GPR 0))
+                                               D.:< D.Annotated () (D.U16imm 0)
+                                               D.:< D.Annotated () (D.Gprc (D.GPR 0))
+                                               D.:< D.Nil
+                                               )
+                          )
+              return (         nop
+                      DLN.:| [ nop
+                             , I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (tgtOff4 `shiftR` 2))) D.:< rest))
+                             ]
+                     )
             Left _ -> do
               -- Otherwise, the target is too far away for a conditional branch.
               -- Instead, we'll conditionally branch to an unconditional branch
