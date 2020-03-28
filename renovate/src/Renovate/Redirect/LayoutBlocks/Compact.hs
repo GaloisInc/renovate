@@ -92,25 +92,30 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
   --
   -- It is important to do this before we compute any block sizes so that things
   -- are all internally consistent.
-  blockChunks <- removeUnneededFallthroughs blockChunks0
+  --
+  -- NOTE: There can be gaps in blockChunks0 due to immutable blocks embedded
+  -- in other block sequences.  Test for that and account for it by retaining
+  -- fallthrough information for internal blocks before a gap
+  blockChunks1 <- removeUnneededFallthroughs blockChunks0
 
-  let (blockChunks', unmodifiedBlocks) = foldMap splitChunk blockChunks
+  let (blockChunks2, unmodifiedBlocks) = foldMap splitChunk blockChunks1
+
   mem <- askMem
 
   (h0, blocks1) <- case allocator strat of
     -- the parallel strategy is now a special case of compact. In particular,
     -- we avoid allocating the heap and we avoid sorting the input blocklist.
-    Parallel -> return (mempty, concat blockChunks')
+    Parallel -> return (mempty, concat blockChunks2)
     -- the randomized strategy is also a special case of compact.
     -- subject to similar constraints as parallel
-    Randomized _ -> return (mempty, concat blockChunks')
-    -- We use blockChunks' (instead of blockChunks)
+    Randomized _ -> return (mempty, concat blockChunks2)
+    -- We use blockChunks2 (instead of blockChunks0 or blockChunks1)
     -- because buildAddressHeap checks the modification status, and
     -- reifyFallthroughSuccessors updates the modification status if it adds a
     -- fallthrough to an unmodified block. (It is okay not to additionally pass
     -- in the unmodified blocks because buildAddressHeap ignores unmodified
     -- blocks anyway.)
-    _ -> buildAddressHeap (trampolines strat) startAddr (concat blockChunks')
+    _ -> buildAddressHeap (trampolines strat) startAddr (concat blockChunks2)
 
   -- Either, a) Sort all of the instrumented blocks by size
   --         b) Randomize the order of the blocks.
@@ -120,7 +125,7 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
   -- the parallel layout as a special case of compact.
   isa <- askISA
 
-  let newBlocks = map (map withoutProvenance) blockChunks'
+  let newBlocks = map (map withoutProvenance) blockChunks2
       sortedBlocks = case allocator strat of
         Compact SortedOrder        -> L.sortOn    (bySize isa mem) newBlocks
         Compact (RandomOrder seed) -> randomOrder seed             newBlocks
@@ -136,7 +141,7 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
   -- from the original text section as padding instead. But it is safer to
   -- catch jumps that our tool didn't know about by landing at a halt
   -- instruction, when that is possible.
-  let overwriteAll = buildAddressHeap (trampolines strat) startAddr (concat blockChunks')
+  let overwriteAll = buildAddressHeap (trampolines strat) startAddr (concat blockChunks2)
   (h2, blocks2) <- case allocator strat of
     -- In the parallel layout, we don't use any space reclaimed by redirecting
     -- things, so we should overwrite it all with padding.
@@ -188,6 +193,10 @@ removeUnneededFallthroughs :: (Monad m)
                            -> RewriterT arch m [[WithProvenance SymbolicBlock arch]]
 removeUnneededFallthroughs = mapM removeNonTerminalFallthrough
   where
+    indexSymbolicBlock sbp idx =
+      let sb = withoutProvenance sbp
+          addr = symbolicBlockSymbolicAddress sb
+      in M.insert addr sbp idx
     removeNonTerminalFallthrough blockGroup =
       case blockGroup of
         [] -> RP.panic RP.Layout "removeUnnededFallthroughs" ["Empty block groups are not allowed"]
@@ -196,11 +205,31 @@ removeUnneededFallthroughs = mapM removeNonTerminalFallthrough
         _ -> do
           let internalBlocks = init blockGroup
           let terminalBlock = last blockGroup
-          return (fmap dropFallthrough internalBlocks ++ [terminalBlock])
+          let symBlockIdx = foldr indexSymbolicBlock M.empty blockGroup
+          return (fmap (dropFallthroughIfContiguous symBlockIdx) internalBlocks ++ [terminalBlock])
 
-dropFallthrough :: WithProvenance SymbolicBlock arch -> WithProvenance SymbolicBlock arch
-dropFallthrough wp =
-  WithProvenance (originalBlock wp) (symbolicBlockWithoutSuccessor sb) (rewriteStatus wp)
+-- | Remove the fallthrough address from the block if we don't need it
+--
+-- We can't remove all fallthroughs indiscriminately because there could be an
+-- immutable block in the group.  If a block is immutable, we can't move it with
+-- the rest of the blocks in the group, which leaves a gap.  Blocks with
+-- immutable successors need to retain their fallthroughs.
+--
+-- A block can have its fallthrough removed IF its successor is in the block
+-- group AND that successor is not marked as immutable.
+--
+-- NOTE: Immutable blocks fall through to their natural (redirected) successors,
+-- which means they hit a trampoline jump that takes them to the correct
+-- redirected block.
+dropFallthroughIfContiguous :: M.Map (SymbolicAddress arch) (WithProvenance SymbolicBlock arch)
+                            -> WithProvenance SymbolicBlock arch
+                            -> WithProvenance SymbolicBlock arch
+dropFallthroughIfContiguous idx wp
+  | Just symSuccAddr <- symbolicBlockSymbolicSuccessor sb
+  , Just symSucc <- M.lookup symSuccAddr idx
+  , rewriteStatus symSucc /= Immutable =
+    WithProvenance (originalBlock wp) (symbolicBlockWithoutSuccessor sb) (rewriteStatus wp)
+  | otherwise = wp
   where
     sb = withoutProvenance wp
 
