@@ -127,4 +127,18 @@ test-suite doctests
   main-is:        doctests.hs
   ghc-options:    -Wall -Wcompat -threaded
   build-depends:  base,
-                  doctest >= 0.10 && < 0.17
+                  doctest >= 0.10 && < 0.17,
+                  -- Dependencies required by the doctest examples
+                  --
+                  -- We need to specify these here, otherwise the doctests might get built before
+                  -- their dependencies are installed in the package databse
+                  lens,
+                  bytestring,
+                  elf-edit,
+                  macaw-loader,
+                  macaw-loader-x86,
+                  renovate,
+                  renovate-x86,
+                  renovate-ppc,
+                  parameterized-utils,
+                  crucible

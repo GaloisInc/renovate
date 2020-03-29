@@ -9,6 +9,7 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 -- | An interface for manipulating ELF files
 --
 -- It provides a convenient interface for loading an ELF file,
@@ -25,7 +26,8 @@ module Renovate.BinaryFormat.ELF (
   analyzeElf,
   RewriterInfo,
   RewriterEnv,
-  SomeBlocks(..),
+  SomeConcreteBlocks(..),
+  SomeConcretizedBlocks(..),
   RE.SectionInfo(..),
   reSegmentMaximumSize,
   reSegmentVirtualAddress,
@@ -79,6 +81,7 @@ import qualified Data.Sequence as Seq
 import           Data.Typeable ( Typeable )
 import qualified Data.Vector as V
 import           Data.Word ( Word16, Word32 )
+import           GHC.TypeLits
 import           Text.Printf ( printf )
 
 import           Prelude
@@ -132,6 +135,7 @@ withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
               -> [(Arch.Architecture, SomeConfig callbacks b)]
               -> (forall arch . (MS.SymArchConstraints arch,
+                                  16 <= MM.ArchAddrWidth arch,
                                   MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch)),
                                   E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                                   B.InstructionConstraints arch)
@@ -180,6 +184,7 @@ withElfConfig e0 configs k = do
 rewriteElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
+               16 <= MM.ArchAddrWidth arch,
                MS.SymArchConstraints arch)
            => RenovateConfig arch binFmt (AnalyzeAndRewrite lm) b
            -- ^ The configuration for the rewriter
@@ -207,6 +212,7 @@ rewriteElf cfg hdlAlloc e loadedBinary strat = do
 analyzeElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
+               16 <= MM.ArchAddrWidth arch,
                MS.SymArchConstraints arch)
            => RenovateConfig arch binFmt AnalyzeOnly b
            -- ^ The configuration for the analysis
@@ -311,6 +317,7 @@ sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
 doRewrite :: (B.InstructionConstraints arch,
               MBL.BinaryLoader arch binFmt,
               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
+              16 <= MM.ArchAddrWidth arch,
               MS.SymArchConstraints arch)
           => RenovateConfig arch binFmt (AnalyzeAndRewrite lm) b
           -> C.HandleAllocator
@@ -866,6 +873,7 @@ instrumentTextSection :: forall w arch binFmt b lm
                           MBL.BinaryLoader arch binFmt,
                           B.InstructionConstraints arch,
                           Integral (E.ElfWordType w),
+                          16 <= w,
                           MS.SymArchConstraints arch)
                       => RenovateConfig arch binFmt (AnalyzeAndRewrite lm) b
                       -> C.HandleAllocator
@@ -889,9 +897,9 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
     let isa = analysisISA aenv
     let mem = MBL.memoryImage (analysisLoadedBinary aenv)
     let blockInfo = analysisBlockInfo aenv
-    let blocks = L.sortBy (O.comparing RE.basicBlockAddress) (R.biBlocks blockInfo)
+    let blocks = L.sortBy (O.comparing B.concreteBlockAddress) (R.biBlocks blockInfo)
     let (symAlloc1, baseSymBlocks) = RS.symbolizeBasicBlocks isa mem RS.symbolicAddressAllocator blocks
-    let symbolicBlockMap = Map.fromList [ (RE.basicBlockAddress cb, sb)
+    let symbolicBlockMap = Map.fromList [ (B.concreteBlockAddress cb, sb)
                                         | (cb, sb) <- baseSymBlocks
                                         ]
     newCodeAddr <- fromIntegral <$> R.asks reSegmentVirtualAddress
@@ -932,8 +940,8 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
         riInstrumentationSites L..= RW.infoSites info
         riLogMsgs L..= RW.logMsgs info
         riStats L..= RE.rwsStats s1
-        riRecoveredBlocks L..= Just (SomeBlocks isa blocks)
-        riOutputBlocks L..= Just (SomeBlocks isa allBlocks)
+        riRecoveredBlocks L..= Just (SomeConcreteBlocks isa blocks)
+        riOutputBlocks L..= Just (SomeConcretizedBlocks isa allBlocks)
         riIncompleteFunctions L..= RM.incompleteFunctions mem blockInfo
         riTransitivelyIncompleteBlocks L..= RM.transitivelyIncompleteBlocks blockInfo
         case cfg of
@@ -960,6 +968,7 @@ withAnalysisEnv :: forall w arch binFmt callbacks b a lm
                        MBL.BinaryLoader arch binFmt,
                        B.InstructionConstraints arch,
                        Integral (E.ElfWordType w),
+                       16 <= w,
                        MS.SymArchConstraints arch)
                    => RenovateConfig arch binFmt callbacks b
                    -> C.HandleAllocator
@@ -970,7 +979,6 @@ withAnalysisEnv :: forall w arch binFmt callbacks b a lm
                    -> (AnalysisEnv arch binFmt -> ElfRewriter lm arch a)
                    -> ElfRewriter lm arch a
 withAnalysisEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
-  let mem = MBL.memoryImage loadedBinary
   elfEntryPoints <- MBL.entryPoints loadedBinary
   let isa = rcISA cfg
   let abi = rcABI cfg
@@ -982,8 +990,9 @@ withAnalysisEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
                             , R.recoveryHandleAllocator = hdlAlloc
                             , R.recoveryBlockCallback = rcBlockCallback cfg
                             , R.recoveryFuncCallback = fmap (second ($ loadedBinary)) (rcFunctionCallback cfg)
+                            , R.recoveryRefinement = rcRefinementConfig cfg
                             }
-  blockInfo <- IO.liftIO (R.recoverBlocks recovery mem symmap elfEntryPoints textAddrRange)
+  blockInfo <- IO.liftIO (R.recoverBlocks recovery loadedBinary symmap elfEntryPoints textAddrRange)
   let env = AnalysisEnv { aeLoadedBinary = loadedBinary
                         , aeBlockInfo = blockInfo
                         , aeISA = isa

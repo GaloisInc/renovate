@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 -- | This module is the entry point for binary code redirection
 module Renovate.Redirect (
   redirect,
@@ -8,7 +9,6 @@ module Renovate.Redirect (
   TrampolineStrategy(..),
   ConcreteBlock,
   SymbolicBlock,
-  BasicBlock(..),
   ConcreteAddress,
   SymbolicAddress,
   TaggedInstruction,
@@ -29,7 +29,9 @@ import           Control.Monad.Trans ( MonadIO, lift )
 import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import qualified Data.List as L
+import qualified Data.List.NonEmpty as DLN
 import           Data.Ord ( comparing )
+import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Traversable as T
 
 import           Prelude
@@ -48,9 +50,8 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , TrampolineStrategy(..)
                                                       , Status(..)
                                                       , Layout(..)
-                                                      , ConcretePair(..)
-                                                      , SymbolicPair(..)
-                                                      , LayoutPair(..) )
+                                                      , WithProvenance(..)
+                                                      )
 import           Renovate.Redirect.Internal
 import qualified Renovate.Redirect.Monad as RM
 import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions )
@@ -75,7 +76,7 @@ redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch
          -- ^ Information about all recovered blocks
          -> (ConcreteAddress arch, ConcreteAddress arch)
          -- ^ start of text section, end of the text section
-         -> (SymbolicBlock arch -> m (Maybe [TaggedInstruction arch (InstructionAnnotation arch)]))
+         -> (SymbolicBlock arch -> m (Maybe (DLN.NonEmpty (TaggedInstruction arch (InstructionAnnotation arch)))))
          -- ^ Instrumentor
          -> MM.Memory (MM.ArchAddrWidth arch)
          -- ^ The memory space
@@ -84,15 +85,15 @@ redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch
          -- ^ The start address for the copied blocks
          -> [(ConcreteBlock arch, SymbolicBlock arch)]
          -- ^ Symbolized basic blocks
-         -> RM.RewriterT arch m ([ConcreteBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)])
+         -> RM.RewriterT arch m ([ConcretizedBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)])
 redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr baseSymBlocks = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   RM.recordSection "text" (RM.SectionInfo textStart textEnd)
-  RM.recordFunctionBlocks (map basicBlockAddress . fst <$> biFunctions blockInfo)
+  RM.recordFunctionBlocks (map concreteBlockAddress . fst <$> biFunctions blockInfo)
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
-    let blockSize :: Int
-        blockSize = sum . map (fromIntegral . isaInstructionSize isa) . basicBlockInstructions $ cb
-    RM.recordDiscoveredBlock (basicBlockAddress cb) blockSize
+    let bsz :: Int
+        bsz = sum (fmap (fromIntegral . isaInstructionSize isa) (concreteBlockInstructions cb))
+    RM.recordDiscoveredBlock (concreteBlockAddress cb) bsz
     -- We only want to instrument blocks that:
     --
     -- 1. Live in the .text
@@ -101,24 +102,27 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
     -- 4. Do not overlap other blocks (which are hard for us to rewrite)
     --
     -- Also, see Note [PIC Jump Tables]
-    case and [ textStart <= basicBlockAddress cb
-             , basicBlockAddress cb < textEnd
+    case and [ textStart <= concreteBlockAddress cb
+             , concreteBlockAddress cb < textEnd
              , isRelocatableTerminatorType (terminatorType isa mem cb)
-             , not (isIncompleteBlockAddress blockInfo (basicBlockAddress cb))
+             , not (isIncompleteBlockAddress blockInfo (concreteBlockAddress cb))
              , disjoint isa (biOverlap blockInfo) cb
              ] of
      True ->  do
        insns' <- lift $ instrumentor sb
        case insns' of
-         Just insns'' -> RM.recordInstrumentedBytes blockSize
-                      >> return (SymbolicPair (LayoutPair cb sb { basicBlockInstructions = insns'' } Modified))
-         Nothing      -> return (SymbolicPair (LayoutPair cb sb Unmodified))
+         Just insns'' -> do
+           RM.recordInstrumentedBytes bsz
+           let sb' = sb { symbolicBlockInstructions = insns'' }
+           return $! WithProvenance cb sb' Modified
+         Nothing      ->
+           return $! WithProvenance cb sb Unmodified
      False -> do
        when (not (isRelocatableTerminatorType (terminatorType isa mem cb))) $ do
          RM.recordUnrelocatableTermBlock
-       when (isIncompleteBlockAddress blockInfo (basicBlockAddress cb)) $ do
+       when (isIncompleteBlockAddress blockInfo (concreteBlockAddress cb)) $ do
          RM.recordIncompleteBlock
-       return (SymbolicPair (LayoutPair cb sb Immutable))
+       return $! WithProvenance cb sb Immutable
   injectedCode <- lift getInjectedFunctions
   layout <- concretize strat layoutAddr transformedBlocks injectedCode blockInfo
   let concretizedBlocks = programBlockLayout layout
@@ -126,25 +130,34 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
   let injectedBlocks = injectedBlockLayout layout
   RM.recordBlockMap (toBlockMapping concretizedBlocks)
   redirectedBlocks <- redirectOriginalBlocks concretizedBlocks
-  let sortedBlocks = L.sortBy (comparing basicBlockAddress) (paddingBlocks ++ concatMap unPair (F.toList redirectedBlocks))
+  let sortedBlocks = L.sortBy (comparing concretizedBlockAddress) (fmap concretizePadding paddingBlocks ++ concatMap unPair (F.toList redirectedBlocks))
   return (sortedBlocks, injectedBlocks)
   where
-    unPair (ConcretePair (LayoutPair cb sb status)) = case status of
-      Modified   -> [cb, sb]
-      Unmodified -> [cb    ]
-      Immutable  -> [cb    ]
-      Subsumed   -> [    sb]
+    concretizePadding pb =
+      concretizedBlock (paddingBlockAddress pb) (paddingBlockInstructions pb)
+    -- Convert a 'ConcreteBlock' into a 'ConcretizedBlock' by dropping its macaw
+    -- block
+    toConcretized cb =
+      concretizedBlock (concreteBlockAddress cb) (concreteBlockInstructions cb)
+    unPair wp =
+      case rewriteStatus wp of
+        Modified    -> [toConcretized (originalBlock wp), withoutProvenance wp]
+        Unmodified  -> [toConcretized (originalBlock wp)]
+        Immutable   -> [toConcretized (originalBlock wp)]
+        Subsumed    -> [                                  withoutProvenance wp]
 
-toBlockMapping :: [ConcretePair arch] -> [(ConcreteAddress arch, ConcreteAddress arch)]
-toBlockMapping ps =
-  [ (basicBlockAddress (lpOrig lp), basicBlockAddress (lpNew lp))
-  | ConcretePair lp <- ps
+toBlockMapping :: [WithProvenance ConcretizedBlock arch] -> [(ConcreteAddress arch, ConcreteAddress arch)]
+toBlockMapping wps =
+  [ (concreteBlockAddress origBlock, concretizedBlockAddress concBlock)
+  | wp <- wps
+  , let origBlock = originalBlock wp
+  , let concBlock = withoutProvenance wp
   ]
 
-isRelocatableTerminatorType :: JumpType arch -> Bool
+isRelocatableTerminatorType :: Some (JumpType arch) -> Bool
 isRelocatableTerminatorType jt =
   case jt of
-    IndirectJump {} -> False
+    Some (IndirectJump {}) -> False
     _ -> True
 
 {- Note [Redirection]

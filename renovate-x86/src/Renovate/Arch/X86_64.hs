@@ -67,6 +67,7 @@ config analysis = R.RenovateConfig
   -- See Note [Layout Addresses]
   , R.rcDataLayoutBase = 0xa00000
   , R.rcExtratextOffset = 0
+  , R.rcRefinementConfig = Nothing
   }
 
 {- Note [Layout Addresses]

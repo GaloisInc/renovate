@@ -25,6 +25,7 @@ module Renovate.Config (
 import qualified Control.Monad.Catch as C
 import           Control.Monad.ST ( ST, RealWorld )
 import qualified Data.ByteString as B
+import qualified Data.List.NonEmpty as DLN
 import           Data.Map.Strict ( Map )
 import           Data.Word ( Word64 )
 
@@ -33,6 +34,7 @@ import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Architecture.Info as MM
 import qualified Data.Macaw.CFG as MM
+import qualified Data.Macaw.Refinement as MR
 import qualified Data.Macaw.Symbolic as MS
 import qualified Lang.Crucible.FunctionHandle as C
 
@@ -149,7 +151,7 @@ data AnalyzeAndRewrite lm arch binFmt b =
   AnalyzeAndRewrite { arPreAnalyze :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> RW.RewriteM lm arch (preAnalyzeState arch)
                     , arAnalyze :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> preAnalyzeState arch -> IO (b arch)
                     , arPreRewrite :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> b arch -> RW.RewriteM lm arch (rewriterState arch)
-                    , arRewrite :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+                    , arRewrite :: forall env . (HasAnalysisEnv env, HasSymbolicBlockMap env) => env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe (DLN.NonEmpty (B.TaggedInstruction arch (B.InstructionAnnotation arch))))
                     }
 
 -- | The configuration required for a run of the binary rewriter.
@@ -201,6 +203,9 @@ data RenovateConfig arch binFmt callbacks (b :: * -> *) = RenovateConfig
   -- text section, @0@ means choose the largest chunk of otherwise unused
   -- addresses within jumping range of the text section, and positive @n@ means
   -- start @n@ bytes after the end of the text section.
+  , rcRefinementConfig :: Maybe MR.RefinementConfig
+  -- ^ Optional configuration for macaw-refinement; if provided, call
+  -- macaw-refinement to find additional code through SMT-based refinement
   }
 
 -- | Compose a list of instrumentation functions into a single
@@ -210,23 +215,23 @@ data RenovateConfig arch binFmt callbacks (b :: * -> *) = RenovateConfig
 -- carefully chosen, as the instrumentors are not isolated from each
 -- other.
 compose :: (Monad m)
-        => [B.SymbolicBlock arch -> m (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])]
-        -> (B.SymbolicBlock arch -> m (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)]))
+        => [B.SymbolicBlock arch -> m (Maybe (DLN.NonEmpty (B.TaggedInstruction arch (B.InstructionAnnotation arch))))]
+        -> (B.SymbolicBlock arch -> m (Maybe (DLN.NonEmpty (B.TaggedInstruction arch (B.InstructionAnnotation arch)))))
 compose funcs = go funcs
   where
-    go [] b = return $! Just (B.basicBlockInstructions b)
+    go [] b = return $! Just (B.symbolicBlockInstructions b)
     go (f:fs) b = do
       mb_is <- f b
       case mb_is of
-        Just is -> go fs b { B.basicBlockInstructions = is }
+        Just is -> go fs b { B.symbolicBlockInstructions = is }
         Nothing -> go fs b
 
 -- | An identity rewriter (i.e., a rewriter that makes no changes, but forces
 -- everything to be redirected).
-identity :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
-identity _ _ _ sb = return $! Just (B.basicBlockInstructions sb)
+identity :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe (DLN.NonEmpty (B.TaggedInstruction arch (B.InstructionAnnotation arch))))
+identity _ _ _ sb = return $! Just (B.symbolicBlockInstructions sb)
 
 -- | A basic block rewriter that leaves a block untouched, preventing the
 -- rewriter from trying to relocate it.
-nop :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe [B.TaggedInstruction arch (B.InstructionAnnotation arch)])
+nop :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe (DLN.NonEmpty (B.TaggedInstruction arch (B.InstructionAnnotation arch))))
 nop _ _ _ _ = return Nothing

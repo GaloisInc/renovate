@@ -18,14 +18,14 @@ import           Data.Word ( Word64 )
 import qualified Data.Macaw.CFG as MC
 
 import           Renovate.Address
-import           Renovate.BasicBlock ( Instruction, ConcreteBlock, basicBlockAddress, prettyBasicBlock )
+import qualified Renovate.BasicBlock as RB
 import           Renovate.ISA ( ISA(..) )
 
 -- | The types of diagnostic messages that can be generated during rewriting or
 -- recovery.
-data Diagnostic = forall arch t . InstructionIsNotJump (ISA arch) (Instruction arch t)
+data Diagnostic = forall arch t . InstructionIsNotJump (ISA arch) (RB.Instruction arch t)
                 | forall arch. (MC.MemWidth (MC.ArchAddrWidth arch)) => NoConcreteAddressForSymbolicTarget !(ConcreteAddress arch) !(SymbolicAddress arch) String
-                | forall arch. (MC.MemWidth (MC.ArchAddrWidth arch)) => BlockTooSmallForRedirection (ISA arch) Word64 (ConcreteBlock arch) (ConcreteBlock arch)
+                | forall arch. (MC.MemWidth (MC.ArchAddrWidth arch)) => BlockTooSmallForRedirection (ISA arch) Word64 (RB.ConcreteBlock arch) (RB.ConcretizedBlock arch)
                   -- ^ Indicates that the given original block was too small to hold the
                   -- required jump for a redirection (and thus cannot be redirected).
                   -- ISA, Orig block, instr block
@@ -35,6 +35,7 @@ data Diagnostic = forall arch t . InstructionIsNotJump (ISA arch) (Instruction a
                 -- now...
                 | forall w . MC.MemWidth w => MemoryError (MC.MemoryError w)
                 | forall w . MC.MemWidth w => NoByteRegionAtAddress (MC.MemAddr w)
+                | forall arch . (MC.MemWidth (MC.ArchAddrWidth arch)) => EmptyBlock (ConcreteAddress arch)
                 deriving (Typeable)
 
 instance Show Diagnostic where
@@ -42,6 +43,10 @@ instance Show Diagnostic where
 instance E.Exception Diagnostic
 
 instance PD.Pretty Diagnostic where
+  pretty (EmptyBlock addr) =
+    PD.hsep [ PD.pretty "Empty block at address"
+            , PD.pretty (show addr)
+            ]
   pretty (InstructionIsNotJump isa i) =
     PD.hsep [ PD.pretty "Instruction is not a jump:"
             , PD.pretty (isaPrettyInstruction isa i)
@@ -55,14 +60,14 @@ instance PD.Pretty Diagnostic where
             ]
   pretty (BlockTooSmallForRedirection isa jmpSize origBlock instrBlock) =
     PD.vsep [ PD.hsep [ PD.pretty "Basic block at"
-                      , PD.pretty (basicBlockAddress origBlock)
+                      , PD.pretty (RB.concreteBlockAddress origBlock)
                       , PD.pretty "is too small to hold a redirection"
                       , PD.parens (PD.pretty "requires" PD.<+> PD.pretty jmpSize PD.<+> PD.pretty "bytes")
                       ]
             , PD.pretty "Original block:"
-            , PD.indent 2 (prettyBasicBlock isa origBlock)
+            , PD.indent 2 (RB.prettyConcreteBlock isa origBlock)
             , PD.pretty "Instrumented block:"
-            , PD.indent 2 (prettyBasicBlock isa instrBlock)
+            , PD.indent 2 (RB.prettyConcretizedBlock isa instrBlock)
             ]
   pretty (OverlappingBlocks insnAddr nextAddr stopAddr) =
     PD.hsep [ PD.pretty "Overlapping blocks at address"

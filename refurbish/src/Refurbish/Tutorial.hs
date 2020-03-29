@@ -67,6 +67,7 @@ An example rewriter looks something like:
 >>> import qualified Data.ByteString as BS
 >>> import           Data.Functor.Const ( Const(..) )
 >>> import qualified Data.ElfEdit as E                   -- (elf-edit)
+>>> import qualified Data.List.NonEmpty as DLN           -- (base)
 >>> import qualified Data.Macaw.BinaryLoader as MBL      -- (macaw-loader)
 >>> import           Data.Macaw.BinaryLoader.X86 ()      -- (macaw-loader-x86)
 >>> import qualified Data.Parameterized.NatRepr as NR    -- (parameterized-utils)
@@ -121,9 +122,9 @@ myRewriter :: (R.HasAnalysisEnv env)
            -> Const Int arch
            -> RewriteState arch
            -> R.SymbolicBlock arch
-           -> R.RewriteM lm arch (Maybe [R.TaggedInstruction arch (R.InstructionAnnotation arch)])
+           -> R.RewriteM lm arch (Maybe (DLN.NonEmpty (R.TaggedInstruction arch (R.InstructionAnnotation arch))))
 myRewriter env nBlocks (RewriteState newFuncAddr) symBlock =
-  return (Just (R.basicBlockInstructions symBlock))
+  return (Just (R.symbolicBlockInstructions symBlock))
 :}
 
 >>> :{
@@ -149,7 +150,7 @@ myAnalyzeElf someElf = do
   fha <- FH.newHandleAllocator
   R.withElfConfig someElf analysisConfigs $ \config e loadedBinary -> do
     let strat = R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline
-    (newElf, res, ri) <- R.rewriteElf config fha e loadedBinary strat
+    (newElf, res, ri, _) <- R.rewriteElf config fha e loadedBinary strat
     print (getConst res)
     print (ri ^. R.riBlockMapping)
     return (getConst res)

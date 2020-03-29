@@ -1,4 +1,6 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -12,16 +14,19 @@ module Renovate.ISA
   , JumpType(..)
   , JumpCondition(..)
   , StackAddress(..)
+  , HasModifiableTarget
+  , NoModifiableTarget
   ) where
 
-import Data.Word ( Word8, Word64 )
+import qualified Data.List.NonEmpty as DLN
+import           Data.Word ( Word8, Word64 )
 
-import           Data.Parameterized.Some
+import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.Types as MT
 
 import Renovate.Address
-import Renovate.BasicBlock.Types ( ConcreteFallthrough, Instruction, InstructionAnnotation, RegisterType, TaggedInstruction )
+import Renovate.BasicBlock.Types ( Instruction, InstructionAnnotation, RegisterType, TaggedInstruction )
 
 -- | The variety of a jump: either conditional or unconditional.  This
 -- is used as a tag for 'JumpType's.  One day, we could model the type
@@ -30,33 +35,44 @@ data JumpCondition = Unconditional
                    | Conditional
                    deriving (Show, Eq)
 
+data JumpKind = HasModifiableTarget
+              | NoModifiableTarget
+
+-- | A tag denoting a jump type where we can modify the target by modifying the
+-- instruction (i.e., where the target is encoded as an immediate operand in
+-- some way, either as an address or an offset)
+type HasModifiableTarget = 'HasModifiableTarget
+-- | A tag denoting a jump that does not have a target that we can modify by
+-- changing an operand
+type NoModifiableTarget = 'NoModifiableTarget
+
 -- | Metadata about jump instructions
 --
 -- Note that we model calls as conditional jumps.  That isn't exactly
 -- right, but it captures the important aspect of calls for basic
 -- block recovery: execution continues after the return.
-data JumpType arch = RelativeJump JumpCondition (ConcreteAddress arch) (MM.MemWord (MM.ArchAddrWidth arch))
-                -- ^ A relative jump by some offset in bytes, which
-                -- could be negative.  The 'Address' is the address
-                -- from which the jump was issued.
-                | AbsoluteJump JumpCondition (ConcreteAddress arch)
-                -- ^ A jump to an absolute address
-                | IndirectJump JumpCondition
-                -- ^ A jump type for indirect jumps, which end blocks
-                -- but do not let us find new code.
-                | DirectCall (ConcreteAddress arch) (MM.MemWord (MM.ArchAddrWidth arch))
-                -- ^ A call to a known location expressed as an offset
-                -- from the jump location (note, this might be
-                -- difficult to fill in for RISC architectures - macaw
-                -- would be better suited to finding this information)
-                | IndirectCall
-                -- ^ A call to an unknown location
-                | Return JumpCondition
-                | NoJump
-                -- ^ The instruction is not a jump
-                deriving (Eq)
+data JumpType arch k where
+  -- | A relative jump by some offset in bytes, which could be negative.  The
+  -- 'ConcreteAddress' is the address from which the jump was issued.
+  RelativeJump :: JumpCondition -> ConcreteAddress arch -> MM.MemWord (MM.ArchAddrWidth arch) -> JumpType arch HasModifiableTarget
+  -- | A jump to an absolute address
+  AbsoluteJump :: JumpCondition -> ConcreteAddress arch -> JumpType arch HasModifiableTarget
+  -- | A jump type for indirect jumps, which end blocks but do not let us find
+  -- new code.
+  IndirectJump :: JumpCondition -> JumpType arch NoModifiableTarget
+  -- | A call to a known location expressed as an offset from the jump location
+  -- (note, this might be difficult to fill in for RISC architectures - macaw
+  -- would be better suited to finding this information)
+  DirectCall :: ConcreteAddress arch -> MM.MemWord (MM.ArchAddrWidth arch) -> JumpType arch HasModifiableTarget
+  -- | A call to an unknown location
+  IndirectCall :: JumpType arch NoModifiableTarget
+  -- | A possibly conditional return
+  Return :: JumpCondition -> JumpType arch NoModifiableTarget
+  -- | The instruction is not a jump
+  NoJump :: JumpType arch NoModifiableTarget
 
-deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (JumpType arch)
+deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (JumpType arch k)
+deriving instance Eq (JumpType arch k)
 
 -- | Information about an ISA.
 --
@@ -97,7 +113,7 @@ data ISA arch = ISA
     -- has the worst case size behavior.
   , isaConcretizeAddresses :: MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> Instruction arch (InstructionAnnotation arch) -> Instruction arch ()
     -- ^ Remove the annotation, with possible post-processing.
-  , isaJumpType :: forall t . Instruction arch t -> MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> JumpType arch
+  , isaJumpType :: forall t . Instruction arch t -> MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> Some (JumpType arch)
     -- ^ Test if an instruction is a jump; if it is, return some
     -- metadata about the jump (destination or offset).
     --
@@ -108,7 +124,7 @@ data ISA arch = ISA
     --
     -- The 'Address' parameter is the address of the instruction,
     -- which is needed to resolve relative jumps.
-  , isaMakeRelativeJumpTo :: ConcreteAddress arch -> ConcreteAddress arch -> [Instruction arch ()]
+  , isaMakeRelativeJumpTo :: ConcreteAddress arch -> ConcreteAddress arch -> DLN.NonEmpty (Instruction arch ())
     -- ^ Create a relative jump from the first 'ConcreteAddress'
     -- to the second.  This will call error if the range is too
     -- far (see 'isaMaxRelativeJumpSize').
@@ -117,15 +133,19 @@ data ISA arch = ISA
     -- New code blocks will be laid out in virtual address space within this
     -- many bytes of the original code blocks, so that the two can jump to each
     -- other as necessary.
-  , isaModifyJumpTarget :: ConcreteAddress arch -> ConcreteFallthrough arch () -> Maybe [Instruction arch ()]
-    -- ^ Modify the given jump instruction, rather than creating
-    -- an entirely new one.  This differs from
-    -- 'isaMakeRelativeJumpTo' in that it preserves the jump type
-    -- (e.g., the type of conditional jump).
+  , isaModifyJumpTarget :: ConcreteAddress arch -> Instruction arch () -> JumpType arch HasModifiableTarget -> ConcreteAddress arch -> Maybe (DLN.NonEmpty (Instruction arch ()))
+    -- ^ Modify the given jump instruction, accounting for any fallthrough behavior specified
     --
-    -- This function may change the size of the instruction, but should never
-    -- make a bigger set of instructions than what it produces if the concrete
-    -- addresses are 'isaMaxRelativeJumpSize' away.
+    -- The first argument is the address of the original jump instruction
+    --
+    -- The second argument is the jump instruction itself
+    --
+    -- The third argument is evidence that the instruction is actually one that
+    -- can have its target modified.  NOTE: There is currently no formal
+    -- connection between the instruction and the jump type, so a caller could
+    -- pass in a manually-constructed jump type to circumvent the protection.
+    --
+    -- The fourth argument is the concretized new target
   , isaMakePadding :: Word64 -> [Instruction arch ()]
     -- ^ Make the given number of bytes of padding instructions.
     -- The semantics of the instruction stream should either be
