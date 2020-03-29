@@ -24,31 +24,42 @@ import           Text.Printf ( printf )
 -- The challenge there is that we would really like to be able to guarantee that
 -- blocks only contain instructions from a single instruction set.  This API
 -- makes that difficult to enforce
-import qualified Dismantle.ARM.A32 as D
+import qualified Dismantle.ARM.A32 as DA
+import qualified Dismantle ARM.T32 as DT
 import qualified Data.Macaw.AArch32 as MA32
 import qualified Data.Macaw.Memory as MM
 
 import qualified Renovate as R
+import qualified Renovate.Arch.AArch32.Panic as RP
 
 data TargetAddress = NoAddress
                    | AbsoluteAddress (R.ConcreteAddress MA32.AArch32)
   deriving (Eq, Ord, Show)
 
-newtype Instruction a = I { unI :: D.AnnotatedInstruction a }
+data Instruction a = AInstruction (DA.AnnotatedInstruction a)
+                   | TInstruction (DT.AnnotatedInstruction a)
   deriving (Eq, Show)
 
 type instance R.Instruction MA32.AArch32 = Instruction
 type instance R.InstructionAnnotation MA32.AArch32 = TargetAddress
-type instance R.RegisterType MA.AArch32 = Some D.Operand
+type instance R.RegisterType MA.AArch32 = Operand
+-- The type of
+data instance R.ArchRepr MA.AArch32 =
+
+data Operand where
+  AOperand :: DA.Operand tp -> Operand
+  TOperand :: DT.Operand tp -> Operand
 
 instance PP.Pretty (Instruction a) where
   pretty = PP.pretty . armPrettyInstruction
 
-instance Functior Instruction where
-  fmap f (I i) =
+instance Functor Instruction where
+  fmap f i =
     case i of
-      D.Instruction opc operands ->
-        I (D.Instruction (coerce opc) (FC.fmapFC (\(D.Annotated a o) -> D.Annotated (f a) o) operands))
+      AInstruction (DA.Instruction opc operands) ->
+        I (DA.Instruction (coerce opc) (FC.fmapFC (\(DA.Annotated a o) -> DA.Annotated (f a) o) operands))
+      TInstruction (DT.Instruction opc operands) ->
+        I (DT.Instruction (coerce opc) (FC.fmapFC (\(DT.Annotated a o) -> DT.Annotated (f a) o) operands))
 
 data InstructionDisassemblyFailure =
   InstructionDisassemblyFailure BS.ByteString Int
@@ -57,51 +68,79 @@ data InstructionDisassemblyFailure =
 instance C.Exception InstructionDisassemblyFailure
 
 assemble :: (C.MonadThrow m) => Instruction () -> m BS.ByteString
-assemble = return . LBS.toStrict . D.assembleInstruction . toInst
+assemble i =
+  case i of
+    AInstruction ai -> return (LBS.toStrict (DA.assembleInstruction ai))
+    TInstruction ti -> return (LBS.toStrict (DT.assembleInstruction ti))
 
+-- FIXME: Disassembly is actually a significant problem.  We don't know if we
+-- should disassemble as ARM or Thumb.  We could try each, but that is no
+-- guarantee.  We would have better success if we disassembled an entire (macaw)
+-- block at a time.  Changing the API to take a ParsedBlock would help.  That is
+-- still not exactly a guarantee, though the chance of a block decoding as
+-- either ARM or Thumb (and having the right number of instructions) is quite
+-- low.
+--
+-- We could additionally compare the disassembly against the Show output in the
+-- instruction metadata.  That would significantly improve confidence at some
+-- complexity cost.  Perhaps that would be a fallback if two decodings work?
+--
+-- It would require passing the whole block to the disassembler and
+-- disassembling the whole thing at once, which is actually not a major problem.
 disassemble :: (C.MonadThrow m) => BS.ByteString -> m (Int, Instruction ())
 disassemble bs =
   case minsn of
     Just i -> return (bytesConsumed, fromInst i)
     Nothing -> C.throwM (InstructionDisassemblyFailure bs bytesConsumed)
   where
-    (bytesConsumed, minsn) = D.disassembleInstruction (LBS.fromStrict bs)
+    (bytesConsumed, minsn) = DA.disassembleInstruction (LBS.fromStrict bs)
 
 armPrettyInstruction :: Instruction a -> String
-armPrettyInstruction = show . D.ppInstruction . toInst
-
-toInst :: Instruction a -> D.Instruction
-toInst i =
-  case unI i of
-    D.Instruction opc annotatedOps ->
-      D.Instruction (coerce opc) (FC.fmapFC unannotateOpcode annotatedOps)
-
-fromInst :: D.Instruction -> Instruction ()
-fromInst i =
+armPrettyInstruction i =
   case i of
-    D.Instruction opc unannotatedOps ->
-      I (D.Instruction (coerce opc) (FC.fmapFC (D.Annotated ()) unannotatedOps))
+    AInstruction ai -> show (DA.ppInstruction ai)
+    TInstruction ti -> show (DT.ppInstruction ai)
 
-unannotateOpcode :: D.Annotated a D.Operand tp -> D.Operand tp
-unannotateOpcode (D.Annotated _ op) = op
+-- toInst :: Instruction a -> DA.Instruction
+-- toInst i =
+--   case i of
+--     AInstruction (DA.Instruction opc annotatedOps) ->
+--       DA.Instruction (coerce opc) (FC.fmapFC unannotateOpcode annotatedOps)
+
+-- fromInst :: DA.Instruction -> Instruction ()
+-- fromInst i =
+--   case i of
+--     DA.Instruction opc unannotatedOps ->
+--       I (DA.Instruction (coerce opc) (FC.fmapFC (DA.Annotated ()) unannotatedOps))
+
+unannotateOpcode :: DA.Annotated a DA.Operand tp -> DA.Operand tp
+unannotateOpcode (DA.Annotated _ op) = op
 
 -- | All A32 instructions are 4 bytes
 --
 -- This will have to change to support thumb
 armInstrSize :: Instruction a -> Word8
-armInstrSize _ = 4
+armInstrSize i =
+  case assemble i of
+    Nothing ->
+      RP.panic RP.ARMISA "armInstrSize" [ "Could not assemble: " ++ armPrettyInstruction i
+                                        ]
+    Just bs -> fromIntegral (BS.length bs)
 
 armMakePadding :: Word64 -> [Instruction ()]
 armMakePadding nBytes
   | leftover == 0 = replicate nInsns (fromInst nopInsn)
   | otherwise = error (printf "Unexpected byte count (%d); only instruction-sized padding is supported" nBytes)
   where
-    nopInsn = D.Instruction D.HLT_A1
+    nopInsn = DA.Instruction DA.HLT_A1
     (nInsns, leftover) = fromIntegral nBytes `divMod` 4
 
 armMakeRelativeJumpTo :: R.ConcreteAddress MA32.AArch32 -> R.ConcreteAddress MA32.AArch32 -> [Instruction ()]
 armMakeRelativeJumpTo = error "make relative jump to"
 
+-- FIXME: Max relative jump size depends on ARM mode vs Thumb mode
+--
+-- Pass in a block repr?
 armMaxRelativeJumpSize :: Word64
 armMaxRelativeJumpSize = DB.bit 25 - 4
 
@@ -135,8 +174,8 @@ armConcretizeAddresses :: MM.Memory 32
                        -> Instruction ()
 armConcretizeAddresses _mem _addr i =
   case unI i of
-    D.Instruction opc operands ->
-      I (D.Instruction (coerce opc) (FC.fmapFC (\(D.Annotated _ operand) -> D.Annotated () operand) operands))
+    DA.Instruction opc operands ->
+      I (DA.Instruction (coerce opc) (FC.fmapFC (\(DA.Annotated _ operand) -> DA.Annotated () operand) operands))
 
 armSymbolizeAddresses :: MM.Memory 32
                       -> (R.ConcreteAddress MA32.AArch32 -> Maybe (R.SymbolicAddress MA32.AArch32))
@@ -146,11 +185,11 @@ armSymbolizeAddresses :: MM.Memory 32
                       -> [R.TaggedInstruction MA32.AArch32 TargetAddress]
 armSymbolizeAddresses _mem _lookup _insnAddr mSymbolicTarget i =
   case unI i of
-    D.Instruction opc operands ->
-      let newInsn = D.Instruction (coerce opc) (FC.fmapFC annotateNull operands)
+    DA.Instruction opc operands ->
+      let newInsn = DA.Instruction (coerce opc) (FC.fmapFC annotateNull operands)
       in [R.tagInstruction mSymbolicTarget (I newInsn)]
   where
-    annotateNull (D.Annotated _ operand) = D.Annotated NoAddress operand
+    annotateNull (DA.Annotated _ operand) = DA.Annotated NoAddress operand
 
 isa :: R.ISA MA32.AArch32
 isa =

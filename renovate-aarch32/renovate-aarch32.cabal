@@ -24,13 +24,16 @@ library
   -- other-extensions:
   build-depends:       base >=4.10 && <5,
                        bytestring,
-                       prettyprinter
+                       prettyprinter,
                        exceptions,
+                       panic >= 0.4 && < 0.5,
                        macaw-base,
                        macaw-symbolic,
                        macaw-loader,
                        dismantle-tablegen,
-                       dismantle-asl-aarch32,
+                       dismantle-arm-xml,
+                       semmc-asl,
+                       macaw-asl,
                        renovate
   hs-source-dirs:      src
   default-language:    Haskell2010
