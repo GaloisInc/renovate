@@ -1,8 +1,10 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 -- | A simple function recovery pass
@@ -27,6 +29,7 @@ import qualified Control.Monad.RWS.Strict as RWS
 import qualified Data.Foldable as F
 import qualified Data.List.NonEmpty as DLN
 import qualified Data.Map.Strict as M
+import           Data.Parameterized.Some ( Some(..) )
 import           Data.Semigroup
 import qualified Data.Set as S
 
@@ -131,7 +134,7 @@ makeCFGForEntry entryAddr = do
                               , cfgCompletion = if fsHasIndirectJump st then Incomplete else Complete
                               }
 
-processWorklist :: (MM.MemWidth (MM.ArchAddrWidth arch)) => M arch ()
+processWorklist :: forall arch . (MM.MemWidth (MM.ArchAddrWidth arch)) => M arch ()
 processWorklist = do
   wl <- RWS.gets fsWorklist
   case S.minView wl of
@@ -145,30 +148,31 @@ processWorklist = do
         Nothing -> L.error $ "Address " <> show addr <> " not found in blocks"
       isa <- RWS.asks envISA
       mem <- RWS.asks envMem
-      let addOff = addressAddOffset
       let insns = instructionAddresses isa b
       let (lastInsn, insnAddr) = DLN.last insns
+          addSuccessor :: M arch ()
           addSuccessor = nextBlockAddress b >>= addCFGEdge addr
+          addCond :: JumpCondition -> M arch ()
           addCond Unconditional = return ()
           addCond Conditional = addSuccessor
-      case isaJumpType isa lastInsn mem insnAddr of
+      () <- case isaJumpType isa lastInsn mem insnAddr of
         -- Fallthrough to the next block
-        NoJump -> addSuccessor
-        Return cond -> do
+        Some NoJump -> addSuccessor
+        Some (Return cond) -> do
           addReturnBlock addr
           addCond cond
-        RelativeJump cond jaddr off -> do
-          let target = jaddr `addOff` off
+        Some (RelativeJump cond jaddr off) -> do
+          let target = jaddr `addressAddOffset` off
           addCFGEdge addr target
           addCond cond
-        AbsoluteJump cond dst -> do
+        Some (AbsoluteJump cond dst) -> do
           addCFGEdge addr dst
           addCond cond
-        IndirectJump cond -> do
+        Some (IndirectJump cond) -> do
           addCond cond
           markFunctionIncomplete
-        DirectCall {} -> addSuccessor
-        IndirectCall -> addSuccessor
+        Some (DirectCall {}) -> addSuccessor
+        Some IndirectCall -> addSuccessor
       processWorklist
 
 nextBlockAddress :: (MM.MemWidth (MM.ArchAddrWidth arch)) => ConcreteBlock arch -> M arch (ConcreteAddress arch)

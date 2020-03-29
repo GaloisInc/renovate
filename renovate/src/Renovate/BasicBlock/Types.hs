@@ -25,22 +25,13 @@ module Renovate.BasicBlock.Types (
   symbolicBlockOriginalAddress,
   symbolicBlockSymbolicAddress,
   symbolicBlockInstructions,
+  symbolicBlockSymbolicSuccessor,
+  symbolicBlockWithoutSuccessor,
   -- * Padding blocks
   PaddingBlock,
   paddingBlock,
   paddingBlockAddress,
   paddingBlockInstructions,
-  -- * Fallthrough blocks
-  FallthroughBlock,
-  fallthroughBlock,
-  fallthroughOriginalAddress,
-  fallthroughSymbolicAddress,
-  fallthroughInstructions,
-  FallthroughInstruction(..),
-  addFallthrough,
-  noFallthrough,
-  hasNoAddresses,
-  FallthroughType(..),
   -- * Concretized blocks
   ConcretizedBlock,
   concretizedBlock,
@@ -55,8 +46,6 @@ module Renovate.BasicBlock.Types (
   tagInstruction,
   symbolicTarget,
   projectInstruction,
-  SymbolicFallthrough,
-  ConcreteFallthrough,
 
   ToGenericInstruction(..),
   -- * Constraints
@@ -126,6 +115,7 @@ data ConcreteBlock arch =
   ConcreteBlock { concreteBlockAddress :: ConcreteAddress arch
                 , concreteBlockInstructions :: DLN.NonEmpty (Instruction arch ())
                 , concreteDiscoveryBlock :: Some (MD.ParsedBlock arch)
+                -- ^ The macaw block that generated this 'ConcreteBlock'
                 }
 
 instance (MC.MemWidth (MC.ArchAddrWidth arch), Show (Instruction arch ())) => Show (ConcreteBlock arch) where
@@ -144,7 +134,8 @@ concreteBlock :: ConcreteAddress arch
               -> DLN.NonEmpty (Instruction arch ())
               -> MD.ParsedBlock arch ids
               -> ConcreteBlock arch
-concreteBlock addr insns pb = ConcreteBlock addr insns (Some pb)
+concreteBlock addr insns pb =
+  ConcreteBlock addr insns (Some pb)
 
 -- | This is a basic block that contains padding bytes at a given address.
 --
@@ -202,126 +193,39 @@ data SymbolicBlock arch =
   SymbolicBlock { symbolicBlockOriginalAddress :: ConcreteAddress arch
                 , symbolicBlockSymbolicAddress :: SymbolicAddress arch
                 , symbolicBlockInstructions :: DLN.NonEmpty (TaggedInstruction arch (InstructionAnnotation arch))
+                , symbolicBlockSymbolicSuccessor :: Maybe (SymbolicAddress arch)
                 }
 
-symbolicBlock :: ConcreteAddress arch
+symbolicBlock :: ConcreteBlock arch
+              -- ^ The 'ConcreteBlock' this 'SymbolicBlock' was lifted from
               -> SymbolicAddress arch
+              -- ^ The symbolic address assigned to this block
               -> DLN.NonEmpty (TaggedInstruction arch (InstructionAnnotation arch))
+              -- ^ Instructions with symbolic address annotations
+              -> Maybe (SymbolicAddress arch)
+              -- ^ The symbolic address of the successor, if any
+              --
+              -- This could be Nothing if the block ends in an unconditional
+              -- jump (note: calls have a fallthrough because they return)
               -> SymbolicBlock arch
-symbolicBlock = SymbolicBlock
+symbolicBlock cb symAddr symInsns symSucc =
+  SymbolicBlock { symbolicBlockOriginalAddress = concreteBlockAddress cb
+                , symbolicBlockSymbolicAddress = symAddr
+                , symbolicBlockInstructions = symInsns
+                , symbolicBlockSymbolicSuccessor = symSucc
+                }
 
--- | When rewriting code after relocating it, we need to track each
--- instruction's possible successors. In most cases, for straight-line code,
--- there is just one successor (the immediately next instruction in memory),
--- and as an optimization we keep straight-line code blocks together during
--- relocation. So we distinguish these cases:
---
--- 1. Straight-line code, which always implicitly falls through to the "next"
---    instruction. In most cases, we ensure that the next instruction is the
---    same in both the original and rewritten code, so these instructions need
---    not be rewritten and need not store a successor at all.
--- 2. Straight-line code that ends a basic block (because another block targets
---    the next instruction). These instructions fall through to another block,
---    which may have been relocated, so we must track the location of their
---    fallthrough successor.
--- 2. Unconditional jumps, which definitely redirect control flow. These need
---    one address for their target.
--- 3. Conditional jumps, which may either redirect control flow or implicitly
---    fall through to the "next" instruction. Because we may relocate both the
---    target of the jump and the implicit fall-through instructions, we need
---    two addresses.
---
--- We use the parameter to choose between symbolic and concrete
--- addresses for the successors.
-data FallthroughType a where
-  -- | A tag for instructions internal to a block that implicitly fall through
-  -- to the next instruction but need no correction
-  InternalInstruction :: FallthroughType a
-  -- | The end of a basic block that unconditionally allows execution to fall
-  -- through to the next block
-  UnconditionalFallthrough :: a -> FallthroughType a
-  -- | The block ends in an unconditional jump to the named target
-  UnconditionalJump :: a -> FallthroughType a
-  -- | The block ends in a conditional jump, and thus has two targets (in
-  -- order): the target of the conditional branch and the implicit fallthrough
-  -- target
-  ConditionalFallthrough :: a -> a -> FallthroughType a
-
-deriving instance Functor FallthroughType
-deriving instance Foldable FallthroughType
-deriving instance Traversable FallthroughType
-deriving instance (Show a) => Show (FallthroughType a)
-
--- | A wrapper around a normal instruction that includes optional addresses for
--- all of the instruction's successors that may be relocated. The addresses can
--- be chosen to be symbolic or concrete by picking different @addr@s.
-data FallthroughInstruction arch addr a = FallthroughInstruction
-  { fallthroughInstruction :: Instruction arch a
-  , fallthroughType :: FallthroughType addr
-  }
-
-type SymbolicFallthrough arch = FallthroughInstruction arch (SymbolicAddress arch)
-type ConcreteFallthrough arch = FallthroughInstruction arch (ConcreteAddress arch)
-
-instance PD.Pretty (Instruction arch a) => PD.Pretty (FallthroughInstruction arch addr a) where
-  pretty = PD.pretty . fallthroughInstruction
-
--- | Lift a 'TaggedInstruction' to a 'FallthroughInstruction' by adding the
--- symbolic address of its fallthrough successor. If it didn't have a jump
--- target before, it's considered straightline code and the successor address
--- is ignored.
---
--- Note that this is only called on terminators, so it never produces the
--- 'InternalInstruction' case or the 'UnconditionalJump' case.  Those are
--- handled by 'noFallthrough'.
-addFallthrough :: SymbolicAddress arch -> TaggedInstruction arch a -> SymbolicFallthrough arch a
-addFallthrough fallthrough (Tag (i, tgt)) =
-  case tgt of
-    Nothing -> FallthroughInstruction i (UnconditionalFallthrough fallthrough)
-    Just someTgt -> FallthroughInstruction i (ConditionalFallthrough someTgt fallthrough)
-
--- | Lift a 'TaggedInstruction' to a 'FallthroughInstruction' by asserting that
--- it has no fallthrough successor. If it didn't have a jump target before, it
--- shouldn't need to be rewritten. So we treat it as straightline code.
-noFallthrough :: TaggedInstruction arch a -> SymbolicFallthrough arch a
-noFallthrough (Tag (i, tgt)) =
-  case tgt of
-    Nothing -> FallthroughInstruction i InternalInstruction
-    Just someTgt -> FallthroughInstruction i (UnconditionalJump someTgt)
-
--- | Return 'True' if the 'FallthroughInstruction' has no target or fallthrough addresses.
-hasNoAddresses :: FallthroughInstruction arch addr a -> Bool
-hasNoAddresses fi =
-  case fallthroughType fi of
-    InternalInstruction -> True
-    UnconditionalFallthrough {} -> False
-    UnconditionalJump {} -> False
-    ConditionalFallthrough {} -> False
-
--- | The type of 'BasicBlock's that have up to two symbolic address targets for jumps.
---
--- The extra annotations live on the terminator instruction.
---
--- Unconditional jumps are annotated with symbolic address targets, and
--- conditional jumps are annotated with two symbolic addresses for their target
--- and fallthrough behavior.
-data FallthroughBlock arch =
-  FallthroughBlock { fallthroughOriginalAddress :: ConcreteAddress arch
-                   , fallthroughSymbolicAddress :: SymbolicAddress arch
-                   , fallthroughInstructions :: DLN.NonEmpty (FallthroughInstruction arch (SymbolicAddress arch) (InstructionAnnotation arch))
-                   }
-
-fallthroughBlock :: ConcreteAddress arch
-                 -> SymbolicAddress arch
-                 -> DLN.NonEmpty (FallthroughInstruction arch (SymbolicAddress arch) (InstructionAnnotation arch))
-                 -> FallthroughBlock arch
-fallthroughBlock = FallthroughBlock
+symbolicBlockWithoutSuccessor :: SymbolicBlock arch -> SymbolicBlock arch
+symbolicBlockWithoutSuccessor sb =
+  case symbolicBlockSymbolicSuccessor sb of
+    Nothing -> sb
+    Just _ -> sb { symbolicBlockSymbolicSuccessor = Nothing }
 
 -- | Some algorithms (such as layout) will need to assigned an address
 -- to symbolic blocks and then make the blocks concrete. This type
 -- bundles up a symbolic block and concrete address for that purpose.
 data AddressAssignedBlock arch = AddressAssignedBlock
-  { lbBlock :: FallthroughBlock arch -- ^ The block with symbolic addresses
+  { lbBlock :: SymbolicBlock arch -- ^ The block with symbolic addresses
   , lbAt    :: ConcreteAddress arch -- ^ The concrete address for this block
   , lbSize  :: Word64 -- ^ How many bytes we set aside for this block (or 0 if we aren't moving/rewriting it)
   }

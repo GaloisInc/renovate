@@ -18,7 +18,6 @@ import qualified Data.ByteString.Lazy.Builder as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Functor.Identity as I
 import           Data.Int ( Int32 )
-import           Data.List ( genericReplicate )
 import qualified Data.List.NonEmpty as DLN
 import           Data.Maybe
 import           Data.Parameterized.Some
@@ -33,6 +32,7 @@ import qualified Flexdis86 as D
 
 import qualified Renovate as R
 import           Renovate.Arch.X86_64.Internal
+import qualified Renovate.Arch.X86_64.Panic as RP
 
 -- | Assemble an instruction into a 'B.ByteString'
 --
@@ -179,7 +179,7 @@ x86OpSPImmediate op_bytes imm = do
 
 -- | Simple adapter for 'x64JumpTypeRaw' with the right type to be used in an
 -- ISA.
-x64JumpType :: Instruction t -> MM.Memory 64 -> R.ConcreteAddress X86.X86_64 -> R.JumpType X86.X86_64
+x64JumpType :: Instruction t -> MM.Memory 64 -> R.ConcreteAddress X86.X86_64 -> Some (R.JumpType X86.X86_64)
 x64JumpType insn _ = x64JumpTypeRaw insn
 
 -- | Classify different kinds of jump instructions.
@@ -187,16 +187,16 @@ x64JumpType insn _ = x64JumpTypeRaw insn
 -- Fortunately, all of the conditional jumps start with 'j', and no
 -- other instructions start with 'j'.  This lets us have an easy case
 -- to handle all of them.
-x64JumpTypeRaw :: Instruction t -> R.ConcreteAddress X86.X86_64 -> R.JumpType X86.X86_64
+x64JumpTypeRaw :: Instruction t -> R.ConcreteAddress X86.X86_64 -> Some (R.JumpType X86.X86_64)
 x64JumpTypeRaw xi@(XI ii) addr =
   case (D.iiOp ii, map (fst . aoOperand) (D.iiArgs ii)) of
-    ("jmp", [D.JumpOffset _ off]) -> R.RelativeJump R.Unconditional addr (fixJumpOffset sz off)
-    ("jmp", _) -> R.IndirectJump R.Unconditional
-    ("ret", _) -> R.Return R.Unconditional
-    ('i':'n':'t':_, _) -> R.IndirectCall
-    ('i':'r':'e':'t':_, _) -> R.Return R.Unconditional
-    ('l':'o':'o':'p':_, [D.JumpOffset _ off]) -> R.RelativeJump R.Conditional addr (fixJumpOffset sz off)
-    ('j':_, [D.JumpOffset _ off]) -> R.RelativeJump R.Conditional addr (fixJumpOffset sz off)
+    ("jmp", [D.JumpOffset _ off]) -> Some (R.RelativeJump R.Unconditional addr (fixJumpOffset sz off))
+    ("jmp", _) -> Some (R.IndirectJump R.Unconditional)
+    ("ret", _) -> Some (R.Return R.Unconditional)
+    ('i':'n':'t':_, _) -> Some R.IndirectCall
+    ('i':'r':'e':'t':_, _) -> Some (R.Return R.Unconditional)
+    ('l':'o':'o':'p':_, [D.JumpOffset _ off]) -> Some (R.RelativeJump R.Conditional addr (fixJumpOffset sz off))
+    ('j':_, [D.JumpOffset _ off]) -> Some (R.RelativeJump R.Conditional addr (fixJumpOffset sz off))
     -- We treat calls as conditional jumps for the purposes of basic
     -- block recovery.  The important aspect of this treatment is that
     -- execution can (does) reach the instruction after the call, and
@@ -208,10 +208,10 @@ x64JumpTypeRaw xi@(XI ii) addr =
       -- Macaw, we can just analyze from _start and be okay, so we
       -- don't have to worry about this odd type of jump anymore
       let offset = fixJumpOffset sz off
-      in R.DirectCall addr offset
-    ("call", _) -> R.IndirectCall
-    ("syscall", _) -> R.IndirectCall
-    _ -> R.NoJump
+      in Some (R.DirectCall addr offset)
+    ("call", _) -> Some R.IndirectCall
+    ("syscall", _) -> Some R.IndirectCall
+    _ -> Some R.NoJump
   where
     sz = x64Size xi
 
@@ -281,26 +281,15 @@ x64MakeSymbolicJumpOrCall op_code sym_addr =
   R.tagInstruction (Just sym_addr) $
     noAddr $ makeInstr op_code [D.JumpOffset D.JSize32 $ D.FixedOffset 0]
 
-x64ModifyJumpTarget :: R.ConcreteAddress X86.X86_64 -> R.ConcreteFallthrough X86.X86_64 () -> Maybe [Instruction ()]
-x64ModifyJumpTarget srcAddr (R.FallthroughInstruction insn@(XI ii) tag) = case tag of
-  R.InternalInstruction
-    | R.NoJump <- x64JumpTypeRaw insn srcAddr -> Just [insn]
-    | otherwise ->
-      L.error ("Possible bug: x64ModifyJumpTarget was given a jump but no modified target. " ++
-               "What should it do in that case?\n" ++
-               "Address: " ++ show srcAddr ++ "\nInstruction: " ++ show insn)
-  R.UnconditionalFallthrough fallthroughAddr ->
-    Just (insn : jmpOrNop insn fallthroughAddr)
-  R.UnconditionalJump targetAddr
-    | 'j' : _ <- D.iiOp ii -> Just [extendDirectJump targetAddr]
-    | otherwise -> Nothing
-  R.ConditionalFallthrough targetAddr fallthroughAddr -> case D.iiOp ii of
-    "jmp" -> L.error "BUG! Unconditional jump given both a target and a fallthrough."
-    'j':_ -> let insn' = extendDirectJump targetAddr in
-      Just (insn' : jmpOrNop insn' fallthroughAddr)
-    'c' : 'a' : 'l' : 'l' : _ -> let insn' = extendDirectJump targetAddr in
-      Just (insn' : jmpOrNop insn' fallthroughAddr)
-    _ -> Nothing
+-- NOTE: This is called only on jump instructions (the 'R.JumpType' argument is
+-- intended to be evidence of that).
+x64ModifyJumpTarget :: R.ConcreteAddress X86.X86_64 -> R.Instruction X86.X86_64 () -> R.JumpType arch R.HasModifiableTarget -> R.ConcreteAddress X86.X86_64 -> Maybe (DLN.NonEmpty (Instruction ()))
+x64ModifyJumpTarget srcAddr (XI ii) _jt newTarget =
+  case D.iiOp ii of
+    'j' : _ -> Just (extendDirectJump newTarget DLN.:| [])
+    'c' : 'a' : 'l' : 'l' : _ -> Just (extendDirectJump newTarget DLN.:| [])
+    _ -> RP.panic RP.X86_64ISA "x64ModifyJumpTarget" [ "Unexpected non-jump passed to isaModifyJumpTarget " ++ show ii
+                                                     ]
   where extendDirectJump targetAddr = case aoOperand <$> D.iiArgs ii of
           [(D.JumpOffset D.JSize32 _, _)] -> jmpInstr (D.iiOp ii) 0 targetAddr
           [(D.JumpOffset _ _, _)] -> L.error ("Expected a 4-byte jump offset: " ++ show ii)
@@ -331,39 +320,6 @@ x64ModifyJumpTarget srcAddr (R.FallthroughInstruction insn@(XI ii) tag) = case t
                      show (x64Size jmp))
           | otherwise = jmp
           where jmp = jmpInstrUnsafe opcode offset targetAddr
-
-        jmpOrNop prefix targetAddr
-          | targetAddr == R.addressAddOffset srcAddr (fromIntegral (prefixSize + jmpSize))
-            = x64Nops (fromIntegral jmpSize)
-          | otherwise = [jmp]
-          where
-          prefixSize = x64Size prefix
-          jmpSize = x64Size jmp
-          jmp = jmpInstrUnsafe "jmp" (x64Size prefix) targetAddr
-
--- | Make @n@ bytes of no-ops. Prefer 'x64MakePadding' where possible; nop
--- slides make ROP attacks easier.
-x64Nops :: Word64 -> [Instruction ()]
-x64Nops n
-  =  [nops !! fromIntegral (sizeOfLittleNop-1) | sizeOfLittleNop /= 0]
-  ++ genericReplicate bigNops (last nops)
-  where
-  (bigNops, sizeOfLittleNop) = quotRem n (fromIntegral (length nops))
-  nops = map fromFlexInst . fromJust . mapM (snd . D.tryDisassemble . B.pack) $
-    -- We include as many instances of int3 (0xcc) in this table as we can, to
-    -- make it slightly harder to jump into the middle of a nop sequence and
-    -- have that be useful. Most likely it won't ever matter, but since we can
-    -- we might as well.
-    [ [0x90]
-    , [0x66,0x90]
-    , [0x0F,0x1F,0x00]
-    , [0x0F,0x1F,0x40,0xCC]
-    , [0x0F,0x1F,0x44,0xCC,0xCC]
-    , [0x66,0x0F,0x1F,0x44,0xCC,0xCC]
-    , [0x0F,0x1F,0x80,0xCC,0xCC,0xCC,0xCC]
-    , [0x0F,0x1F,0x84,0xCC,0xCC,0xCC,0xCC,0xCC]
-    , [0x66,0x0F,0x1F,0x84,0xCC,0xCC,0xCC,0xCC,0xCC]
-    ]
 
 -- | Make @n@ bytes of @int 3@ instructions.  If executed, these
 -- generate an interrupt that drops the application into a debugger

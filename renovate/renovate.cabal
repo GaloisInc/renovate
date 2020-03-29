@@ -28,9 +28,9 @@ library
                        Renovate.Redirect.Internal
                        Renovate.Redirect.LayoutBlocks
                        Renovate.Redirect.LayoutBlocks.Compact
-                       Renovate.Redirect.LayoutBlocks.SuccessorMap
                        Renovate.Redirect.LayoutBlocks.Types
                        Renovate.Redirect.Monad
+                       Renovate.Redirect.ReifyFallthrough
                        Renovate.Redirect.Symbolize
                        Renovate.Rewrite
                        Renovate.ABI
@@ -43,12 +43,14 @@ library
                        Renovate.BinaryFormat.ELF.Rewriter
                        Renovate.BinaryFormat.ELF.Rewriter.Env
                        Renovate.ISA
+                       Renovate.Panic
                        Renovate.Recovery
                        Renovate.Recovery.Overlap
                        Renovate.Recovery.SymbolMap
                        Renovate.Redirect
   -- other-extensions:    
   build-depends:       base >=4.10 && <5,
+                       panic >= 0.4 && < 0.5,
                        bytestring,
                        text,
                        containers >= 0.5 && < 0.7,

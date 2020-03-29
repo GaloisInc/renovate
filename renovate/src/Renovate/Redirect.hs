@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 -- | This module is the entry point for binary code redirection
 module Renovate.Redirect (
   redirect,
@@ -30,6 +31,7 @@ import qualified Data.Foldable as F
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as DLN
 import           Data.Ord ( comparing )
+import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Traversable as T
 
 import           Prelude
@@ -152,10 +154,10 @@ toBlockMapping wps =
   , let concBlock = withoutProvenance wp
   ]
 
-isRelocatableTerminatorType :: JumpType arch -> Bool
+isRelocatableTerminatorType :: Some (JumpType arch) -> Bool
 isRelocatableTerminatorType jt =
   case jt of
-    IndirectJump {} -> False
+    Some (IndirectJump {}) -> False
     _ -> True
 
 {- Note [Redirection]
