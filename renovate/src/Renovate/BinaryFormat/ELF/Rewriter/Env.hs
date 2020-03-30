@@ -32,6 +32,7 @@ import qualified Data.Ord as O
 import qualified Data.ElfEdit as E
 import qualified Data.Macaw.CFG as MM
 
+import qualified Renovate.BasicBlock as RB
 import           Renovate.Config
 import qualified Renovate.ISA as RI
 
@@ -93,7 +94,11 @@ withinJumpRange cfg text =
   where
   start = E.elfSectionAddr text
   end = start + E.elfSectionSize text - 1
-  range = fromIntegral (RI.isaMaxRelativeJumpSize (rcISA cfg))
+  isa = rcISA cfg
+  -- FIXME: This is wrong for multi-arch ISAs (i.e., ARM).  We only have 16 bits
+  -- of jump offset from Thumb code, which is potentially a huge problem.
+  range = case RI.isaDefaultInstructionArchRepr isa of
+    RB.SomeInstructionArchRepr repr -> fromIntegral (RI.isaMaxRelativeJumpSize isa repr)
 
 
 -- | Choose a virtual address for extratext (and report how many bytes are

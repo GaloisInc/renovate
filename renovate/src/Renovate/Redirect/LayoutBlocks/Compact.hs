@@ -149,10 +149,11 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
     Randomized _ -> overwriteAll
     _ -> return (h1, blocks1)
 
+  SomeInstructionArchRepr paddingRepr <- return (isaDefaultInstructionArchRepr isa)
   let paddingBlocks :: [PaddingBlock arch]
-      paddingBlocks = [ paddingBlock addr insns
+      paddingBlocks = [ paddingBlock addr insns paddingRepr
                       | H.Entry (Down size) addr <- H.toUnsortedList h2
-                      , Just insns <- return (DLN.nonEmpty (isaMakePadding isa (fromIntegral size)))
+                      , Just insns <- return (DLN.nonEmpty (isaMakePadding isa (fromIntegral size) paddingRepr))
                       ]
 
   -- Traverse the original container and update it with the addresses allocated
@@ -487,13 +488,12 @@ buildAddressHeap :: (MM.MemWidth (MM.ArchAddrWidth arch), Monad m, Typeable arch
 buildAddressHeap strat startAddr blocks = do
   functionToBlocks <- gets (functionBlocks . rwsStats)
   isa <- askISA
-  let dummyJump = isaMakeRelativeJumpTo  isa startAddr startAddr
-      jumpSize = fromIntegral $ sum (fmap (isaInstructionSize isa) dummyJump)
-      (blockToFunctions, disjointFunctions) = findRelocatableFunctionBlocks functionToBlocks
+  let (blockToFunctions, disjointFunctions) = findRelocatableFunctionBlocks functionToBlocks
       smallBlocks = S.fromList
         [ concreteBlockAddress cb
         | wp <- blocks
         , let cb = originalBlock wp
+        , let jumpSize = blockJumpSize isa startAddr cb
         , blockSize isa cb < jumpSize
         ]
       relocatedFunctions = findRelocatedFunctions blockToFunctions functionToBlocks blocks
@@ -503,9 +503,15 @@ buildAddressHeap strat startAddr blocks = do
         WholeFunctionTrampoline -> \addr -> case M.lookup addr blockToFunctions of
           Just [entryPoint] -> entryPoint == addr || entryPoint `S.notMember` redirectableFunctions
           _ -> True
-      (preh, blocks') = F.foldl' (addOriginalBlock isa jumpSize pRedirect) (M.empty, []) blocks
+      (preh, blocks') = F.foldl' (addOriginalBlock isa pRedirect) (M.empty, []) blocks
   h <- coalesceHeap preh
   return (h, blocks')
+
+blockJumpSize :: ISA arch -> ConcreteAddress arch -> ConcreteBlock arch -> Word64
+blockJumpSize isa addr b =
+  withConcreteInstructions b $ \repr _ ->
+    let dummyJump = isaMakeRelativeJumpTo isa addr addr repr
+    in fromIntegral (sum (fmap (isaInstructionSize isa) dummyJump))
 
 -- | Given a mapping from function entry points to the blocks that participate
 -- in that function, produce two things:
@@ -590,7 +596,6 @@ coalesceHeap = go . M.toAscList where
 -- duplicates of unmodified blocks.
 addOriginalBlock :: (MM.MemWidth (MM.ArchAddrWidth arch))
                  => ISA arch
-                 -> Word64
                  -> (ConcreteAddress arch -> Bool)
                  -- ^ A predicate that returns True if the rewriter should
                  -- generate a redirection from the original block to the new
@@ -601,7 +606,7 @@ addOriginalBlock :: (MM.MemWidth (MM.ArchAddrWidth arch))
                  -> (PreAddressHeap arch, [WithProvenance SymbolicBlock arch])
                  -> WithProvenance SymbolicBlock arch
                  -> (PreAddressHeap arch, [WithProvenance SymbolicBlock arch])
-addOriginalBlock isa jumpSize pRedirect (h, wps) wp
+addOriginalBlock isa pRedirect (h, wps) wp
   | status == Modified && not (pRedirect origAddr) =
     let wp' = WithProvenance cb sb Subsumed
     in (M.insert origAddr (fromIntegral bsize) h, wp' : wps)
@@ -617,6 +622,7 @@ addOriginalBlock isa jumpSize pRedirect (h, wps) wp
     spaceSize = fromIntegral (bsize - jumpSize)
     addr      = origAddr `addressAddOffset` fromIntegral jumpSize
     origAddr  = concreteBlockAddress cb
+    jumpSize = blockJumpSize isa addr cb
 
 randomOrder :: RandomSeed -> [a] -> [a]
 randomOrder seed initial = runST $ do

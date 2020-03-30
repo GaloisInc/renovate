@@ -1,6 +1,10 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 -- | The 'ISA' for x86_64
 module Renovate.Arch.X86_64.ISA (
@@ -25,6 +29,7 @@ import           Data.Parameterized.NatRepr
 import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Word ( Word8, Word64 )
 
+import qualified Data.Macaw.Discovery as MD
 import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.Types as MT
 import qualified Data.Macaw.X86 as X86
@@ -38,7 +43,10 @@ import qualified Renovate.Arch.X86_64.Panic as RP
 --
 -- This can fail with exceptions of type 'AssemblyFailure'.  These can
 -- be obtained by instantiating @m@ as either 'Either' or 'IO'.
-assemble :: (C.MonadThrow m) => Instruction () -> m B.ByteString
+assemble :: forall (tp :: R.InstructionArchReprKind X86.X86_64) m
+          . (C.MonadThrow m)
+         => Instruction tp ()
+         -> m B.ByteString
 assemble i =
   case D.assembleInstruction (toFlexInst i) of
     Nothing -> C.throwM (InstructionAssemblyFailure i)
@@ -46,13 +54,36 @@ assemble i =
 
 -- | Disassemble a single instruction from a 'B.ByteString' and return
 -- the instruction and remaining bytes.
-disassemble :: (C.MonadThrow m) => B.ByteString -> m (Int, Instruction ())
-disassemble b =
-  case mii of
-    Nothing -> C.throwM (InstructionDisassmblyFailure1 b bytesRead)
-    Just i -> return (bytesRead, fromFlexInst i)
+disassemble :: (C.MonadThrow m)
+            => MD.ParsedBlock X86.X86_64 ids
+            -> R.ConcreteAddress X86.X86_64
+            -> R.ConcreteAddress X86.X86_64
+            -> B.ByteString
+            -> m (R.ConcreteBlock X86.X86_64)
+disassemble pb start end b0 = do
+  insns0 <- go 0 start b0 []
+  case DLN.nonEmpty insns0 of
+    Nothing -> C.throwM (EmptyBlock start)
+    Just insns -> return (R.concreteBlock start insns onlyRepr pb)
   where
-    (bytesRead, mii) = D.tryDisassemble b
+    go totalRead insnAddr b insns =
+      case D.tryDisassemble b of
+        (bytesRead, Nothing) ->
+          C.throwM (InstructionDisassemblyFailure1 b0 (totalRead + bytesRead))
+        (bytesRead, Just ii) ->
+          let nextAddr = insnAddr `R.addressAddOffset` fromIntegral bytesRead
+          in if | nextAddr > end ->
+                  -- We have parsed an instruction that crosses a block boundary. We
+                  -- should probably give up -- this executable is too wonky.
+                  C.throwM (OverlappingBlocks insnAddr nextAddr end)
+                | nextAddr == end ->
+                  -- The next instruction we would decode starts another
+                  -- block, OR the instruction we just decoded is a
+                  -- terminator, so end the block and stop decoding
+                  return (reverse (fromFlexInst ii : insns))
+                | otherwise ->
+                  -- Otherwise, we just keep decoding
+                  go (totalRead + bytesRead) nextAddr (B.drop bytesRead b) (fromFlexInst ii : insns)
 
 -- | An implementation of the 'ISA' for x86_64.
 --
@@ -62,8 +93,9 @@ isa :: R.ISA X86.X86_64
 isa = R.ISA
   { R.isaInstructionSize = x64Size
   , R.isaJumpType = x64JumpType
+  , R.isaDefaultInstructionArchRepr = R.SomeInstructionArchRepr onlyRepr
   , R.isaMakeRelativeJumpTo = x64MakeRelativeJumpTo
-  , R.isaMaxRelativeJumpSize = bit 31 - 1
+  , R.isaMaxRelativeJumpSize = const (bit 31 - 1)
   , R.isaModifyJumpTarget = x64ModifyJumpTarget
   , R.isaMakePadding = x64MakePadding
   , R.isaSymbolizeAddresses = x64SymbolizeAddresses
@@ -80,22 +112,22 @@ isa = R.ISA
   , R.isaSubtractImmediate = x86SubtractImmediate
   }
 
-x86StackAddress :: R.StackAddress X86.X86_64 -> (Some MT.TypeRepr) -> Value
+x86StackAddress :: R.StackAddress X86.X86_64 tp -> (Some MT.TypeRepr) -> Value tp
 x86StackAddress addr (Some tp) = do
-  let (D.QWordReg base_reg) = R.saBase addr
+  let (D.QWordReg base_reg) = toFlexValue (R.saBase addr)
   let x86_addr = D.Addr_64 D.SS
         (Just base_reg)
         Nothing
         (D.Disp32 $ D.Imm32Concrete $ fromIntegral $ R.saOffset addr)
   case tp of
     MT.BVTypeRepr w
-      | Just Refl <- testEquality w (knownNat   @8)  -> D.Mem8   x86_addr
-      | Just Refl <- testEquality w (knownNat  @16)  -> D.Mem16  x86_addr
-      | Just Refl <- testEquality w (knownNat  @32)  -> D.Mem32  x86_addr
-      | Just Refl <- testEquality w (knownNat  @64)  -> D.Mem64  x86_addr
-      | Just Refl <- testEquality w (knownNat @128)  -> D.Mem128 x86_addr
-    MT.FloatTypeRepr MT.SingleFloatRepr -> D.Mem128 x86_addr
-    MT.FloatTypeRepr MT.DoubleFloatRepr -> D.Mem128 x86_addr
+      | Just Refl <- testEquality w (knownNat   @8)  -> Value (D.Mem8   x86_addr)
+      | Just Refl <- testEquality w (knownNat  @16)  -> Value (D.Mem16  x86_addr)
+      | Just Refl <- testEquality w (knownNat  @32)  -> Value (D.Mem32  x86_addr)
+      | Just Refl <- testEquality w (knownNat  @64)  -> Value (D.Mem64  x86_addr)
+      | Just Refl <- testEquality w (knownNat @128)  -> Value (D.Mem128 x86_addr)
+    MT.FloatTypeRepr MT.SingleFloatRepr -> Value (D.Mem128 x86_addr)
+    MT.FloatTypeRepr MT.DoubleFloatRepr -> Value (D.Mem128 x86_addr)
     _  -> error $ "unexpected move type: " ++ show tp
 
 x86MovName :: Some MT.TypeRepr -> String
@@ -105,71 +137,89 @@ x86MovName (Some tp) = case tp of
   MT.FloatTypeRepr MT.DoubleFloatRepr -> "movsd"
   _ -> error $ "unexpected move type: " ++ show tp
 
-x86YMMToXMM :: Some MT.TypeRepr -> Value -> Value
+x86YMMToXMM :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+             . Some MT.TypeRepr
+            -> Value tp
+            -> Value tp
 x86YMMToXMM (Some tp) val
   | MT.FloatTypeRepr{} <- tp
-  , D.YMMReg reg <- val =
-    D.XMMReg $ D.xmmReg $ D.ymmRegNo reg
+  , Value (D.YMMReg reg) <- val =
+    Value (D.XMMReg $ D.xmmReg $ D.ymmRegNo reg)
   | otherwise =
     val
 
 x86MakeMovInstr
-  :: Some MT.TypeRepr
-  -> Value
-  -> Value
-  -> Instruction TargetAddress
+  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+   . Some MT.TypeRepr
+  -> Value tp
+  -> Value tp
+  -> Instruction tp TargetAddress
 x86MakeMovInstr tp dest src =
-  noAddr $ makeInstr (x86MovName tp) $ map (x86YMMToXMM tp) [dest, src]
+  noAddr $ makeInstr (x86MovName tp) $ map (toFlexValue . x86YMMToXMM tp) [dest, src]
 
 x86Move
-  :: Some MT.TypeRepr
-  -> Value
-  -> Value
-  -> Instruction TargetAddress
+  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+   . Some MT.TypeRepr
+  -> Value tp
+  -> Value tp
+  -> Instruction tp TargetAddress
 x86Move = x86MakeMovInstr
 
 x86MoveImmediate
-  :: Some MT.TypeRepr
-  -> Value
+  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+   . Some MT.TypeRepr
+  -> Value tp
   -> Integer
-  -> Instruction TargetAddress
+  -> Instruction tp TargetAddress
 x86MoveImmediate tp dest_reg imm =
-  x86MakeMovInstr tp dest_reg (D.QWordImm $ D.UImm64Concrete $ fromIntegral imm)
+  x86MakeMovInstr tp dest_reg (Value (D.QWordImm $ D.UImm64Concrete $ fromIntegral imm))
 
 x86Load
-  :: Some MT.TypeRepr
-  -> Value
-  -> R.StackAddress X86.X86_64
-  -> Instruction TargetAddress
+  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+   . Some MT.TypeRepr
+  -> Value tp
+  -> R.StackAddress X86.X86_64 tp
+  -> Instruction tp TargetAddress
 x86Load tp reg addr =
   x86MakeMovInstr tp reg (x86StackAddress addr tp)
 
 x86Store
-  :: Some MT.TypeRepr
-  -> R.StackAddress X86.X86_64
-  -> Value
-  -> Instruction TargetAddress
+  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+   . Some MT.TypeRepr
+  -> R.StackAddress X86.X86_64 tp
+  -> Value tp
+  -> Instruction tp TargetAddress
 x86Store tp addr reg =
   x86MakeMovInstr tp (x86StackAddress addr tp) reg
 
 x86StoreImmediate
-  :: Some MT.TypeRepr
-  -> R.StackAddress X86.X86_64
+  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+   . Some MT.TypeRepr
+  -> R.StackAddress X86.X86_64 tp
   -> Integer
-  -> Instruction TargetAddress
+  -> Instruction tp TargetAddress
 x86StoreImmediate tp addr imm =
-  x86MakeMovInstr tp (x86StackAddress addr tp) (D.QWordImm $ D.UImm64Concrete $ fromIntegral imm)
+  x86MakeMovInstr tp (x86StackAddress addr tp) (Value (D.QWordImm $ D.UImm64Concrete $ fromIntegral imm))
 
-x86AddImmediate :: Value -> Integer -> [Instruction TargetAddress]
+x86AddImmediate :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+                 . Value tp
+                -> Integer
+                -> [Instruction tp TargetAddress]
 x86AddImmediate _ = x86OpSPImmediate $ B.pack [0x4c, 0x01, 0xd4]
 
-x86SubtractImmediate :: Value -> Integer -> [Instruction TargetAddress]
+x86SubtractImmediate :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+                      . Value tp
+                     -> Integer
+                     -> [Instruction tp TargetAddress]
 x86SubtractImmediate _ = x86OpSPImmediate $ B.pack [0x4c, 0x29, 0xd4]
 
 -- x86OpImmediate :: String -> Value -> Integer -> Instruction TargetAddress
 -- x86OpImmediate op reg imm =
 --   noAddr $ makeInstr op [reg, D.DWordImm $ D.Imm32Concrete $ fromIntegral imm]
-x86OpSPImmediate :: B.ByteString -> Integer -> [Instruction TargetAddress]
+x86OpSPImmediate :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+                  . B.ByteString
+                 -> Integer
+                 -> [Instruction tp TargetAddress]
 x86OpSPImmediate op_bytes imm = do
   let tmp_reg = D.QWordReg D.R10
   map noAddr $
@@ -179,7 +229,11 @@ x86OpSPImmediate op_bytes imm = do
 
 -- | Simple adapter for 'x64JumpTypeRaw' with the right type to be used in an
 -- ISA.
-x64JumpType :: Instruction t -> MM.Memory 64 -> R.ConcreteAddress X86.X86_64 -> Some (R.JumpType X86.X86_64)
+x64JumpType :: forall (tp :: R.InstructionArchReprKind X86.X86_64) t
+             . Instruction tp t
+            -> MM.Memory 64
+            -> R.ConcreteAddress X86.X86_64
+            -> Some (R.JumpType X86.X86_64)
 x64JumpType insn _ = x64JumpTypeRaw insn
 
 -- | Classify different kinds of jump instructions.
@@ -187,7 +241,10 @@ x64JumpType insn _ = x64JumpTypeRaw insn
 -- Fortunately, all of the conditional jumps start with 'j', and no
 -- other instructions start with 'j'.  This lets us have an easy case
 -- to handle all of them.
-x64JumpTypeRaw :: Instruction t -> R.ConcreteAddress X86.X86_64 -> Some (R.JumpType X86.X86_64)
+x64JumpTypeRaw :: forall (tp :: R.InstructionArchReprKind X86.X86_64) t
+                . Instruction tp t
+               -> R.ConcreteAddress X86.X86_64
+               -> Some (R.JumpType X86.X86_64)
 x64JumpTypeRaw xi@(XI ii) addr =
   case (D.iiOp ii, map (fst . aoOperand) (D.iiArgs ii)) of
     ("jmp", [D.JumpOffset _ off]) -> Some (R.RelativeJump R.Unconditional addr (fixJumpOffset sz off))
@@ -231,8 +288,12 @@ fixJumpOffset _ o@(D.RelativeOffset {}) = error ("Relative offsets for relocatio
 -- +/- 2GB.
 --
 -- See Note [RelativeJump]
-x64MakeRelativeJumpTo :: R.ConcreteAddress X86.X86_64 -> R.ConcreteAddress X86.X86_64 -> DLN.NonEmpty (Instruction ())
-x64MakeRelativeJumpTo srcAddr targetAddr
+x64MakeRelativeJumpTo :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+                       . R.ConcreteAddress X86.X86_64
+                      -> R.ConcreteAddress X86.X86_64
+                      -> R.InstructionArchRepr X86.X86_64 tp
+                      -> DLN.NonEmpty (Instruction tp ())
+x64MakeRelativeJumpTo srcAddr targetAddr _repr
   | abs jmpOffset > i32Max =
     L.error ("Relative branch is out of range: from " ++ show srcAddr ++
              " to " ++ show targetAddr)
@@ -242,6 +303,7 @@ x64MakeRelativeJumpTo srcAddr targetAddr
              show jmpInstrSize)
   | otherwise = jmpInstr DLN.:| []
   where
+    jmpInstr :: Instruction tp ()
     jmpInstr = makeInstr "jmp"
       [D.JumpOffset D.JSize32 (D.FixedOffset (fromIntegral jmpOffset))]
     jmpInstrSize = fromIntegral $ x64Size jmpInstr
@@ -264,26 +326,34 @@ x64MakeRelativeJumpTo srcAddr targetAddr
     i32Max = fromIntegral (maxBound :: Int32)
 
 x64MakeSymbolicJump
-  :: R.SymbolicAddress X86.X86_64
-  -> [R.TaggedInstruction X86.X86_64 TargetAddress]
-x64MakeSymbolicJump sym_addr = [x64MakeSymbolicJumpOrCall "jmp" sym_addr]
+  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+   . R.SymbolicAddress X86.X86_64
+  -> R.InstructionArchRepr X86.X86_64 tp
+  -> [R.TaggedInstruction X86.X86_64 tp TargetAddress]
+x64MakeSymbolicJump sym_addr _ = [x64MakeSymbolicJumpOrCall "jmp" sym_addr]
 
 x64MakeSymbolicCall
-  :: R.SymbolicAddress X86.X86_64
-  -> R.TaggedInstruction X86.X86_64 TargetAddress
+  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+   . R.SymbolicAddress X86.X86_64
+  -> R.TaggedInstruction X86.X86_64 tp TargetAddress
 x64MakeSymbolicCall = x64MakeSymbolicJumpOrCall "call"
 
 x64MakeSymbolicJumpOrCall
-  :: String
+  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+   . String
   -> R.SymbolicAddress X86.X86_64
-  -> R.TaggedInstruction X86.X86_64 TargetAddress
+  -> R.TaggedInstruction X86.X86_64 tp TargetAddress
 x64MakeSymbolicJumpOrCall op_code sym_addr =
   R.tagInstruction (Just sym_addr) $
     noAddr $ makeInstr op_code [D.JumpOffset D.JSize32 $ D.FixedOffset 0]
 
 -- NOTE: This is called only on jump instructions (the 'R.JumpType' argument is
 -- intended to be evidence of that).
-x64ModifyJumpTarget :: R.ConcreteAddress X86.X86_64 -> R.Instruction X86.X86_64 () -> R.JumpType arch R.HasModifiableTarget -> R.ConcreteAddress X86.X86_64 -> Maybe (DLN.NonEmpty (Instruction ()))
+x64ModifyJumpTarget :: R.ConcreteAddress X86.X86_64
+                    -> R.Instruction X86.X86_64 tp ()
+                    -> R.JumpType arch R.HasModifiableTarget
+                    -> R.ConcreteAddress X86.X86_64
+                    -> Maybe (DLN.NonEmpty (Instruction tp ()))
 x64ModifyJumpTarget srcAddr (XI ii) _jt newTarget =
   case D.iiOp ii of
     'j' : _ -> Just (extendDirectJump newTarget DLN.:| [])
@@ -327,8 +397,8 @@ x64ModifyJumpTarget srcAddr (XI ii) _jt newTarget =
 --
 -- An alternative would be to use the two-byte undefined instruction
 -- @ud2@ where possible and pad the rest with an @int 3@.
-x64MakePadding :: Word64 -> [Instruction ()]
-x64MakePadding nBytes =
+x64MakePadding :: Word64 -> R.InstructionArchRepr X86.X86_64 tp -> [Instruction tp ()]
+x64MakePadding nBytes _ =
   replicate (fromIntegral nBytes) (makeInstr "int3" [])
 
 addrRefToAddress :: (D.AddrRef -> TargetAddress) -> D.Value -> TargetAddress
@@ -346,7 +416,12 @@ addrRefToAddress f v =
     D.FPMem80 a -> f a
     _ -> NoAddress
 
-ripToAbs :: MM.Memory 64 -> R.ConcreteAddress X86.X86_64 -> Instruction () -> D.AddrRef -> TargetAddress
+ripToAbs :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+          . MM.Memory 64
+         -> R.ConcreteAddress X86.X86_64
+         -> Instruction tp ()
+         -> D.AddrRef
+         -> TargetAddress
 ripToAbs mem iStartAddr i ref =
   case ref of
     D.IP_Offset_32 _seg disp -> absoluteDisplacement mem iEndAddr disp
@@ -370,13 +445,13 @@ absoluteDisplacement _mem endAddr disp =
 -- references, so we don't need to update any IP-relative address operands.
 -- However, we do need to extend any jumps we find into jumps with 4 byte
 -- offsets.
-x64SymbolizeAddresses :: MM.Memory 64
-                      -> (R.ConcreteAddress X86.X86_64 -> Maybe (R.SymbolicAddress X86.X86_64))
+x64SymbolizeAddresses :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+                       . MM.Memory 64
                       -> R.ConcreteAddress X86.X86_64
                       -> Maybe (R.SymbolicAddress X86.X86_64)
-                      -> Instruction ()
-                      -> [R.TaggedInstruction X86.X86_64 TargetAddress]
-x64SymbolizeAddresses mem _lookup insnAddr mSymbolicTarget xi@(XI ii)
+                      -> Instruction tp ()
+                      -> [R.TaggedInstruction X86.X86_64 tp TargetAddress]
+x64SymbolizeAddresses mem insnAddr mSymbolicTarget xi@(XI ii)
   | 'j' : _ <- D.iiOp ii = [R.tagInstruction mSymbolicTarget jmpInstr]
   | 'c' : 'a' : 'l' : 'l' : _ <- D.iiOp ii
   , [ AnnotatedOperand { aoOperand = (D.JumpOffset {}, _) } ] <- D.iiArgs ii
@@ -388,7 +463,12 @@ x64SymbolizeAddresses mem _lookup insnAddr mSymbolicTarget xi@(XI ii)
     jmpInstr = XI (jmpInstr0 { D.iiArgs = fmap (saveAbsoluteRipAddresses mem insnAddr xi) (D.iiArgs jmpInstr0) })
 
 
-saveAbsoluteRipAddresses :: MM.Memory 64 -> R.ConcreteAddress X86.X86_64 -> Instruction () -> AnnotatedOperand () -> AnnotatedOperand TargetAddress
+saveAbsoluteRipAddresses :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+                          . MM.Memory 64
+                         -> R.ConcreteAddress X86.X86_64
+                         -> Instruction tp ()
+                         -> AnnotatedOperand ()
+                         -> AnnotatedOperand TargetAddress
 saveAbsoluteRipAddresses mem insnAddr i AnnotatedOperand { aoOperand = (v, ty) } =
   AnnotatedOperand { aoOperand = (I.runIdentity (mapAddrRef promoteRipDisp8 I.Identity v), ty)
                    , aoAnnotation = addrRefToAddress (ripToAbs mem insnAddr i) v
@@ -402,14 +482,20 @@ promoteRipDisp8 ref =
     D.IP_Offset_64 seg (D.Disp8 d) -> I.Identity $ D.IP_Offset_64 seg $ toD32 d
     _ -> I.Identity ref
 
-x64ConcretizeAddresses :: (L.HasCallStack) => MM.Memory 64 -> R.ConcreteAddress X86.X86_64 -> Instruction TargetAddress -> Instruction ()
+x64ConcretizeAddresses :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+                        . (L.HasCallStack)
+                       => MM.Memory 64
+                       -> R.ConcreteAddress X86.X86_64
+                       -> Instruction tp TargetAddress
+                       -> Instruction tp ()
 x64ConcretizeAddresses mem insnAddr xi@(XI ii) =
   XI $ ii { D.iiArgs = fmap (fixRipRelAddresses mem insnAddr xi) (D.iiArgs ii) }
 
-fixRipRelAddresses :: (L.HasCallStack)
+fixRipRelAddresses :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+                    . (L.HasCallStack)
                    => MM.Memory 64
                    -> R.ConcreteAddress X86.X86_64
-                   -> Instruction TargetAddress
+                   -> Instruction tp TargetAddress
                    -> AnnotatedOperand TargetAddress
                    -> AnnotatedOperand ()
 fixRipRelAddresses mem insnAddr i AnnotatedOperand { aoOperand = (v, ty)
@@ -437,9 +523,10 @@ mapAddrRef f ifNotMem v =
     _ -> ifNotMem v
 
 -- FIXME: Guard these arithmetic operations from overflows
-absToRip :: MM.Memory 64
+absToRip :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
+          . MM.Memory 64
          -> R.ConcreteAddress X86.X86_64
-         -> Instruction TargetAddress
+         -> Instruction tp TargetAddress
          -> R.ConcreteAddress X86.X86_64
          -> D.AddrRef
          -> Maybe D.AddrRef

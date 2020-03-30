@@ -23,7 +23,7 @@ import           Renovate.ISA ( ISA(..) )
 
 -- | The types of diagnostic messages that can be generated during rewriting or
 -- recovery.
-data Diagnostic = forall arch t . InstructionIsNotJump (ISA arch) (RB.Instruction arch t)
+data Diagnostic = forall arch t tp . InstructionIsNotJump (ISA arch) (RB.Instruction arch tp t)
                 | forall arch. (MC.MemWidth (MC.ArchAddrWidth arch)) => NoConcreteAddressForSymbolicTarget !(ConcreteAddress arch) !(SymbolicAddress arch) String
                 | forall arch. (MC.MemWidth (MC.ArchAddrWidth arch)) => BlockTooSmallForRedirection (ISA arch) Word64 (RB.ConcreteBlock arch) (RB.ConcretizedBlock arch)
                   -- ^ Indicates that the given original block was too small to hold the

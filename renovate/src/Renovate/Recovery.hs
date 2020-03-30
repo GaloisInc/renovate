@@ -287,8 +287,8 @@ blockInfo recovery mem textAddrRange di = do
 
 data Recovery arch =
   Recovery { recoveryISA :: ISA arch
-           , recoveryDis :: forall m . (C.MonadThrow m) => B.ByteString -> m (Int, Instruction arch ())
-           , recoveryAsm :: forall m . (C.MonadThrow m) => Instruction arch () -> m B.ByteString
+           , recoveryDis :: forall m ids . (C.MonadThrow m) => MC.ParsedBlock arch ids -> ConcreteAddress arch -> ConcreteAddress arch -> B.ByteString -> m (ConcreteBlock arch)
+           , recoveryAsm :: forall m tp . (C.MonadThrow m) => Instruction arch tp () -> m B.ByteString
            , recoveryArchInfo :: MC.ArchitectureInfo arch
            , recoveryHandleAllocator :: C.HandleAllocator
            , recoveryBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
@@ -432,8 +432,10 @@ blockStopAddress blockStarts pb startAddr
 -- the function containing the untranslatable block (Left).  We need this list
 -- to mark functions as incomplete.
 buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow m)
-           => (B.ByteString -> Maybe (Int, Instruction arch ()))
-           -> (Instruction arch () -> Maybe B.ByteString)
+           => (forall ids . MC.ParsedBlock arch ids -> ConcreteAddress arch -> ConcreteAddress arch -> B.ByteString -> Maybe (ConcreteBlock arch))
+           -- ^ A function to disassemble an entire block at once (up to the
+           -- requested number of bytes)
+           -> (forall tp . Instruction arch tp () -> Maybe B.ByteString)
            -- ^ The function to pull a single instruction off of the
            -- byte stream; it returns the number of bytes consumed and
            -- the new instruction.
@@ -443,20 +445,16 @@ buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow
            -> (MC.ArchSegmentOff arch, PU.Some (MC.ParsedBlock arch))
            -- ^ The macaw block to re-disassemble
            -> m (Either (MC.ArchSegmentOff arch) (ConcreteBlock arch))
-buildBlock dis1 asm1 mem blockStarts (funcAddr, (PU.Some pb))
+buildBlock disBlock asm1 mem blockStarts (funcAddr, (PU.Some pb))
   | MC.blockSize pb == 0 = return (Left funcAddr)
   | Just concAddr <- concreteFromSegmentOff mem segAddr = do
       case MC.addrContentsAfter mem (MC.segoffAddr segAddr) of
         Left err -> C.throwM (MemoryError err)
         Right [MC.ByteRegion bs] -> do
           let stopAddr = blockStopAddress blockStarts pb concAddr
-          insns <- go concAddr stopAddr bs []
-          case NEL.nonEmpty insns of
+          case disBlock pb concAddr stopAddr bs of
             Nothing -> C.throwM (EmptyBlock concAddr)
-            Just nonEmptyInsns -> do
-              -- bb <- go concAddr concAddr stopAddr bs []
-              let bb = concreteBlock concAddr nonEmptyInsns pb
-
+            Just bb ->
               -- If we can't re-assemble all of the instructions we have found,
               -- pretend we never saw this block.  Note that the caller will have to
               -- remember this to note that the function containing this block is
@@ -464,36 +462,14 @@ buildBlock dis1 asm1 mem blockStarts (funcAddr, (PU.Some pb))
               --
               -- We do this to avoid re-assembly errors later, where we can't do
               -- anything about it.
-              case all (canAssemble asm1) (concreteBlockInstructions bb) of
-                True -> return (Right bb)
-                False -> return (Left funcAddr)
+              withConcreteInstructions bb $ \_repr insns -> do
+                case all (canAssemble asm1) insns of
+                  True -> return (Right bb)
+                  False -> return (Left funcAddr)
         _ -> C.throwM (NoByteRegionAtAddress (MC.segoffAddr segAddr))
   | otherwise = return (Left funcAddr)
   where
     segAddr = MC.pblockAddr pb
-    addOff       = addressAddOffset
-    go insnAddr stopAddr bs insns = do
-      case dis1 bs of
-        -- Actually, we should probably never hit this case.  We
-        -- should have hit a terminator instruction or end of block
-        -- before running out of bytes...
-        Nothing -> return (reverse insns)
-        Just (bytesRead, i)
-          -- We have parsed an instruction that crosses a block boundary. We
-          -- should probably give up -- this executable is too wonky.
-          | nextAddr > stopAddr -> do
-            C.throwM (OverlappingBlocks insnAddr nextAddr stopAddr)
-
-          -- The next instruction we would decode starts another
-          -- block, OR the instruction we just decoded is a
-          -- terminator, so end the block and stop decoding
-          | nextAddr == stopAddr -> do
-              return (reverse (i : insns))
-
-          -- Otherwise, we just keep decoding
-          | otherwise -> go nextAddr stopAddr (B.drop bytesRead bs) (i : insns)
-          where
-          nextAddr = insnAddr `addOff` fromIntegral bytesRead
 
 -- | Collect the set of basic block addresses of blocks that are contained in incomplete functions
 --

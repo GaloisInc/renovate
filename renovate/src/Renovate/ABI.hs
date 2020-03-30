@@ -1,4 +1,6 @@
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeInType #-}
 -- | An abstract interface for 'ABI's.
 --
 -- There can be more than one 'ABI' for a given 'ISA'.
@@ -20,36 +22,36 @@ import Renovate.BasicBlock
 -- The type parameter 'i' is the instruction type, and 'r' is the
 -- register type.
 data ABI arch =
-  ABI { isReturn :: forall t . Instruction arch t -> Bool
+  ABI { isReturn :: forall t (tp :: InstructionArchReprKind arch) . Instruction arch tp t -> Bool
       -- ^ Return 'True' if the given instruction is a return from a
       -- function.  Note that we will need to extend this somehow to
       -- be able to look at context or use more information from the
       -- code recovery phase to more accurately find returns.
       , pointerSize :: Word8
       -- ^ Number of bytes in a pointer
-      , callerSaveRegisters :: [RegisterType arch]
+      , callerSaveRegisters :: forall tp . InstructionArchRepr arch tp -> [RegisterType arch tp]
       -- ^ The list of caller-save registers for this ABI
-      , clearRegister :: RegisterType arch -> Instruction arch (InstructionAnnotation arch)
+      , clearRegister :: forall tp . InstructionArchRepr arch tp -> RegisterType arch tp -> Instruction arch tp (InstructionAnnotation arch)
       -- ^ Create an instruction to clear a register (i.e., set it to
       -- zero or some other distinguished neutral value).
-      , allocateMemory :: Word32 -> ConcreteAddress arch -> [Instruction arch (InstructionAnnotation arch)]
+      , allocateMemory :: forall tp . InstructionArchRepr arch tp -> Word32 -> ConcreteAddress arch -> [Instruction arch tp (InstructionAnnotation arch)]
       -- ^ Generate a list of instructions that allocate a known (at
       -- rewriting time) number of bytes in the heap and store the
       -- address of the allocated memory block in the provided
       -- address.
-      , computeStackPointerOffset :: ConcreteAddress arch -> [Instruction arch (InstructionAnnotation arch)]
+      , computeStackPointerOffset :: forall tp . InstructionArchRepr arch tp -> ConcreteAddress arch -> [Instruction arch tp (InstructionAnnotation arch)]
       -- ^ Take the value at the address and subtract the stack
       -- pointer from it, storing the result back in the given
       -- address.  It changes the type of the value at the address
       -- from a pointer to an offset from the stack pointer.
-      , saveReturnAddress :: ConcreteAddress arch -> [Instruction arch (InstructionAnnotation arch)]
+      , saveReturnAddress :: forall tp . InstructionArchRepr arch tp  -> ConcreteAddress arch -> [Instruction arch tp (InstructionAnnotation arch)]
       -- ^ Save the return address at an offset from its location on
       -- the stack.  The offset is held in the memory address provided
       -- as the first argument.  Note that this must be installed as
       -- the first code in the function entry, otherwise it will store
       -- garbage.  That restriction could be relaxed if we had frame
       -- pointers, but we can't really count on that.
-      , checkShadowStack :: ConcreteAddress arch -> [Instruction arch (InstructionAnnotation arch)]
+      , checkShadowStack :: forall tp . InstructionArchRepr arch tp -> ConcreteAddress arch -> [Instruction arch tp (InstructionAnnotation arch)]
       -- ^ Check the value on the shadow stack against the return
       -- address on the top of the stack.  Fault if they differ.  The
       -- offset of the shadow stack from the real stack is stored at

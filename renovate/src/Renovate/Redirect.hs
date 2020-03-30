@@ -29,7 +29,6 @@ import           Control.Monad.Trans ( MonadIO, lift )
 import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import qualified Data.List as L
-import qualified Data.List.NonEmpty as DLN
 import           Data.Ord ( comparing )
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Traversable as T
@@ -40,6 +39,7 @@ import qualified Data.Macaw.CFG as MM
 
 import           Renovate.Address
 import           Renovate.BasicBlock
+import qualified Renovate.Config as RC
 import           Renovate.ISA
 import           Renovate.Recovery ( BlockInfo, isIncompleteBlockAddress, biFunctions, biOverlap )
 import           Renovate.Recovery.Overlap ( disjoint )
@@ -76,7 +76,7 @@ redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch
          -- ^ Information about all recovered blocks
          -> (ConcreteAddress arch, ConcreteAddress arch)
          -- ^ start of text section, end of the text section
-         -> (SymbolicBlock arch -> m (Maybe (DLN.NonEmpty (TaggedInstruction arch (InstructionAnnotation arch)))))
+         -> (SymbolicBlock arch -> m (Maybe (RC.ModifiedInstructions arch)))
          -- ^ Instrumentor
          -> MM.Memory (MM.ArchAddrWidth arch)
          -- ^ The memory space
@@ -92,7 +92,8 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
   RM.recordFunctionBlocks (map concreteBlockAddress . fst <$> biFunctions blockInfo)
   transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
     let bsz :: Int
-        bsz = sum (fmap (fromIntegral . isaInstructionSize isa) (concreteBlockInstructions cb))
+        bsz = withConcreteInstructions cb $ \_repr concreteInsns ->
+          sum (fmap (fromIntegral . isaInstructionSize isa) concreteInsns)
     RM.recordDiscoveredBlock (concreteBlockAddress cb) bsz
     -- We only want to instrument blocks that:
     --
@@ -109,11 +110,15 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
              , disjoint isa (biOverlap blockInfo) cb
              ] of
      True ->  do
-       insns' <- lift $ instrumentor sb
-       case insns' of
-         Just insns'' -> do
+       maybeMod <- lift $ instrumentor sb
+       case maybeMod of
+         Just (RC.ModifiedInstructions repr' insns') -> do
            RM.recordInstrumentedBytes bsz
-           let sb' = sb { symbolicBlockInstructions = insns'' }
+           let sb' = symbolicBlock (symbolicBlockOriginalAddress sb)
+                                   (symbolicBlockSymbolicAddress sb)
+                                   insns'
+                                   repr'
+                                   (symbolicBlockSymbolicSuccessor sb)
            return $! WithProvenance cb sb' Modified
          Nothing      ->
            return $! WithProvenance cb sb Unmodified
@@ -133,12 +138,16 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
   let sortedBlocks = L.sortBy (comparing concretizedBlockAddress) (fmap concretizePadding paddingBlocks ++ concatMap unPair (F.toList redirectedBlocks))
   return (sortedBlocks, injectedBlocks)
   where
+    concretizePadding :: PaddingBlock arch -> ConcretizedBlock arch
     concretizePadding pb =
-      concretizedBlock (paddingBlockAddress pb) (paddingBlockInstructions pb)
+      withPaddingInstructions pb $ \repr insns ->
+        concretizedBlock (paddingBlockAddress pb) insns repr
     -- Convert a 'ConcreteBlock' into a 'ConcretizedBlock' by dropping its macaw
     -- block
+    toConcretized :: ConcreteBlock arch -> ConcretizedBlock arch
     toConcretized cb =
-      concretizedBlock (concreteBlockAddress cb) (concreteBlockInstructions cb)
+      withConcreteInstructions cb $ \repr insns ->
+        concretizedBlock (concreteBlockAddress cb) insns repr
     unPair wp =
       case rewriteStatus wp of
         Modified    -> [toConcretized (originalBlock wp), withoutProvenance wp]

@@ -41,24 +41,32 @@ redirectBlock :: (Monad m, InstructionConstraints arch)
               -> RewriterT arch m (WithProvenance ConcretizedBlock arch)
 redirectBlock input =
   case rewriteStatus input of
-    Modified -> do
-      let origBlock = originalBlock input
-      let instrBlock = withoutProvenance input
+    Modified ->
+      case originalBlock input of
+        cb@ConcreteBlock { concreteBlockAddress = addr
+                         , concreteBlockRepr = repr
+                         , concreteDiscoveryBlock = pb
+                         } -> do
+          let instrBlock = withoutProvenance input
 
-      isa <- askISA
-      let origBlockSize = blockSize isa origBlock
-          jmpInsns = isaMakeRelativeJumpTo isa (concreteBlockAddress origBlock) (concretizedBlockAddress instrBlock)
-          jmpSize = instructionStreamSize isa jmpInsns
-      -- FIXME: Can we do this check at a higher level and earlier? It would
-      -- probably fit very well in the top-level redirect loop
-      case origBlockSize < jmpSize of
-        True -> do
-          recordUnrelocatableSize
-          logDiagnostic $ BlockTooSmallForRedirection isa jmpSize origBlock instrBlock
-          return input
-        False -> do
-          let origBlock' = origBlock { concreteBlockInstructions = jmpInsns }
-          return $ WithProvenance origBlock' instrBlock Modified
+          isa <- askISA
+          let origBlockSize = blockSize isa cb
+              jmpInsns = isaMakeRelativeJumpTo isa addr (concretizedBlockAddress instrBlock) repr
+              jmpSize = instructionStreamSize isa jmpInsns
+          -- FIXME: Can we do this check at a higher level and earlier? It would
+          -- probably fit very well in the top-level redirect loop
+          case origBlockSize < jmpSize of
+            True -> do
+              recordUnrelocatableSize
+              logDiagnostic $ BlockTooSmallForRedirection isa jmpSize cb instrBlock
+              return input
+            False -> do
+              let origBlock' = ConcreteBlock { concreteBlockInstructions = jmpInsns
+                                             , concreteBlockAddress = addr
+                                             , concreteBlockRepr = repr
+                                             , concreteDiscoveryBlock = pb
+                                             }
+              return $ WithProvenance origBlock' instrBlock Modified
     Unmodified -> return input
     Immutable -> return input
     Subsumed ->

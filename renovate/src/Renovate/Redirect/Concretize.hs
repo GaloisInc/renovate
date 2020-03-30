@@ -136,9 +136,7 @@ concretizeJumps :: (Monad m, InstructionConstraints arch)
                 -> WithProvenance AddressAssignedBlock arch
                 -> RewriterT arch m (WithProvenance ConcretizedBlock arch)
 concretizeJumps concreteAddressMap wp
-  | changed status = do
-    let symInsns = symbolicBlockInstructions sb
-
+  | changed status = withSymbolicInstructions sb $ \repr symInsns -> do
     -- Concretize all of the instructions (including jumps)
     let concretizeInstrs = T.traverse (mapJumpAddress concreteAddressMap) symInsns
     (concretizedInstrsWithSizes, nextAddr) <- S.runStateT concretizeInstrs firstInstrAddr
@@ -168,7 +166,7 @@ concretizeJumps concreteAddressMap wp
     let (instrs, concretizedBlockSize) = fromMaybe (baseBlockInstrs, baseBlockSize) $ do
           concreteFallthroughTarget <- mConcreteFallthroughTarget
           -- The fallthrough will be at 'nextAddr' (following the last instruction)
-          let jmp = isaMakeRelativeJumpTo isa nextAddr concreteFallthroughTarget
+          let jmp = isaMakeRelativeJumpTo isa nextAddr concreteFallthroughTarget repr
           let jmpSize = sum (fmap (isaInstructionSize isa) jmp)
           return (baseBlockInstrs ++ F.toList jmp, baseBlockSize + fromIntegral jmpSize)
 
@@ -177,18 +175,19 @@ concretizeJumps concreteAddressMap wp
     -- the layout is invalid and broken)
     assert (concretizedBlockSize <= maxSize) (return ())
 
-    let padding = isaMakePadding isa (maxSize - concretizedBlockSize)
+    let padding = isaMakePadding isa (maxSize - concretizedBlockSize) repr
     case DLN.nonEmpty (instrs ++ padding) of
       Nothing ->
         RP.panic RP.Concretize "concretizeJumps" [ "Generated an empty basic block at address: " ++ show firstInstrAddr
                                                  , "  for original block: " ++ show (concreteBlockAddress cb)
                                                  ]
       Just instrs' -> do
-        let sb' = concretizedBlock firstInstrAddr instrs'
+        let sb' = concretizedBlock firstInstrAddr instrs' repr
         return $! WithProvenance cb sb' status
   | otherwise = do
-      let cb' = concretizedBlock (concreteBlockAddress cb) (concreteBlockInstructions cb)
-      return $ WithProvenance cb cb' status
+      withConcreteInstructions cb $ \repr insns -> do
+        let cb' = concretizedBlock (concreteBlockAddress cb) insns repr
+        return $ WithProvenance cb cb' status
   where
     cb = originalBlock wp
     aab = withoutProvenance wp
@@ -204,11 +203,11 @@ concretizeJumps concreteAddressMap wp
 -- type, but change its target.  This may require changing the opcode,
 -- as a longer jump may require a different instruction (e.g., 8 bit
 -- to 32 bit offset).
-mapJumpAddress :: forall m arch
+mapJumpAddress :: forall m arch tp
                 . (Monad m, InstructionConstraints arch)
                => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
-               -> TaggedInstruction arch (InstructionAnnotation arch)
-               -> S.StateT (ConcreteAddress arch) (RewriterT arch m) (DLN.NonEmpty (Instruction arch ()), Sum Word64)
+               -> TaggedInstruction arch tp (InstructionAnnotation arch)
+               -> S.StateT (ConcreteAddress arch) (RewriterT arch m) (DLN.NonEmpty (Instruction arch tp ()), Sum Word64)
 mapJumpAddress concreteAddressMap sf = do
   insnAddr <- S.get
   isa <- S.lift askISA
@@ -244,7 +243,7 @@ data WithModifiableJump arch =
 
 withModifiableJump :: ISA arch
                    -> MC.Memory (MC.ArchAddrWidth arch)
-                   -> Instruction arch ()
+                   -> Instruction arch tp ()
                    -> ConcreteAddress arch
                    -- ^ The address of the instruction
                    -> WithModifiableJump arch

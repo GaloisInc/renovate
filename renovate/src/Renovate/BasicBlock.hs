@@ -1,5 +1,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeInType #-}
 -- | Tools for working with 'BasicBlock's
 --
 -- This includes functions to convert between concrete and symbolic
@@ -8,37 +11,38 @@
 module Renovate.BasicBlock (
   -- * Blocks
   -- ** Concrete blocks
-  ConcreteBlock,
+  ConcreteBlock(..),
   concreteBlock,
-  concreteBlockAddress,
-  concreteBlockInstructions,
-  concreteDiscoveryBlock,
+  withConcreteInstructions,
   -- * Symbolic blocks
   SymbolicBlock,
   symbolicBlock,
   symbolicBlockOriginalAddress,
   symbolicBlockSymbolicAddress,
-  symbolicBlockInstructions,
   symbolicBlockSymbolicSuccessor,
   symbolicBlockSize,
   symbolicBlockWithoutSuccessor,
+  withSymbolicInstructions,
   -- ** Padding blocks
   PaddingBlock,
   paddingBlock,
   paddingBlockAddress,
-  paddingBlockInstructions,
+  withPaddingInstructions,
   -- ** Concretized blocks
   ConcretizedBlock,
   concretizedBlock,
   concretizedBlockAddress,
-  concretizedBlockInstructions,
+  withConcretizedInstructions,
   -- ** Concrete block helpers
   HasConcreteAddresses,
   blockAddress,
   blockSize,
-  instructionAddresses,
+  withInstructionAddresses,
   instructionAddresses',
   -- * Instructions
+  InstructionArchRepr,
+  InstructionArchReprKind,
+  SomeInstructionArchRepr(..),
   Instruction,
   InstructionAnnotation,
   ToGenericInstruction(..),
@@ -82,25 +86,33 @@ class HasConcreteAddresses b where
   -- We cannot simply make a @Map a Address@ because two identical
   -- instructions could easily occur within the same 'BasicBlock', to
   -- say nothing of the entire program.
-  instructionAddresses :: (MC.MemWidth (MC.ArchAddrWidth arch))
-                       => ISA arch
-                       -> b arch
-                       -> DLN.NonEmpty (Instruction arch (), ConcreteAddress arch)
+  withInstructionAddresses :: (MC.MemWidth (MC.ArchAddrWidth arch))
+                           => ISA arch
+                           -> b arch
+                           -> (forall (tp :: InstructionArchReprKind arch)
+                               . ( MC.MemWidth (MC.ArchAddrWidth arch)
+                                 , Show (Instruction arch tp ())
+                                 , PD.Pretty (Instruction arch tp ())
+                                 )
+                                => InstructionArchRepr arch tp -> DLN.NonEmpty (Instruction arch tp (), ConcreteAddress arch) -> a)
+                           -> a
   -- | Compute the size of a block in bytes.
   blockSize :: ISA arch -> b arch -> Word64
 
   blockAddress :: b arch -> ConcreteAddress arch
 
 instance HasConcreteAddresses ConcreteBlock where
-  instructionAddresses isa bb =
-    instructionAddresses' isa id (concreteBlockAddress bb) (concreteBlockInstructions bb)
-  blockSize isa = instructionStreamSize isa . F.toList . concreteBlockInstructions
+  withInstructionAddresses isa (ConcreteBlock addr insns repr _) k =
+    k repr (instructionAddresses' isa id addr insns)
+  blockSize isa (ConcreteBlock _ insns _ _) =
+    instructionStreamSize isa (F.toList insns)
   blockAddress = concreteBlockAddress
 
 instance HasConcreteAddresses ConcretizedBlock where
-  instructionAddresses isa bb =
-    instructionAddresses' isa id (concretizedBlockAddress bb) (concretizedBlockInstructions bb)
-  blockSize isa = instructionStreamSize isa . F.toList . concretizedBlockInstructions
+  withInstructionAddresses isa (ConcretizedBlock addr insns repr) k =
+    k repr (instructionAddresses' isa id addr insns)
+  blockSize isa (ConcretizedBlock _ insns _) =
+    instructionStreamSize isa (F.toList insns)
   blockAddress = concretizedBlockAddress
 
 -- | Compute the addresses of each instruction in a list, given a
@@ -113,7 +125,7 @@ instructionAddresses' :: (MC.MemWidth (MC.ArchAddrWidth arch)
                          , T.Traversable t
                          )
                       => ISA arch
-                      -> (x -> Instruction arch ())
+                      -> (x -> Instruction arch tp ())
                       -> ConcreteAddress arch
                       -> t x
                       -> t (x, ConcreteAddress arch)
@@ -125,7 +137,7 @@ instructionAddresses' isa accessor startAddr insns =
       in (absAddr, (instr, addr))
 
 -- | Compute the size of a list of instructions, in bytes.
-instructionStreamSize :: (Functor f, F.Foldable f) => ISA arch -> f (Instruction arch t) -> Word64
+instructionStreamSize :: (Functor f, F.Foldable f) => ISA arch -> f (Instruction arch tp t) -> Word64
 instructionStreamSize isa insns =
   sum $ fmap (fromIntegral . isaInstructionSize isa) insns
 
@@ -156,12 +168,10 @@ symbolicBlockSize :: (HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch))
                   -> ConcreteAddress arch
                   -> SymbolicBlock arch
                   -> Word64
-symbolicBlockSize isa mem addr sb =
+symbolicBlockSize isa mem addr (SymbolicBlock origAddr _symAddr insns repr mSymSucc) =
   fromIntegral (basicInstSize + jumpSizes)
   where
-    origAddr = symbolicBlockOriginalAddress sb
-
-    instrs0 = fmap projectInstruction (symbolicBlockInstructions sb)
+    instrs0 = fmap projectInstruction insns -- (symbolicBlockInstructions sb)
     concreteInstrs = fmap (isaConcretizeAddresses isa mem origAddr) instrs0
 
     -- Determine what (if any) sequence of instructions we need to add to handle
@@ -169,8 +179,8 @@ symbolicBlockSize isa mem addr sb =
     fallthroughInstrSeq = fromMaybe [] $ do
       -- Guard; fail if there is no symbolic successor (and then return 0 via
       -- the fromMaybe)
-      _ <- symbolicBlockSymbolicSuccessor sb
-      return (F.toList (isaMakeRelativeJumpTo isa origAddr origAddr))
+      _ <- mSymSucc
+      return (F.toList (isaMakeRelativeJumpTo isa origAddr origAddr repr))
 
     -- Split the instructions into normal instructions and jump instructions
     -- that need to be modified (while keeping around the type-level evidence
@@ -182,12 +192,12 @@ symbolicBlockSize isa mem addr sb =
     -- only kept them as a type-level proof that we didn't mix any instruction
     -- types)
     basicInstSize = sum $ fmap (fromIntegral . isaInstructionSize isa) (fmap fst standardInstructions)
-    jumpSizes = sum $ fmap (computeJumpSize isa origAddr addr) taggedJumps
+    jumpSizes = sum $ fmap (computeJumpSize isa repr origAddr addr) taggedJumps
 
     -- We don't have the real fallthrough address because it hasn't been
     -- allocated yet.  We can substitute in a fake value here to compute the
     -- size that the jump will ultimately require
-    fakeTarget = addr `addressAddOffset` fromIntegral (isaMaxRelativeJumpSize isa)
+    fakeTarget = addr `addressAddOffset` fromIntegral (isaMaxRelativeJumpSize isa repr)
 
 -- | Split instructions into regular instructions and jumps that need to be
 -- fixed up, while retaining type-level evidence that the jumps are actually jumps
@@ -201,12 +211,12 @@ symbolicBlockSize isa mem addr sb =
 partitionModifiableJumps :: ISA arch
                          -> MC.Memory (MC.ArchAddrWidth arch)
                          -> ConcreteAddress arch
-                         -> Instruction arch t
-                         -> ( [(Instruction arch t, JumpType arch NoModifiableTarget)]
-                            , [(Instruction arch t, JumpType arch HasModifiableTarget)]
+                         -> Instruction arch tp t
+                         -> ( [(Instruction arch tp t, JumpType arch NoModifiableTarget)]
+                            , [(Instruction arch tp t, JumpType arch HasModifiableTarget)]
                             )
-                         -> ( [(Instruction arch t, JumpType arch NoModifiableTarget)]
-                            , [(Instruction arch t, JumpType arch HasModifiableTarget)]
+                         -> ( [(Instruction arch tp t, JumpType arch NoModifiableTarget)]
+                            , [(Instruction arch tp t, JumpType arch HasModifiableTarget)]
                             )
 partitionModifiableJumps isa mem addr instr (regularInstrs, jumpInstrs) =
   case isaJumpType isa instr mem addr of
@@ -231,11 +241,12 @@ computeJumpSize :: ( HasCallStack
                    , MC.MemWidth (MC.ArchAddrWidth arch)
                    )
                 => ISA arch
+                -> InstructionArchRepr arch tp
                 -> ConcreteAddress arch
                 -> ConcreteAddress arch
-                -> (Instruction arch (), JumpType arch HasModifiableTarget)
+                -> (Instruction arch tp (), JumpType arch HasModifiableTarget)
                 -> Int
-computeJumpSize isa origAddr addr (insn, jt) =
+computeJumpSize isa repr origAddr addr (insn, jt) =
   -- Add any necessary fallthroughs; this step requires a concrete
   -- instruction, which is why we concretized first
   case isaModifyJumpTarget isa addr insn jt fakeTarget of
@@ -247,24 +258,25 @@ computeJumpSize isa origAddr addr (insn, jt) =
     Just jmpSeq -> sum (fmap instrSize jmpSeq)
   where
     instrSize = fromIntegral . isaInstructionSize isa
-    fakeTarget = addr `addressAddOffset` fromIntegral (isaMaxRelativeJumpSize isa)
+    fakeTarget = addr `addressAddOffset` fromIntegral (isaMaxRelativeJumpSize isa repr)
 
 -- | Return the 'JumpType' of the terminator instruction (if any)
 --
 -- Note that blocks cannot be empty
 terminatorType :: (MC.MemWidth (MC.ArchAddrWidth arch)) => ISA arch -> MC.Memory (MC.ArchAddrWidth arch) -> ConcreteBlock arch -> Some (JumpType arch)
 terminatorType isa mem b =
-  let (termInsn, addr) = DLN.last (instructionAddresses isa b)
-  in isaJumpType isa termInsn mem addr
+  withInstructionAddresses isa b $ \_repr insns ->
+    let (termInsn, addr) = DLN.last insns
+    in isaJumpType isa termInsn mem addr
 
 prettyConcreteBlock :: (MC.MemWidth (MC.ArchAddrWidth arch)) => ISA arch -> ConcreteBlock arch -> PD.Doc ann
-prettyConcreteBlock isa b =
-  PD.vsep [ PD.pretty (concreteBlockAddress b) PD.<> PD.pretty ":"
-          , PD.indent 2 (PD.vsep (map (PD.pretty . isaPrettyInstruction isa) (F.toList (concreteBlockInstructions b))))
+prettyConcreteBlock isa (ConcreteBlock addr insns _repr _pb) =
+  PD.vsep [ PD.pretty addr PD.<> PD.pretty ":"
+          , PD.indent 2 (PD.vsep (map (PD.pretty . isaPrettyInstruction isa) (F.toList insns)))
           ]
 
 prettyConcretizedBlock :: (MC.MemWidth (MC.ArchAddrWidth arch)) => ISA arch -> ConcretizedBlock arch -> PD.Doc ann
-prettyConcretizedBlock isa b =
-  PD.vsep [ PD.pretty (concretizedBlockAddress b) PD.<> PD.pretty ":"
-          , PD.indent 2 (PD.vsep (map (PD.pretty . isaPrettyInstruction isa) (F.toList (concretizedBlockInstructions b))))
+prettyConcretizedBlock isa (ConcretizedBlock addr insns _repr) =
+  PD.vsep [ PD.pretty addr PD.<> PD.pretty ":"
+          , PD.indent 2 (PD.vsep (map (PD.pretty . isaPrettyInstruction isa) (F.toList insns)))
           ]

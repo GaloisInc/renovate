@@ -4,6 +4,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE UndecidableInstances #-}
 -- | This module defines the interface required for describing an 'ISA'
 -- to the rewriter.
@@ -25,8 +26,8 @@ import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.Types as MT
 
-import Renovate.Address
-import Renovate.BasicBlock.Types ( Instruction, InstructionAnnotation, RegisterType, TaggedInstruction )
+import qualified Renovate.Address as RA
+import           Renovate.BasicBlock.Types
 
 -- | The variety of a jump: either conditional or unconditional.  This
 -- is used as a tag for 'JumpType's.  One day, we could model the type
@@ -53,17 +54,17 @@ type NoModifiableTarget = 'NoModifiableTarget
 -- block recovery: execution continues after the return.
 data JumpType arch k where
   -- | A relative jump by some offset in bytes, which could be negative.  The
-  -- 'ConcreteAddress' is the address from which the jump was issued.
-  RelativeJump :: JumpCondition -> ConcreteAddress arch -> MM.MemWord (MM.ArchAddrWidth arch) -> JumpType arch HasModifiableTarget
+  -- 'RA.ConcreteAddress' is the address from which the jump was issued.
+  RelativeJump :: JumpCondition -> RA.ConcreteAddress arch -> MM.MemWord (MM.ArchAddrWidth arch) -> JumpType arch HasModifiableTarget
   -- | A jump to an absolute address
-  AbsoluteJump :: JumpCondition -> ConcreteAddress arch -> JumpType arch HasModifiableTarget
+  AbsoluteJump :: JumpCondition -> RA.ConcreteAddress arch -> JumpType arch HasModifiableTarget
   -- | A jump type for indirect jumps, which end blocks but do not let us find
   -- new code.
   IndirectJump :: JumpCondition -> JumpType arch NoModifiableTarget
   -- | A call to a known location expressed as an offset from the jump location
   -- (note, this might be difficult to fill in for RISC architectures - macaw
   -- would be better suited to finding this information)
-  DirectCall :: ConcreteAddress arch -> MM.MemWord (MM.ArchAddrWidth arch) -> JumpType arch HasModifiableTarget
+  DirectCall :: RA.ConcreteAddress arch -> MM.MemWord (MM.ArchAddrWidth arch) -> JumpType arch HasModifiableTarget
   -- | A call to an unknown location
   IndirectCall :: JumpType arch NoModifiableTarget
   -- | A possibly conditional return
@@ -92,28 +93,36 @@ deriving instance Eq (JumpType arch k)
 -- See separate @renovate-<arch>@ packages for actual 'ISA'
 -- definitions.
 data ISA arch = ISA
-  { isaInstructionSize :: forall t . Instruction arch t -> Word8
+  { isaInstructionSize :: forall t tp . Instruction arch tp t -> Word8
     -- ^ Compute the size of an instruction in bytes
-  , isaSymbolizeAddresses :: MM.Memory (MM.ArchAddrWidth arch)
-                          -> (ConcreteAddress arch -> Maybe (SymbolicAddress arch))
-                          -> ConcreteAddress arch
-                          -> Maybe (SymbolicAddress arch)
-                          -> Instruction arch ()
-                          -> [TaggedInstruction arch (InstructionAnnotation arch)]
+  , isaSymbolizeAddresses :: forall tp
+                           . MM.Memory (MM.ArchAddrWidth arch)
+                          -> RA.ConcreteAddress arch
+                          -> Maybe (RA.SymbolicAddress arch)
+                          -> Instruction arch tp ()
+                          -> [TaggedInstruction arch tp (InstructionAnnotation arch)]
     -- ^ Abstract instructions and annotate them.
     --
-    -- * The 'ConcreteAddress' is the address of the instruction
+    -- * The 'RA.ConcreteAddress' is the address of the instruction
     --
-    -- * The 'SymbolicAddress' (if any) is the direct jump target (possibly conditional) if any
+    -- * The 'RA.SymbolicAddress' (if any) is the direct jump target (possibly conditional) if any
     --
     -- NOTE: This function is allowed to return larger instructions now and,
     -- in fact, may return extra instructions. We also now allow the
     -- concretization phase to increase the size of the instructions, provided
     -- that concretizing to targets that are 'isaMaxRelativeJumpSize' far away
     -- has the worst case size behavior.
-  , isaConcretizeAddresses :: MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> Instruction arch (InstructionAnnotation arch) -> Instruction arch ()
+  , isaConcretizeAddresses :: forall tp
+                            . MM.Memory (MM.ArchAddrWidth arch)
+                           -> RA.ConcreteAddress arch
+                           -> Instruction arch tp (InstructionAnnotation arch)
+                           -> Instruction arch tp ()
     -- ^ Remove the annotation, with possible post-processing.
-  , isaJumpType :: forall t . Instruction arch t -> MM.Memory (MM.ArchAddrWidth arch) -> ConcreteAddress arch -> Some (JumpType arch)
+  , isaJumpType :: forall t tp
+                 . Instruction arch tp t
+                -> MM.Memory (MM.ArchAddrWidth arch)
+                -> RA.ConcreteAddress arch
+                -> Some (JumpType arch)
     -- ^ Test if an instruction is a jump; if it is, return some
     -- metadata about the jump (destination or offset).
     --
@@ -124,16 +133,25 @@ data ISA arch = ISA
     --
     -- The 'Address' parameter is the address of the instruction,
     -- which is needed to resolve relative jumps.
-  , isaMakeRelativeJumpTo :: ConcreteAddress arch -> ConcreteAddress arch -> DLN.NonEmpty (Instruction arch ())
-    -- ^ Create a relative jump from the first 'ConcreteAddress'
+  , isaMakeRelativeJumpTo :: forall tp
+                           . RA.ConcreteAddress arch
+                          -> RA.ConcreteAddress arch
+                          -> InstructionArchRepr arch tp
+                          -> DLN.NonEmpty (Instruction arch tp ())
+    -- ^ Create a relative jump from the first 'RA.ConcreteAddress'
     -- to the second.  This will call error if the range is too
     -- far (see 'isaMaxRelativeJumpSize').
-  , isaMaxRelativeJumpSize :: Word64
+  , isaMaxRelativeJumpSize :: forall tp . InstructionArchRepr arch tp -> Word64
     -- ^ How far can this architecture's unconditional relative jumps reach?
     -- New code blocks will be laid out in virtual address space within this
     -- many bytes of the original code blocks, so that the two can jump to each
     -- other as necessary.
-  , isaModifyJumpTarget :: ConcreteAddress arch -> Instruction arch () -> JumpType arch HasModifiableTarget -> ConcreteAddress arch -> Maybe (DLN.NonEmpty (Instruction arch ()))
+  , isaModifyJumpTarget :: forall tp
+                         . RA.ConcreteAddress arch
+                        -> Instruction arch tp ()
+                        -> JumpType arch HasModifiableTarget
+                        -> RA.ConcreteAddress arch
+                        -> Maybe (DLN.NonEmpty (Instruction arch tp ()))
     -- ^ Modify the given jump instruction, accounting for any fallthrough behavior specified
     --
     -- The first argument is the address of the original jump instruction
@@ -146,64 +164,77 @@ data ISA arch = ISA
     -- pass in a manually-constructed jump type to circumvent the protection.
     --
     -- The fourth argument is the concretized new target
-  , isaMakePadding :: Word64 -> [Instruction arch ()]
+  , isaDefaultInstructionArchRepr :: SomeInstructionArchRepr arch
+  -- ^ The default arch repr to use if there is nothing else, used in particular
+  -- in the creation of padding.
+  , isaMakePadding :: forall tp . Word64 -> InstructionArchRepr arch tp -> [Instruction arch tp ()]
     -- ^ Make the given number of bytes of padding instructions.
     -- The semantics of the instruction stream should either be
     -- no-ops or halts (i.e., not meant to be executed).
   , isaMakeSymbolicJump
-      :: SymbolicAddress arch
-      -> [TaggedInstruction arch (InstructionAnnotation arch)]
+      :: forall tp
+       . RA.SymbolicAddress arch
+      -> InstructionArchRepr arch tp
+      -> [TaggedInstruction arch tp (InstructionAnnotation arch)]
   -- ^ Make an unconditional jump that takes execution to the given symbolic
   -- target.
   , isaMakeSymbolicCall
-      :: SymbolicAddress arch
-      -> TaggedInstruction arch (InstructionAnnotation arch)
+      :: forall tp
+       . RA.SymbolicAddress arch
+      -> TaggedInstruction arch tp (InstructionAnnotation arch)
   -- ^ Make an call that takes execution to the given symbolic target.
-  , isaPrettyInstruction :: forall t . Instruction arch t -> String
+  , isaPrettyInstruction :: forall t tp. Instruction arch tp t -> String
   -- ^ Pretty print an instruction for diagnostic purposes
   , isaMove
-      :: Some MT.TypeRepr
-      -> RegisterType arch
-      -> RegisterType arch
-      -> Instruction arch (InstructionAnnotation arch)
+      :: forall tp
+       . Some MT.TypeRepr
+      -> RegisterType arch tp
+      -> RegisterType arch tp
+      -> Instruction arch tp (InstructionAnnotation arch)
   , isaMoveImmediate
-      :: Some MT.TypeRepr
-      -> RegisterType arch
+      :: forall tp
+       . Some MT.TypeRepr
+      -> RegisterType arch tp
       -> Integer
-      -> Instruction arch (InstructionAnnotation arch)
+      -> Instruction arch tp (InstructionAnnotation arch)
   , isaLoad
-      :: Some MT.TypeRepr
-      -> RegisterType arch
-      -> StackAddress arch
-      -> Instruction arch (InstructionAnnotation arch)
+      :: forall tp
+       . Some MT.TypeRepr
+      -> RegisterType arch tp
+      -> StackAddress arch tp
+      -> Instruction arch tp (InstructionAnnotation arch)
   , isaStore
-      :: Some MT.TypeRepr
-      -> StackAddress arch
-      -> RegisterType arch
-      -> Instruction arch (InstructionAnnotation arch)
+      :: forall tp
+       . Some MT.TypeRepr
+      -> StackAddress arch tp
+      -> RegisterType arch tp
+      -> Instruction arch tp (InstructionAnnotation arch)
   , isaStoreImmediate
-      :: Some MT.TypeRepr
-      -> StackAddress arch
+      :: forall tp
+       . Some MT.TypeRepr
+      -> StackAddress arch tp
       -> Integer
-      -> Instruction arch (InstructionAnnotation arch)
+      -> Instruction arch tp (InstructionAnnotation arch)
   , isaAddImmediate
-      :: RegisterType arch
+      :: forall tp
+       . RegisterType arch tp
       -> Integer
-      -> [Instruction arch (InstructionAnnotation arch)]
+      -> [Instruction arch tp (InstructionAnnotation arch)]
   , isaSubtractImmediate
-      :: RegisterType arch
+      :: forall tp
+       . RegisterType arch tp
       -> Integer
-      -> [Instruction arch (InstructionAnnotation arch)]
+      -> [Instruction arch tp (InstructionAnnotation arch)]
   }
 
-data StackAddress arch = StackAddress
-  { saBase :: RegisterType arch
+data StackAddress arch (tp :: InstructionArchReprKind arch) = StackAddress
+  { saBase :: RegisterType arch tp
   , saOffset :: Integer
   }
 
-deriving instance Eq (RegisterType arch) => Eq (StackAddress arch)
-deriving instance Ord (RegisterType arch) => Ord (StackAddress arch)
-deriving instance Show (RegisterType arch) => Show (StackAddress arch)
+deriving instance Eq (RegisterType arch tp) => Eq (StackAddress arch tp)
+deriving instance Ord (RegisterType arch tp) => Ord (StackAddress arch tp)
+deriving instance Show (RegisterType arch tp) => Show (StackAddress arch tp)
 
 {-
 

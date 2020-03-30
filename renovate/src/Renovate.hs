@@ -30,6 +30,7 @@ module Renovate
   LB.CompactOrdering(..),
   C.AnalyzeOnly(..),
   C.AnalyzeAndRewrite(..),
+  C.ModifiedInstructions(..),
   C.HasAnalysisEnv(..),
   C.HasSymbolicBlockMap(..),
   C.RenovateConfig(..),
@@ -40,22 +41,24 @@ module Renovate
   -- * Basic Blocks
   -- ** Concrete blocks
   B.ConcreteBlock,
+  B.concreteBlock,
   B.concreteBlockAddress,
-  B.concreteBlockInstructions,
+  B.withConcreteInstructions,
+  B.concreteDiscoveryBlock,
   -- ** Symbolic blocks
   B.SymbolicBlock,
   B.symbolicBlockOriginalAddress,
   B.symbolicBlockSymbolicAddress,
-  B.symbolicBlockInstructions,
+  B.withSymbolicInstructions,
   -- ** Concretized blocks
   B.ConcretizedBlock,
   B.concretizedBlockAddress,
-  B.concretizedBlockInstructions,
+  B.withConcretizedInstructions,
   -- ** Block helpers
   B.HasConcreteAddresses,
   B.blockAddress,
   B.blockSize,
-  B.instructionAddresses,
+  B.withInstructionAddresses,
   B.instructionAddresses',
   -- ** Others
   Recovery.BlockInfo(..),
@@ -71,6 +74,9 @@ module Renovate
   B.tagInstruction,
   B.projectInstruction,
   B.symbolicTarget,
+  B.InstructionArchRepr,
+  B.InstructionArchReprKind,
+  B.SomeInstructionArchRepr(..),
   B.Instruction,
   B.InstructionAnnotation,
   B.RegisterType,

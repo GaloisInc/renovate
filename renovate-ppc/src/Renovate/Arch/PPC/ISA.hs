@@ -180,12 +180,11 @@ ppcConcretizeAddresses _mem _addr i =
 -- target is specified through the symbolic target.
 ppcSymbolizeAddresses :: (MM.MemWidth (MM.ArchAddrWidth arch), R.Instruction arch ~ Instruction)
                       => MM.Memory (MM.ArchAddrWidth arch)
-                      -> (R.ConcreteAddress arch -> Maybe (R.SymbolicAddress arch))
                       -> R.ConcreteAddress arch
                       -> Maybe (R.SymbolicAddress arch)
                       -> Instruction ()
                       -> [R.TaggedInstruction arch (TargetAddress arch)]
-ppcSymbolizeAddresses _mem _lookupSymAddr _insnAddr mSymbolicTarget i = case unI i of
+ppcSymbolizeAddresses _mem _insnAddr mSymbolicTarget i = case unI i of
   D.Instruction opc operands ->
     let newInsn = D.Instruction (coerce opc) (FC.fmapFC annotateNull operands)
     in [R.tagInstruction mSymbolicTarget (I newInsn)]

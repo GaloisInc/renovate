@@ -67,8 +67,7 @@ data FunctionCFG arch = FunctionCFG { cfgEntry :: ConcreteAddress arch
                                    , cfgCompletion :: Completion
                                    -- ^ Whether or not the CFG is complete
                                    }
-deriving instance ( Show (Instruction arch ())
-                  , MM.MemWidth (MM.RegAddrWidth (MM.ArchReg arch)) )
+deriving instance ( MM.MemWidth (MM.RegAddrWidth (MM.ArchReg arch)) )
   => Show (FunctionCFG arch)
 
 instance Eq (FunctionCFG arch) where
@@ -148,32 +147,32 @@ processWorklist = do
         Nothing -> L.error $ "Address " <> show addr <> " not found in blocks"
       isa <- RWS.asks envISA
       mem <- RWS.asks envMem
-      let insns = instructionAddresses isa b
-      let (lastInsn, insnAddr) = DLN.last insns
-          addSuccessor :: M arch ()
-          addSuccessor = nextBlockAddress b >>= addCFGEdge addr
-          addCond :: JumpCondition -> M arch ()
-          addCond Unconditional = return ()
-          addCond Conditional = addSuccessor
-      () <- case isaJumpType isa lastInsn mem insnAddr of
-        -- Fallthrough to the next block
-        Some NoJump -> addSuccessor
-        Some (Return cond) -> do
-          addReturnBlock addr
-          addCond cond
-        Some (RelativeJump cond jaddr off) -> do
-          let target = jaddr `addressAddOffset` off
-          addCFGEdge addr target
-          addCond cond
-        Some (AbsoluteJump cond dst) -> do
-          addCFGEdge addr dst
-          addCond cond
-        Some (IndirectJump cond) -> do
-          addCond cond
-          markFunctionIncomplete
-        Some (DirectCall {}) -> addSuccessor
-        Some IndirectCall -> addSuccessor
-      processWorklist
+      withInstructionAddresses isa b $ \_repr insns -> do
+        let (lastInsn, insnAddr) = DLN.last insns
+            addSuccessor :: M arch ()
+            addSuccessor = nextBlockAddress b >>= addCFGEdge addr
+            addCond :: JumpCondition -> M arch ()
+            addCond Unconditional = return ()
+            addCond Conditional = addSuccessor
+        () <- case isaJumpType isa lastInsn mem insnAddr of
+          -- Fallthrough to the next block
+          Some NoJump -> addSuccessor
+          Some (Return cond) -> do
+            addReturnBlock addr
+            addCond cond
+          Some (RelativeJump cond jaddr off) -> do
+            let target = jaddr `addressAddOffset` off
+            addCFGEdge addr target
+            addCond cond
+          Some (AbsoluteJump cond dst) -> do
+            addCFGEdge addr dst
+            addCond cond
+          Some (IndirectJump cond) -> do
+            addCond cond
+            markFunctionIncomplete
+          Some (DirectCall {}) -> addSuccessor
+          Some IndirectCall -> addSuccessor
+        processWorklist
 
 nextBlockAddress :: (MM.MemWidth (MM.ArchAddrWidth arch)) => ConcreteBlock arch -> M arch (ConcreteAddress arch)
 nextBlockAddress b = do

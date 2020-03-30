@@ -6,6 +6,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 -- | Convert collections of basic blocks (specifically 'ConcreteBlock's) to
 -- contiguous regions of bytes.
@@ -107,7 +108,7 @@ assembleBlocks :: (L.HasCallStack, C.MonadThrow m, InstructionConstraints arch)
                -- ^ The original text section contents
                -> ConcreteAddress arch
                -- ^ The address to start laying out extra blocks at
-               -> (forall m' . (C.MonadThrow m') => Instruction arch () -> m' B.ByteString)
+               -> (forall m' tp . (C.MonadThrow m') => Instruction arch tp () -> m' B.ByteString)
                -- ^ A function to assemble a single instruction to bytes
                -> [ConcretizedBlock arch]
                -> [(SymbolicAddress arch, ConcreteAddress arch, B.ByteString)]
@@ -404,12 +405,13 @@ padLastBlock = do
                             }
      else return ()
 
-bytesFor :: (C.MonadThrow m) => ConcretizedBlock arch -> Assembler arch m B.ByteString
+bytesFor :: forall m arch . (C.MonadThrow m) => ConcretizedBlock arch -> Assembler arch m B.ByteString
 bytesFor b = do
-  asm1 <- St.gets asAssemble
-  case mapM asm1 (concretizedBlockInstructions b) of
-    Left err -> C.throwM (AssemblyError err)
-    Right strs -> return (sconcat strs)
+  withConcretizedInstructions b $ \_repr insns -> do
+    asm1 <- St.gets asAssemble
+    case mapM asm1 insns of
+      Left err -> C.throwM (AssemblyError err)
+      Right strs -> return (sconcat strs)
 
 assembleBlock :: (L.HasCallStack, C.MonadThrow m) => Chunk arch -> Assembler arch m B.ByteString
 assembleBlock c =
@@ -482,7 +484,7 @@ data AssembleState arch =
                 , asExtraText :: !B.Builder
                 -- ^ The section we are building up of new blocks that are
                 -- expected to be contiguous.
-                , asAssemble :: Instruction arch () -> Either C.SomeException B.ByteString
+                , asAssemble :: forall tp . Instruction arch tp () -> Either C.SomeException B.ByteString
                 -- ^ The assembler to turn instructions into bytes
                 , _asOrigChunks :: [Chunk arch]
                 -- ^ The blocks remaining to process. These must be ordered by
