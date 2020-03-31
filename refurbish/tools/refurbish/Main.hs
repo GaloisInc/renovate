@@ -495,7 +495,9 @@ analysis opts =
                       , R.arRewrite = \_ _ _ b -> return
                         $ if R.symbolicBlockOriginalAddress b `S.member` addrs
                           then Nothing
-                          else Just (R.symbolicBlockInstructions b)
+                          else Just (R.withSymbolicInstructions b $ \repr insns ->
+                                        R.ModifiedInstructions repr insns)
+
                       }
   where
   addrs = S.fromList (map (R.concreteFromAbsolute . MM.memWord) (oBlocksToSkip opts))
@@ -508,8 +510,9 @@ printConcreteBlock :: (Monad m, R.InstructionConstraints arch)
                  -> m ()
 printConcreteBlock put isa cb = do
   put (Fmt.fmtLn ("bb:" +|| PD.pretty (R.concreteBlockAddress cb) ||+ ""))
-  F.forM_ (R.instructionAddresses isa cb) $ \(i, addr) -> do
-    put (Fmt.fmtLn (PD.pretty addr ||+ ": " +| R.isaPrettyInstruction isa i |+ ""))
+  R.withInstructionAddresses isa cb $ \_repr insns -> do
+    F.forM_ insns $ \(i, addr) -> do
+      put (Fmt.fmtLn (PD.pretty addr ||+ ": " +| R.isaPrettyInstruction isa i |+ ""))
   put "\n"
   return ()
 
@@ -520,8 +523,9 @@ printConcretizedBlock :: (Monad m, R.InstructionConstraints arch)
                  -> m ()
 printConcretizedBlock put isa cb = do
   put (Fmt.fmtLn ("bb:" +|| PD.pretty (R.concretizedBlockAddress cb) ||+ ""))
-  F.forM_ (R.instructionAddresses isa cb) $ \(i, addr) -> do
-    put (Fmt.fmtLn (PD.pretty addr ||+ ": " +| R.isaPrettyInstruction isa i |+ ""))
+  R.withInstructionAddresses isa cb $ \_repr insns -> do
+    F.forM_ insns $ \(i, addr) -> do
+      put (Fmt.fmtLn (PD.pretty addr ||+ ": " +| R.isaPrettyInstruction isa i |+ ""))
   put "\n"
   return ()
 -- | Print out a mapping of original block addresses to rewritten block addresses to the given 'IO.Handle'

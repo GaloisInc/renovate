@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -15,10 +16,13 @@ module Renovate.Arch.PPC.ISA (
   disassemble,
   Instruction,
   TargetAddress(..),
+  OnlyEncoding,
   onlyRepr,
   fromInst,
   toInst,
   Operand(..),
+  R.InstructionArchRepr(OnlyRepr),
+  PPCRepr(..),
   -- * Exceptions
   InstructionDisassemblyFailure(..)
   ) where
@@ -32,13 +36,16 @@ import qualified Data.ByteString.Lazy as LB
 import           Data.Coerce ( coerce )
 import           Data.Int ( Int32 )
 import qualified Data.List.NonEmpty as DLN
+import           Data.Maybe ( isJust )
 import qualified Data.Text.Prettyprint.Doc as PP
+import           Data.Typeable ( Typeable )
 import           Data.Word ( Word8, Word64 )
 import           Text.Printf ( printf )
 
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.Discovery as MD
 import qualified Data.Macaw.PPC as MP
+import           Data.Parameterized.Classes
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Parameterized.TraversableFC as FC
 import qualified Dismantle.PPC as D
@@ -56,19 +63,44 @@ newtype Instruction tp a = I { unI :: D.AnnotatedInstruction a }
   deriving (Eq, Show)
 
 data EncodingKind = OnlyEncoding
+  deriving (Typeable)
 type OnlyEncoding = 'OnlyEncoding
 
 data PPCRepr tp where
   PPCRepr :: PPCRepr OnlyEncoding
 
+instance TestEquality PPCRepr where
+  testEquality PPCRepr PPCRepr = Just Refl
+
 type instance R.InstructionArchReprKind (MP.AnyPPC v) = EncodingKind
 data instance R.InstructionArchRepr (MP.AnyPPC v) tp = OnlyRepr (PPCRepr tp)
+
+instance TestEquality (R.InstructionArchRepr (MP.AnyPPC v)) where
+  testEquality (OnlyRepr PPCRepr) (OnlyRepr PPCRepr) = Just Refl
 
 onlyRepr :: R.InstructionArchRepr (MP.AnyPPC v) OnlyEncoding
 onlyRepr = OnlyRepr PPCRepr
 
 data Operand (tp :: EncodingKind) where
-  Operand :: D.Operand sh -> Operand tp
+  Operand :: D.Operand sh -> Operand OnlyEncoding
+
+instance TestEquality Operand where
+  testEquality (Operand o1) (Operand o2) = do
+    Refl <- testEquality o1 o2
+    return Refl
+
+instance OrdF Operand where
+  compareF (Operand o1) (Operand o2) =
+    case compareF o1 o2 of
+      EQF -> EQF
+      LTF -> LTF
+      GTF -> GTF
+
+instance Eq (Operand tp) where
+  o1 == o2 = isJust (testEquality o1 o2)
+
+instance Ord (Operand tp) where
+  compare o1 o2 = toOrdering (compareF o1 o2)
 
 type instance R.Instruction (MP.AnyPPC v) = Instruction
 type instance R.InstructionAnnotation (MP.AnyPPC v) = TargetAddress (MP.AnyPPC v)
@@ -86,23 +118,35 @@ instance Functor (Instruction tp) where
 assemble :: (C.MonadThrow m) => Instruction tp () -> m B.ByteString
 assemble = return . LB.toStrict . D.assembleInstruction . toInst
 
-disassemble :: (C.MonadThrow m)
+disassemble :: (C.MonadThrow m, MM.MemWidth (MM.ArchAddrWidth (MP.AnyPPC v)))
             => MD.ParsedBlock (MP.AnyPPC v) ids
             -> R.ConcreteAddress (MP.AnyPPC v)
             -> R.ConcreteAddress (MP.AnyPPC v)
             -> B.ByteString
             -> m (R.ConcreteBlock (MP.AnyPPC v))
-disassemble = undefined
-{-
-  case minsn of
-    Just i -> return (bytesConsumed, fromInst i)
-    Nothing -> C.throwM (InstructionDisassemblyFailure bs bytesConsumed)
+disassemble pb start end b0 = do
+  insns0 <- go 0 start b0 []
+  case DLN.nonEmpty insns0 of
+    Nothing -> C.throwM (EmptyBlock (show start))
+    Just insns -> return (R.concreteBlock start insns onlyRepr pb)
   where
-    (bytesConsumed, minsn) = D.disassembleInstruction (LB.fromStrict bs)
--}
+    go totalRead insnAddr b insns =
+      case D.disassembleInstruction (LB.fromStrict b) of
+        (bytesRead, Nothing) ->
+          C.throwM (InstructionDisassemblyFailure b bytesRead)
+        (bytesRead, Just i) ->
+          let nextAddr = insnAddr `R.addressAddOffset` fromIntegral bytesRead
+          in if | nextAddr > end -> C.throwM (OverlappingBlocks b)
+                | nextAddr == end ->
+                  return (reverse (fromInst i : insns))
+                | otherwise ->
+                  go (totalRead + bytesRead) nextAddr (B.drop bytesRead b) (fromInst i : insns)
+
 data InstructionDisassemblyFailure =
   InstructionDisassemblyFailure B.ByteString Int
-  deriving (Show)
+  | EmptyBlock String
+  | OverlappingBlocks B.ByteString
+  deriving (Typeable, Show)
 
 instance C.Exception InstructionDisassemblyFailure
 

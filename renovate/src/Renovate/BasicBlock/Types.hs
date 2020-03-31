@@ -102,8 +102,8 @@ type family RegisterType arch :: InstructionArchReprKind arch -> Type
 -- instructions, but is true for PowerPC.
 class ToGenericInstruction arch
   where
-    toGenericInstruction   :: Instruction arch (InstructionArchReprKind arch) a -> SA.Instruction arch
-    fromGenericInstruction :: SA.Instruction arch -> Instruction arch (InstructionArchReprKind arch) ()
+    toGenericInstruction   :: forall (tp :: InstructionArchReprKind arch) a . Instruction arch tp a -> SA.Instruction arch
+    fromGenericInstruction :: forall (tp :: InstructionArchReprKind arch) . SA.Instruction arch -> Instruction arch tp ()
 
 -- | Constraints common to all instructions.
 --
@@ -118,7 +118,6 @@ type InstructionConstraints arch =
   , Eq (Instruction arch (InstructionArchReprKind arch) ())
   , Ord (RegisterType arch (InstructionArchReprKind arch))
   , Typeable arch
-  , Typeable (Instruction arch (InstructionArchReprKind arch))
   , Typeable (InstructionAnnotation arch)
   , MC.MemWidth (MC.ArchAddrWidth arch)
   )

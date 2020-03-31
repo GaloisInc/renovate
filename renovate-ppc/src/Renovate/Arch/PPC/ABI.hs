@@ -22,7 +22,7 @@ import           Renovate.Arch.PPC.ISA
 -- leave these undefined for the time being.
 abi64 :: R.ABI PPC.PPC64
 abi64 = R.ABI { R.isReturn            = ppcIsReturn . toInst
-            , R.callerSaveRegisters = const ppcCallerSaveRegisters64
+            , R.callerSaveRegisters = ppcCallerSaveRegisters64
             , R.clearRegister       = ppcClearRegister
             , R.pointerSize         = 8
             -- these are all for shadow stack; leave undefined
@@ -38,7 +38,7 @@ abi64 = R.ABI { R.isReturn            = ppcIsReturn . toInst
 -- leave these undefined for the time being.
 abi32 :: R.ABI PPC.PPC32
 abi32 = R.ABI { R.isReturn            = ppcIsReturn . toInst
-            , R.callerSaveRegisters = const ppcCallerSaveRegisters32
+            , R.callerSaveRegisters = ppcCallerSaveRegisters32
             , R.clearRegister       = ppcClearRegister
             , R.pointerSize         = 4
             -- these are all for shadow stack; leave undefined
@@ -61,9 +61,10 @@ ppcIsReturn _                        = False
 -- [documentation]<https://gitlab-int.galois.com/brittle/sfe/uploads/5bfc68a341709773ff8cb24552ece62b/PPC-elf64abi-1.7.pdf>)
 --
 -- For now we are only accounting for general-purpose registers @r4@-@r10@.
-ppcCallerSaveRegisters64 :: [R.RegisterType PPC.PPC64 tp]
-ppcCallerSaveRegisters64 = map (Operand . D.Gprc . D.GPR)  [4..10]
-  where
+ppcCallerSaveRegisters64 :: R.InstructionArchRepr PPC.PPC64 tp -> [R.RegisterType PPC.PPC64 tp]
+ppcCallerSaveRegisters64 repr =
+  case repr of
+    OnlyRepr PPCRepr -> map (Operand . D.Gprc . D.GPR)  [4..10]
 --    generalRegisters   = [0] ++ [3..12]
 --    floatingRegisters  = [0..13]
 --    conditionRegisters = [0,1,5,6,7,8]
@@ -73,10 +74,10 @@ ppcCallerSaveRegisters64 = map (Operand . D.Gprc . D.GPR)  [4..10]
 -- [documentation]<https://gitlab-int.galois.com/brittle/sfe/uploads/793d984241f4c4546e0f81cdfe1643f4/elfspec_ppc.pdf>)
 --
 -- For now we are only accounting for general-purpose registers @r5@-@r12@.
-ppcCallerSaveRegisters32 :: [R.RegisterType PPC.PPC32 tp]
-ppcCallerSaveRegisters32 =  map (Operand . D.Gprc . D.GPR)  [5..12]
-
-
+ppcCallerSaveRegisters32 :: R.InstructionArchRepr PPC.PPC32 tp -> [R.RegisterType PPC.PPC32 tp]
+ppcCallerSaveRegisters32 repr =
+  case repr of
+    OnlyRepr PPCRepr -> map (Operand . D.Gprc . D.GPR)  [5..12]
 
 -- | Create an instruction to clear a register (i.e., set it to zero or some
 -- other distinguished neutral value).

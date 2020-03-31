@@ -188,30 +188,35 @@ data ISA arch = ISA
   , isaMove
       :: forall tp
        . Some MT.TypeRepr
+      -> InstructionArchRepr arch tp
       -> RegisterType arch tp
       -> RegisterType arch tp
       -> Instruction arch tp (InstructionAnnotation arch)
   , isaMoveImmediate
       :: forall tp
        . Some MT.TypeRepr
+      -> InstructionArchRepr arch tp
       -> RegisterType arch tp
       -> Integer
       -> Instruction arch tp (InstructionAnnotation arch)
   , isaLoad
       :: forall tp
        . Some MT.TypeRepr
+      -> InstructionArchRepr arch tp
       -> RegisterType arch tp
       -> StackAddress arch tp
       -> Instruction arch tp (InstructionAnnotation arch)
   , isaStore
       :: forall tp
        . Some MT.TypeRepr
+      -> InstructionArchRepr arch tp
       -> StackAddress arch tp
       -> RegisterType arch tp
       -> Instruction arch tp (InstructionAnnotation arch)
   , isaStoreImmediate
       :: forall tp
        . Some MT.TypeRepr
+      -> InstructionArchRepr arch tp
       -> StackAddress arch tp
       -> Integer
       -> Instruction arch tp (InstructionAnnotation arch)

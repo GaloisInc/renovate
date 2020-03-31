@@ -1,4 +1,8 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 module Inject (
   injectionAnalysis,
@@ -10,6 +14,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import           Data.Functor.Const ( Const(..) )
 import qualified Data.List.NonEmpty as DLN
+import           Data.Parameterized.Classes
 import qualified System.Exit as E
 import qualified Test.Tasty.HUnit as T
 
@@ -22,7 +27,7 @@ import qualified Renovate as R
 import qualified Renovate.Arch.PPC as RP
 
 injectionAnalysis :: BS.ByteString
-                  -> (forall env . (R.HasAnalysisEnv env) => env arch binFmt -> Const () arch -> InjectedAddr arch -> R.SymbolicBlock arch -> R.RewriteM lm arch (Maybe (DLN.NonEmpty (R.TaggedInstruction arch (R.InstructionAnnotation arch)))))
+                  -> (forall env . (R.HasAnalysisEnv env) => env arch binFmt -> Const () arch -> InjectedAddr arch -> R.SymbolicBlock arch -> R.RewriteM lm arch (Maybe (R.ModifiedInstructions arch)))
                   -> R.AnalyzeAndRewrite lm arch binFmt (Const ())
 injectionAnalysis injCode injRewrite =
   R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
@@ -47,21 +52,25 @@ prepend l nel =
 -- | This rewriter is PPC64-specific because it has to generate machine instructions
 --
 -- We'll need to add one per architecture
-ppc64Inject :: (R.HasAnalysisEnv env)
+ppc64Inject :: forall env binFmt b lm
+             . (R.HasAnalysisEnv env)
             => env RP.PPC64 binFmt
             -> b RP.PPC64
             -> InjectedAddr RP.PPC64
             -> R.SymbolicBlock RP.PPC64
-            -> R.RewriteM lm RP.PPC64 (Maybe ((DLN.NonEmpty (R.TaggedInstruction RP.PPC64 (R.InstructionAnnotation RP.PPC64)))))
+            -> R.RewriteM lm RP.PPC64 (Maybe (R.ModifiedInstructions RP.PPC64))
 ppc64Inject env _ (InjectedAddr addr) sb = do
-  return (Just (prepend newCall (R.symbolicBlockInstructions sb)))
+  R.withSymbolicInstructions sb $ \repr insns -> do
+    case testEquality repr RP.onlyRepr of
+      Nothing -> error "Unexpected impossible repr"
+      Just Refl -> do
+        let callI = DP.Instruction DP.BL (DP.Calltarget (DP.BT 0) PL.:< PL.Nil)
+        let genI = R.fromGenericInstruction @RP.PPC64 callI
+        let newCall = R.isaSymbolizeAddresses isa mem (R.concreteFromAbsolute 0) (Just addr) genI
+        return (Just (R.ModifiedInstructions repr (prepend newCall insns)))
   where
     mem = MBL.memoryImage (R.analysisLoadedBinary env)
     isa = R.analysisISA env
-    callI = DP.Instruction DP.BL (DP.Calltarget (DP.BT 0) PL.:< PL.Nil)
-    genI :: R.Instruction RP.PPC64 ()
-    genI = R.fromGenericInstruction @RP.PPC64 callI
-    newCall = R.isaSymbolizeAddresses isa mem (const Nothing) (R.concreteFromAbsolute 0) (Just addr) genI
 
 -- | Instead of making sure the original and rewritten have the same behavior,
 -- we want to make sure that the original binary fails and the new binary exits

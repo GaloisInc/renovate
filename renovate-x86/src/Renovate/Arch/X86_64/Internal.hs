@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
@@ -15,6 +16,7 @@ module Renovate.Arch.X86_64.Internal (
   AnnotatedOperand(..),
   TargetAddress(..),
   Value(..),
+  toFlexValue,
   instrOpcode,
   instrOperands,
   mkUnitAnnot,
@@ -24,6 +26,8 @@ module Renovate.Arch.X86_64.Internal (
   prettyPrintWithAnnotations,
   onlyRepr,
   OnlyEncoding,
+  X86Repr(..),
+  R.InstructionArchRepr(OnlyRepr),
   -- * Errors
   AssemblyFailure(..),
   DisassemblyFailure(..)
@@ -36,6 +40,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy.Builder as B
 import qualified Data.ByteString.Lazy as LB
 import           Data.Maybe ( fromMaybe )
+import           Data.Parameterized.Classes
 import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Typeable ( Typeable )
 import           Data.Word ( Word8 )
@@ -47,7 +52,17 @@ import qualified Flexdis86 as D
 import qualified Renovate as R
 
 -- | The type of operands to x86_64 instructions
-newtype Value tp = Value { toFlexValue :: D.Value }
+data Value tp where
+  Value :: D.Value -> Value OnlyEncoding
+
+instance Eq (Value tp) where
+  Value v1 == Value v2 = v1 == v2
+
+instance Ord (Value tp) where
+  compare (Value v1) (Value v2) = compare v1 v2
+
+toFlexValue :: Value tp -> D.Value
+toFlexValue (Value v) = v
 
 type instance R.RegisterType X86.X86_64 = Value
 
@@ -74,6 +89,12 @@ onlyRepr = OnlyRepr X86Repr
 
 data X86Repr tp where
   X86Repr :: X86Repr OnlyEncoding
+
+instance TestEquality X86Repr where
+  testEquality X86Repr X86Repr = Just Refl
+
+instance TestEquality (R.InstructionArchRepr X86.X86_64) where
+  testEquality (OnlyRepr X86Repr) (OnlyRepr X86Repr) = Just Refl
 
 -- | A wrapper around a flexdis86 instruction with an arbitrary
 -- annotation on each operand of type @a@.

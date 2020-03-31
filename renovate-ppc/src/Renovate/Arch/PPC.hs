@@ -13,6 +13,8 @@ module Renovate.Arch.PPC (
   isa,
   abi32,
   abi64,
+  OnlyEncoding,
+  onlyRepr,
   -- * Assembly and Disassembly
   assemble,
   disassemble,
