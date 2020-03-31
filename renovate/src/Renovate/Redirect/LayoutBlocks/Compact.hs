@@ -622,7 +622,9 @@ addOriginalBlock isa pRedirect (h, wps) wp
     spaceSize = fromIntegral (bsize - jumpSize)
     addr      = origAddr `addressAddOffset` fromIntegral jumpSize
     origAddr  = concreteBlockAddress cb
-    jumpSize = blockJumpSize isa addr cb
+    -- It doesn't matter what address we pass in here, as it is just used for a
+    -- dummy jump construction
+    jumpSize = blockJumpSize isa origAddr cb
 
 randomOrder :: RandomSeed -> [a] -> [a]
 randomOrder seed initial = runST $ do
