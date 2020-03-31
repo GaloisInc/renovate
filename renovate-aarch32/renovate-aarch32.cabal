@@ -19,21 +19,21 @@ extra-source-files:  CHANGELOG.md
 
 library
   exposed-modules:     Renovate.Arch.AArch32
-  other-modules:       Renovate.Arch.AArch32.ISA
-                       Renovate.Arch.AArch32.ABI
+  other-modules:       Renovate.Arch.AArch32.ABI
+                       Renovate.Arch.AArch32.ISA
+                       Renovate.Arch.AArch32.Panic
   -- other-extensions:
   build-depends:       base >=4.10 && <5,
                        bytestring,
                        prettyprinter,
                        exceptions,
                        panic >= 0.4 && < 0.5,
+                       parameterized-utils,
                        macaw-base,
                        macaw-symbolic,
                        macaw-loader,
                        dismantle-tablegen,
                        dismantle-arm-xml,
-                       semmc-asl,
-                       macaw-asl,
                        renovate
   hs-source-dirs:      src
   default-language:    Haskell2010

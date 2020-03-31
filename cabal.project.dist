@@ -10,14 +10,18 @@ packages: deps/elf-edit/
           deps/parameterized-utils/
           deps/crucible/crucible/
           deps/what4/what4/
+          deps/what4-serialize/
           deps/crucible/crucible-llvm/
           deps/llvm-pretty/
+          deps/arm-asl-parser/
+          deps/asl-translator/
           deps/dismantle/dismantle-tablegen/
           deps/dismantle/dismantle-ppc/
+          deps/dismantle/dismantle-arm-xml/
           deps/semmc/semmc/
-          deps/semmc/semmc-synthesis/
-          deps/semmc/semmc-learning/
           deps/semmc/semmc-ppc/
+          deps/semmc/semmc-learning/
+          deps/semmc/semmc-synthesis/
           deps/macaw-loader/macaw-loader/
           deps/macaw-loader/macaw-loader-ppc/
           deps/macaw-loader/macaw-loader-x86/
@@ -27,4 +31,5 @@ packages: deps/elf-edit/
           renovate/
           renovate-x86/
           renovate-ppc/
+          renovate-aarch32/
           refurbish/
