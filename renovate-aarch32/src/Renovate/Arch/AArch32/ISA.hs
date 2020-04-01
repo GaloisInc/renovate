@@ -307,7 +307,7 @@ armJumpType :: Instruction tp a
             -> R.ConcreteAddress AArch32
             -> MD.ParsedBlock AArch32 ids
             -> Some (R.JumpType AArch32)
-armJumpType _i mem insnAddr pb =
+armJumpType i mem insnAddr pb =
   case asParsedTerminator insnAddr pb of
     Nothing -> Some R.NoJump
     Just term ->
@@ -327,10 +327,24 @@ armJumpType _i mem insnAddr pb =
             in Some (R.RelativeJump R.Unconditional insnAddr (fromIntegral off))
           | otherwise ->
             RP.panic RP.ARMISA "armJumpType" [ "Unhandled ParsedJump: " ++ show tgtSegOff ]
-        MD.ParsedBranch _regs _condVal trueTgt falseTgt ->
-          -- NOTE: Figure out which is the fallthrough address and return
-          -- the other
-          undefined
+        MD.ParsedBranch _regs _condVal trueTgt falseTgt
+          | Just trueTgtAddr <- R.concreteFromSegmentOff mem trueTgt
+          , Just falseTgtAddr <- R.concreteFromSegmentOff mem falseTgt ->
+            let nextInsnAddr = insnAddr `R.addressAddOffset` fromIntegral (armInstrSize i)
+            in if | trueTgtAddr == nextInsnAddr ->
+                    let off = insnAddr `R.addressDiff` falseTgtAddr
+                    in Some (R.RelativeJump R.Conditional insnAddr (fromIntegral off))
+                  | falseTgtAddr == nextInsnAddr ->
+                    let off = insnAddr `R.addressDiff` trueTgtAddr
+                    in Some (R.RelativeJump R.Conditional insnAddr (fromIntegral off))
+                  | otherwise ->
+                    RP.panic RP.ARMISA "armJumpType" [ "Interpreting a ParsedBranch, neither target was the next instruction"
+                                                     , "  :" ++ armPrettyInstruction i
+                                                     ]
+          | otherwise ->
+            RP.panic RP.ARMISA "armJumpType" [ "Could not interpret instruction addresses:"
+                                             , "  :" ++ armPrettyInstruction i
+                                             ]
         MD.ParsedLookupTable _regs _cond _tgts ->
           -- NOTE: Macaw won't identify a conditional indirect jump as a jump
           -- table, so these are always unconditional until that is made more
@@ -340,7 +354,7 @@ armJumpType _i mem insnAddr pb =
           -- FIXME: For this case, would it be easier to identify conditionality
           -- based on the value of the IP, or based on inspection of the
           -- predication flag of the instruction?
-          Some (R.Return (error "conditional?"))
+          Some (R.Return R.Unconditional)
         MD.ParsedArchTermStmt _archTerm _regs _mret ->
           -- FIXME: This might not be right.  We might not have any arch
           -- terms except for svc, though, which would be fine
@@ -362,14 +376,42 @@ asConstantIP mem regs = do
   segOff <- MC.valueAsSegmentOff mem val
   R.concreteFromSegmentOff mem segOff
 
+data CurrentInstruction = NoInstruction
+                        | InInstruction (MC.ArchAddrWord AArch32)
+                        | FoundTarget
+
 -- | If the given address corresponds to the block terminator, return that
 -- terminator.
 --
 -- This can panic if there is a major inconsistency
+--
+-- Scan through an open an active instruction at the 'MD.InstructionStart'
+-- statement and close it at 'MD.ArchState'
 asParsedTerminator :: R.ConcreteAddress AArch32
                    -> MD.ParsedBlock AArch32 ids
-                   -> Maybe (MD.ParsedTermStmt arch ids)
-asParsedTerminator = undefined
+                   -> Maybe (MD.ParsedTermStmt AArch32 ids)
+asParsedTerminator insnAddr pb =
+  case foldr searchTarget NoInstruction (MD.pblockStmts pb) of
+    NoInstruction -> Nothing
+    InInstruction addr
+      | insnAddr == R.concreteFromAbsolute addr -> Just (MD.pblockTermStmt pb)
+      | otherwise -> Nothing
+    FoundTarget ->
+      -- If we found a 'MD.ArchState' corresponding to our target, it is a
+      -- non-terminator instruction
+      Nothing
+  where
+    searchTarget stmt curState =
+      case curState of
+        FoundTarget -> FoundTarget
+        _ ->
+          case stmt of
+            MC.InstructionStart addr _ -> InInstruction addr
+            MC.ArchState addr _
+              | Just caddrWord <- MM.asAbsoluteAddr addr
+              , insnAddr == R.concreteFromAbsolute caddrWord -> FoundTarget
+              | otherwise -> NoInstruction
+            _ -> curState
 
 armModifyJumpTarget :: R.ConcreteAddress AArch32
                     -> Instruction tp ()
