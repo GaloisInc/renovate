@@ -3,9 +3,11 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 module Renovate.Arch.AArch32.ISA (
   AArch32, -- FIXME: temporary
@@ -21,6 +23,7 @@ module Renovate.Arch.AArch32.ISA (
   T32
   ) where
 
+import           Control.Lens ( (^.) )
 import qualified Control.Monad.Catch as C
 import qualified Data.Bits as DB
 import qualified Data.ByteString as BS
@@ -51,9 +54,28 @@ import qualified Renovate.Arch.AArch32.Panic as RP
 
 -- FIXME: Pull this from macaw/semmc instead
 data AArch32
-data ARMReg (tp :: MT.Type) = ARMReg Int
+data ARMReg (tp :: MT.Type) where
+  ARMReg :: Int -> ARMReg (MT.BVType 32)
 type instance MC.RegAddrWidth ARMReg = 32
 type instance MC.ArchReg AArch32 = ARMReg
+instance MC.RegisterInfo ARMReg where
+instance ShowF ARMReg where
+  showF (ARMReg r) = "r" ++ show r
+instance Show (ARMReg tp) where
+  show = showF
+instance MT.HasRepr ARMReg MT.TypeRepr where
+  typeRepr (ARMReg _) = MT.BVTypeRepr (MT.knownNat @32)
+
+instance TestEquality ARMReg where
+  testEquality (ARMReg r1) (ARMReg r2)
+    | r1 == r2 = Just Refl
+    | otherwise = Nothing
+
+instance OrdF ARMReg where
+  compareF (ARMReg r1) (ARMReg r2)
+    | r1 == r2 = EQF
+    | otherwise = fromOrdering (compare r1 r2)
+
 -- END temporary definitions
 
 data ARMKind = A32 | T32
@@ -263,9 +285,6 @@ armMakeRelativeJumpTo :: R.ConcreteAddress AArch32
                       -> DLN.NonEmpty (Instruction tp ())
 armMakeRelativeJumpTo = error "make relative jump to"
 
--- FIXME: Max relative jump size depends on ARM mode vs Thumb mode
---
--- Pass in a block repr?
 armMaxRelativeJumpSize :: R.InstructionArchRepr AArch32 tp -> Word64
 armMaxRelativeJumpSize repr =
   case repr of
@@ -288,7 +307,69 @@ armJumpType :: Instruction tp a
             -> R.ConcreteAddress AArch32
             -> MD.ParsedBlock AArch32 ids
             -> Some (R.JumpType AArch32)
-armJumpType = error "jump type"
+armJumpType _i mem insnAddr pb =
+  case asParsedTerminator insnAddr pb of
+    Nothing -> Some R.NoJump
+    Just term ->
+      case term of
+        MD.ParsedCall regs _retLoc
+          | Just tgt <- asConstantIP mem regs ->
+            let off = insnAddr `R.addressDiff` tgt
+            in Some (R.DirectCall insnAddr (fromIntegral off))
+          | otherwise ->
+            -- FIXME: This might not be entirely safe.  A conditional call would
+            -- not fit the above mold
+            Some R.IndirectCall
+        MD.PLTStub {} -> Some R.IndirectCall
+        MD.ParsedJump _regs tgtSegOff
+          | Just tgtAddr <- R.concreteFromSegmentOff mem tgtSegOff ->
+            let off = insnAddr `R.addressDiff` tgtAddr
+            in Some (R.RelativeJump R.Unconditional insnAddr (fromIntegral off))
+          | otherwise ->
+            RP.panic RP.ARMISA "armJumpType" [ "Unhandled ParsedJump: " ++ show tgtSegOff ]
+        MD.ParsedBranch _regs _condVal trueTgt falseTgt ->
+          -- NOTE: Figure out which is the fallthrough address and return
+          -- the other
+          undefined
+        MD.ParsedLookupTable _regs _cond _tgts ->
+          -- NOTE: Macaw won't identify a conditional indirect jump as a jump
+          -- table, so these are always unconditional until that is made more
+          -- general.  macaw-refinement could identify one...
+          Some (R.IndirectJump R.Unconditional)
+        MD.ParsedReturn _regs ->
+          -- FIXME: For this case, would it be easier to identify conditionality
+          -- based on the value of the IP, or based on inspection of the
+          -- predication flag of the instruction?
+          Some (R.Return (error "conditional?"))
+        MD.ParsedArchTermStmt _archTerm _regs _mret ->
+          -- FIXME: This might not be right.  We might not have any arch
+          -- terms except for svc, though, which would be fine
+          Some R.IndirectCall
+        MD.ParsedTranslateError msg ->
+          RP.panic RP.ARMISA "armJumpType" [ "ParsedTranslateError should be analyzed by renovate:"
+                                           , "  Reason: " ++ show msg
+                                           ]
+        MD.ClassifyFailure _regs msgs ->
+          RP.panic RP.ARMISA "armJumpType" ( "ClassifyFailure should not be analyzed by renovate:"
+                                           : msgs
+                                           )
+
+asConstantIP :: MM.Memory 32
+             -> MC.RegState (MC.ArchReg AArch32) (MC.Value AArch32 ids)
+             -> Maybe (R.ConcreteAddress AArch32)
+asConstantIP mem regs = do
+  let val = regs ^. MC.boundValue MC.ip_reg
+  segOff <- MC.valueAsSegmentOff mem val
+  R.concreteFromSegmentOff mem segOff
+
+-- | If the given address corresponds to the block terminator, return that
+-- terminator.
+--
+-- This can panic if there is a major inconsistency
+asParsedTerminator :: R.ConcreteAddress AArch32
+                   -> MD.ParsedBlock AArch32 ids
+                   -> Maybe (MD.ParsedTermStmt arch ids)
+asParsedTerminator = undefined
 
 armModifyJumpTarget :: R.ConcreteAddress AArch32
                     -> Instruction tp ()
@@ -296,8 +377,7 @@ armModifyJumpTarget :: R.ConcreteAddress AArch32
                     -> Maybe (DLN.NonEmpty (Instruction tp ()))
 armModifyJumpTarget = error "modify jump target"
 
--- This is a no-op on ARM because it is a load/store architecture with no
--- arbitrary memory reference operands
+-- FIXME: This is not actually a no-op on ARM
 armConcretizeAddresses :: MM.Memory 32
                        -> R.ConcreteAddress AArch32
                        -> Instruction tp TargetAddress
@@ -309,6 +389,7 @@ armConcretizeAddresses _mem _addr i =
     ThumbInstruction (DT.Instruction opc operands) ->
       ThumbInstruction (DT.Instruction (coerce opc) (FC.fmapFC (\(DT.Annotated _ operand) -> DT.Annotated () operand) operands))
 
+-- FIXME: This is not actually a no-op on ARM
 armSymbolizeAddresses :: MM.Memory 32
                       -> R.ConcreteAddress AArch32
                       -> Maybe (R.SymbolicAddress AArch32)

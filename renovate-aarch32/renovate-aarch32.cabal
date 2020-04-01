@@ -27,6 +27,7 @@ library
                        bytestring,
                        prettyprinter,
                        exceptions,
+                       lens,
                        panic >= 0.4 && < 0.5,
                        parameterized-utils,
                        macaw-base,
