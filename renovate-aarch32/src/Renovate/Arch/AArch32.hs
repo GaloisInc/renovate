@@ -7,7 +7,11 @@ module Renovate.Arch.AArch32 (
   ISA.disassemble,
   ISA.Instruction,
   ISA.TargetAddress(..),
-  ISA.InstructionDisassemblyFailure(..)
+  ISA.InstructionDisassemblyFailure(..),
+  ISA.ARMRepr(..),
+  R.InstructionArchRepr(ISA.ArchRepr),
+  ISA.A32,
+  ISA.T32
   ) where
 
 import qualified Data.Macaw.BinaryLoader as MBL

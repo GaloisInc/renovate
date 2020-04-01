@@ -1,8 +1,11 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 module Renovate.Arch.AArch32.ISA (
   AArch32, -- FIXME: temporary
@@ -12,6 +15,8 @@ module Renovate.Arch.AArch32.ISA (
   Instruction,
   TargetAddress(..),
   InstructionDisassemblyFailure(..),
+  ARMRepr(..),
+  R.InstructionArchRepr(ArchRepr),
   A32,
   T32
   ) where
@@ -22,11 +27,11 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Coerce ( coerce )
 import qualified Data.List.NonEmpty as DLN
+import           Data.Parameterized.Classes
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Parameterized.TraversableFC as FC
 import qualified Data.Text.Prettyprint.Doc as PP
 import           Data.Word ( Word8, Word64 )
-import           Text.Printf ( printf )
 
 -- NOTE: Renovate currently does not rewrite thumb blocks
 --
@@ -63,7 +68,15 @@ data ARMRepr tp where
 
 data instance R.InstructionArchRepr AArch32 tp = ArchRepr (ARMRepr tp)
 
+instance TestEquality ARMRepr where
+  testEquality A32Repr A32Repr = Just Refl
+  testEquality T32Repr T32Repr = Just Refl
+  testEquality _ _ = Nothing
 
+instance TestEquality (R.InstructionArchRepr AArch32) where
+  testEquality (ArchRepr r1) (ArchRepr r2) = do
+    Refl <- testEquality r1 r2
+    return Refl
 
 data TargetAddress = NoAddress
                    | AbsoluteAddress (R.ConcreteAddress AArch32)
@@ -100,7 +113,9 @@ instance Functor (Instruction tp) where
         ThumbInstruction (DT.Instruction (coerce opc) (FC.fmapFC (\(DT.Annotated a o) -> DT.Annotated (f a) o) operands))
 
 data InstructionDisassemblyFailure =
-  InstructionDisassemblyFailure BS.ByteString Int
+  InstructionDisassemblyFailure LBS.ByteString Int
+  | EmptyBlock (R.ConcreteAddress AArch32)
+  | OverlappingBlocks (R.ConcreteAddress AArch32) (R.ConcreteAddress AArch32)
   deriving (Show)
 
 instance C.Exception InstructionDisassemblyFailure
@@ -111,34 +126,57 @@ assemble i =
     ARMInstruction ai -> return (LBS.toStrict (DA.assembleInstruction (armDropAnnotations ai)))
     ThumbInstruction ti -> return (LBS.toStrict (DT.assembleInstruction (thumbDropAnnotations ti)))
 
--- FIXME: Disassembly is actually a significant problem.  We don't know if we
--- should disassemble as ARM or Thumb.  We could try each, but that is no
--- guarantee.  We would have better success if we disassembled an entire (macaw)
--- block at a time.  Changing the API to take a ParsedBlock would help.  That is
--- still not exactly a guarantee, though the chance of a block decoding as
--- either ARM or Thumb (and having the right number of instructions) is quite
--- low.
+-- | Disassemble a concrete block from a bytestring
 --
--- We could additionally compare the disassembly against the Show output in the
--- instruction metadata.  That would significantly improve confidence at some
--- complexity cost.  Perhaps that would be a fallback if two decodings work?
+-- This is very trick in ARM because we aren't passing in the expected decoding
+-- mode (because renovate's recovery has no way of knowing).  We attempt to
+-- disassemble the requested byte range as A32 first.  If that fails, we attempt
+-- to disassemble as T32.
 --
--- It would require passing the whole block to the disassembler and
--- disassembling the whole thing at once, which is actually not a major problem.
-disassemble :: (C.MonadThrow m)
+-- FIXME: We could make this safer by comparing the recovered instructions
+-- against the instruction start metadata in the macaw 'MD.ParsedBlock', though
+-- doing so is tough because it is just string matching.
+disassemble :: forall m ids
+             . (C.MonadThrow m)
             => MD.ParsedBlock AArch32 ids
             -> R.ConcreteAddress AArch32
             -> R.ConcreteAddress AArch32
             -> BS.ByteString
             -> m (R.ConcreteBlock AArch32)
-disassemble = undefined
---   => BS.ByteString -> m (Int, Instruction ())
--- disassemble bs =
---   case minsn of
---     Just i -> return (bytesConsumed, fromInst i)
---     Nothing -> C.throwM (InstructionDisassemblyFailure bs bytesConsumed)
---   where
---     (bytesConsumed, minsn) = DA.disassembleInstruction (LBS.fromStrict bs)
+disassemble pb startAddr endAddr bs0 = do
+  let acon = ARMInstruction . toAnnotatedARM
+  let minsns0 = go A32Repr acon DA.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
+  case DLN.nonEmpty =<< minsns0 of
+    Just insns -> return (R.concreteBlock startAddr insns (ArchRepr A32Repr) pb)
+    Nothing -> do
+      let tcon = ThumbInstruction . toAnnotatedThumb
+      minsns1 <- go T32Repr tcon DT.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
+      case DLN.nonEmpty minsns1 of
+        Nothing -> C.throwM (EmptyBlock startAddr)
+        Just insns -> return (R.concreteBlock startAddr insns (ArchRepr T32Repr) pb)
+  where
+    go :: forall tp i m'
+        . (C.MonadThrow m')
+       => ARMRepr tp
+       -> (i -> Instruction tp ())
+       -> (LBS.ByteString -> (Int, Maybe i))
+       -> Int
+       -> R.ConcreteAddress AArch32
+       -> LBS.ByteString
+       -> [Instruction tp ()]
+       -> m' [Instruction tp ()]
+    go repr con dis totalRead insnAddr b insns =
+      case dis b of
+        (bytesRead, Nothing) ->
+          C.throwM (InstructionDisassemblyFailure b bytesRead)
+        (bytesRead, Just i) ->
+          let nextAddr = insnAddr `R.addressAddOffset` fromIntegral bytesRead
+          in if | nextAddr > endAddr -> C.throwM (OverlappingBlocks startAddr endAddr)
+                | nextAddr == endAddr ->
+                  return (reverse (con i : insns))
+                | otherwise ->
+                  let b' = LBS.drop (fromIntegral bytesRead) b
+                  in go repr con dis (totalRead + bytesRead) nextAddr b' (con i : insns)
 
 armPrettyInstruction :: Instruction tp a -> String
 armPrettyInstruction i =
@@ -151,6 +189,18 @@ armDropAnnotations i =
   case i of
     DA.Instruction opc annotatedOps ->
       DA.Instruction (coerce opc) (FC.fmapFC armUnannotateOpcode annotatedOps)
+
+toAnnotatedARM :: DA.Instruction -> DA.AnnotatedInstruction ()
+toAnnotatedARM i =
+  case i of
+    DA.Instruction opc ops ->
+      DA.Instruction (coerce opc) (FC.fmapFC (DA.Annotated ()) ops)
+
+toAnnotatedThumb :: DT.Instruction -> DT.AnnotatedInstruction ()
+toAnnotatedThumb i =
+  case i of
+    DT.Instruction opc ops ->
+      DT.Instruction (coerce opc) (FC.fmapFC (DT.Annotated ()) ops)
 
 thumbDropAnnotations :: DT.AnnotatedInstruction a -> DT.Instruction
 thumbDropAnnotations i =
@@ -166,7 +216,8 @@ thumbUnannotateOpcode (DT.Annotated _ op) = op
 
 -- | All A32 instructions are 4 bytes
 --
--- This will have to change to support thumb
+-- Thumb instructions can be 2 or 4 bytes, so we re-assemble them to find the
+-- real size.
 armInstrSize :: Instruction tp a -> Word8
 armInstrSize i =
   case i of
@@ -175,6 +226,9 @@ armInstrSize i =
       let bytes = DT.assembleInstruction (thumbDropAnnotations ti)
       in fromIntegral (LBS.length bytes)
 
+-- | If we are making a block for some arbitrary purpose, we will use the ARM
+-- architecture.  If there is a more specific need, the caller should provide
+-- their own repr.
 armDefaultInstructionArchRepr :: R.SomeInstructionArchRepr AArch32
 armDefaultInstructionArchRepr = R.SomeInstructionArchRepr (ArchRepr A32Repr)
 
@@ -182,12 +236,26 @@ armMakePadding :: Word64 -> R.InstructionArchRepr AArch32 tp -> [Instruction tp 
 armMakePadding nBytes repr =
   case repr of
     ArchRepr A32Repr
-      | leftover == 0 -> fmap ARMInstruction (replicate (fromIntegral nInsns) nopInsn)
-      | otherwise -> error (printf "Unexpected byte count (%d); only instruction-sized padding is supported" nBytes)
+      | leftoverARM == 0 ->
+        fmap (ARMInstruction . toAnnotatedARM) (replicate (fromIntegral nARMInsns) aBrk)
+      | otherwise ->
+        RP.panic RP.ARMISA "armMakePadding" [ "Unexpected byte count (A32): " ++ show nBytes
+                                            , "Only instruction-sized padding (4 bytes) is supported"
+                                            ]
+    ArchRepr T32Repr
+      | leftoverThumb == 0 ->
+        fmap (ThumbInstruction . toAnnotatedThumb) (replicate (fromIntegral nThumbInsns) tBrk)
+      | otherwise ->
+        RP.panic RP.ARMISA "armMakePadding" [ "Unexpected byte count (T32): " ++ show nBytes
+                                            , "Only instruction-sized padding (2 bytes) is supported"
+                                            ]
   where
-    nopInsn :: DA.AnnotatedInstruction ()
-    nopInsn = DA.Instruction undefined undefined -- DA.HLT_A1
-    (nInsns, leftover) = nBytes `divMod` 4
+    aBrk :: DA.Instruction
+    aBrk = DA.Instruction DA.BKPT_A1 (DA.Bv4 0 DA.:< DA.Bv12 0 DA.:< DA.Bv4 0 DA.:< DA.Nil)
+    tBrk :: DT.Instruction
+    tBrk = DT.Instruction DT.BKPT_T1 (DT.Bv8 0 DT.:< DT.Nil)
+    (nARMInsns, leftoverARM) = nBytes `divMod` 4
+    (nThumbInsns, leftoverThumb) = nBytes `divMod` 2
 
 armMakeRelativeJumpTo :: R.ConcreteAddress AArch32
                       -> R.ConcreteAddress AArch32
@@ -218,13 +286,13 @@ armMaxRelativeJumpSize repr =
 armJumpType :: Instruction tp a
             -> MM.Memory 32
             -> R.ConcreteAddress AArch32
+            -> MD.ParsedBlock AArch32 ids
             -> Some (R.JumpType AArch32)
 armJumpType = error "jump type"
 
 armModifyJumpTarget :: R.ConcreteAddress AArch32
                     -> Instruction tp ()
-                    -> R.JumpType AArch32 R.HasModifiableTarget
-                    -> R.ConcreteAddress AArch32
+                    -> R.RelocatableTarget AArch32 R.ConcreteAddress R.HasSomeTarget
                     -> Maybe (DLN.NonEmpty (Instruction tp ()))
 armModifyJumpTarget = error "modify jump target"
 
