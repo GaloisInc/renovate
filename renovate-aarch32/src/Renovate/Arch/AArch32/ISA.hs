@@ -5,10 +5,12 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ViewPatterns #-}
 module Renovate.Arch.AArch32.ISA (
   AArch32, -- FIXME: temporary
   isa,
@@ -111,9 +113,13 @@ data Instruction tp a where
 instance Show (Instruction tp a) where
   show i = show (PP.pretty i)
 
+pattern AI i <- ARMInstruction (armDropAnnotations -> i)
+pattern TI i <- ThumbInstruction (thumbDropAnnotations -> i)
+
 type instance R.Instruction AArch32 = Instruction
 type instance R.InstructionAnnotation AArch32 = TargetAddress
 type instance R.RegisterType AArch32 = Operand
+
 
 -- | ARM operands
 --
@@ -289,7 +295,7 @@ armMaxRelativeJumpSize :: R.InstructionArchRepr AArch32 tp -> Word64
 armMaxRelativeJumpSize repr =
   case repr of
     ArchRepr A32Repr -> DB.bit 25 - 4
-    ArchRepr T32Repr -> DB.bit 11 - 4
+    ArchRepr T32Repr -> DB.bit 10 - 4
 
 -- FIXME: This one will be tricky - I think we can simplify it a lot if we pass
 -- in the macaw block containing the instruction.  If it isn't the entire block,
@@ -312,39 +318,54 @@ armJumpType i mem insnAddr pb =
     Nothing -> Some R.NoJump
     Just term ->
       case term of
-        MD.ParsedCall regs _retLoc
-          | Just tgt <- asConstantIP mem regs ->
-            let off = insnAddr `R.addressDiff` tgt
-            in Some (R.DirectCall insnAddr (fromIntegral off))
-          | otherwise ->
-            -- FIXME: This might not be entirely safe.  A conditional call would
-            -- not fit the above mold
-            Some R.IndirectCall
+        -- Calls are really only issued using the standard instructions for that.
+        --
+        -- bl, blx
+        --
+        -- These are special because they populate the link register.
+        --
+        -- FIXME: Implement thumb cases
+        MD.ParsedCall _regs _retLoc ->
+          case i of
+            AI (DA.Instruction DA.BL_i_A1 (DA.Bv4 _cond DA.:< DA.Bv24 off DA.:< DA.Nil)) ->
+              Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2)))
+            AI (DA.Instruction DA.BL_i_A2 (DA.Bv1 _ DA.:< DA.Bv4 _ DA.:< DA.Bv24 off DA.:< DA.Nil)) ->
+              Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2)))
+            AI (DA.Instruction DA.BLX_r_A1 (DA.Bv4 _cond DA.:< DA.Bv4 _reg DA.:< DA.QuasiMask12 _ DA.:< DA.Nil)) ->
+              Some R.IndirectCall
+            _ -> Some (R.NotInstrumentable insnAddr)
+        -- PLT stubs won't be encountered in renovate (note: this terminator is
+        -- a terminator of a PLT stub, which is not something we would rewrite,
+        -- rather than a call to a PLT stub)
         MD.PLTStub {} -> Some R.IndirectCall
-        MD.ParsedJump _regs tgtSegOff
-          | Just tgtAddr <- R.concreteFromSegmentOff mem tgtSegOff ->
-            let off = insnAddr `R.addressDiff` tgtAddr
-            in Some (R.RelativeJump R.Unconditional insnAddr (fromIntegral off))
-          | otherwise ->
-            RP.panic RP.ARMISA "armJumpType" [ "Unhandled ParsedJump: " ++ show tgtSegOff ]
-        MD.ParsedBranch _regs _condVal trueTgt falseTgt
-          | Just trueTgtAddr <- R.concreteFromSegmentOff mem trueTgt
-          , Just falseTgtAddr <- R.concreteFromSegmentOff mem falseTgt ->
-            let nextInsnAddr = insnAddr `R.addressAddOffset` fromIntegral (armInstrSize i)
-            in if | trueTgtAddr == nextInsnAddr ->
-                    let off = insnAddr `R.addressDiff` falseTgtAddr
-                    in Some (R.RelativeJump R.Conditional insnAddr (fromIntegral off))
-                  | falseTgtAddr == nextInsnAddr ->
-                    let off = insnAddr `R.addressDiff` trueTgtAddr
-                    in Some (R.RelativeJump R.Conditional insnAddr (fromIntegral off))
-                  | otherwise ->
-                    RP.panic RP.ARMISA "armJumpType" [ "Interpreting a ParsedBranch, neither target was the next instruction"
-                                                     , "  :" ++ armPrettyInstruction i
-                                                     ]
-          | otherwise ->
-            RP.panic RP.ARMISA "armJumpType" [ "Could not interpret instruction addresses:"
-                                             , "  :" ++ armPrettyInstruction i
-                                             ]
+        -- The ParsedJump constructor is slightly special in macaw.  It could
+        -- represent a direct jump or be synthesized for control flow
+        -- fallthrough.
+        --
+        -- We will catch the cases where we can.
+        --
+        -- The fallthrough case is simple: if the target is the next address, it
+        -- is a fallthrough and we will emit a 'NoJump'.  Otherwise it is a
+        -- non-local unconditional jump.  If it is a recognized form, we will
+        -- tag it appropriately.  Otherwise it is a jump that we can't rewrite.
+        MD.ParsedJump _regs tgtSegOff ->
+          if | Just tgtAddr <- R.concreteFromSegmentOff mem tgtSegOff
+             , nextInsnAddr == tgtAddr -> Some R.NoJump
+             | otherwise ->
+               case i of
+                 AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 off DA.:< DA.Nil)) ->
+                   Some (R.RelativeJump R.Unconditional insnAddr (fromIntegral (off `DB.shiftL` 2)))
+                 -- FIXME: Handle Thumb cases
+                 _ -> Some (R.NotInstrumentable insnAddr)
+        -- Any instruction in ARM can be a conditional jump due to predication...
+        --
+        -- We are only handling B with condition codes here.
+        MD.ParsedBranch {} ->
+          case i of
+            AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 off DA.:< DA.Nil)) ->
+              Some (R.RelativeJump R.Conditional insnAddr (fromIntegral (off `DB.shiftL` 2)))
+            -- FIXME: Handle T32 cases
+            _ -> Some (R.NotInstrumentable insnAddr)
         MD.ParsedLookupTable _regs _cond _tgts ->
           -- NOTE: Macaw won't identify a conditional indirect jump as a jump
           -- table, so these are always unconditional until that is made more
@@ -367,14 +388,16 @@ armJumpType i mem insnAddr pb =
           RP.panic RP.ARMISA "armJumpType" ( "ClassifyFailure should not be analyzed by renovate:"
                                            : msgs
                                            )
+  where
+    nextInsnAddr = insnAddr `R.addressAddOffset` fromIntegral (armInstrSize i)
 
-asConstantIP :: MM.Memory 32
-             -> MC.RegState (MC.ArchReg AArch32) (MC.Value AArch32 ids)
-             -> Maybe (R.ConcreteAddress AArch32)
-asConstantIP mem regs = do
-  let val = regs ^. MC.boundValue MC.ip_reg
-  segOff <- MC.valueAsSegmentOff mem val
-  R.concreteFromSegmentOff mem segOff
+-- asConstantIP :: MM.Memory 32
+--              -> MC.RegState (MC.ArchReg AArch32) (MC.Value AArch32 ids)
+--              -> Maybe (R.ConcreteAddress AArch32)
+-- asConstantIP mem regs = do
+--   let val = regs ^. MC.boundValue MC.ip_reg
+--   segOff <- MC.valueAsSegmentOff mem val
+--   R.concreteFromSegmentOff mem segOff
 
 data CurrentInstruction = NoInstruction
                         | InInstruction (MC.ArchAddrWord AArch32)
@@ -417,7 +440,30 @@ armModifyJumpTarget :: R.ConcreteAddress AArch32
                     -> Instruction tp ()
                     -> R.RelocatableTarget AArch32 R.ConcreteAddress R.HasSomeTarget
                     -> Maybe (DLN.NonEmpty (Instruction tp ()))
-armModifyJumpTarget = error "modify jump target"
+armModifyJumpTarget insnAddr i0 (R.RelocatableTarget newTarget) =
+  case i0 of
+    ARMInstruction i ->
+      case armDropAnnotations i of
+        DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
+          -- FIXME: Assert in range
+          let newOff = fromIntegral ((insnAddr `R.addressDiff` newTarget) `DB.shiftR` 2)
+          in singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+        DA.Instruction DA.BL_i_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
+          let newOff = fromIntegral ((insnAddr `R.addressDiff` newTarget) `DB.shiftR` 2)
+          in singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+        DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
+          let newOff = fromIntegral ((insnAddr `R.addressDiff` newTarget) `DB.shiftR` 2)
+          in singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+        _ ->
+          RP.panic RP.ARMISA "armModifyJumpTarget" [ "Encountered unmodifiable instruction that should not have reached here"
+                                                   , "  " ++ armPrettyInstruction i0
+                                                   ]
+    ThumbInstruction {} ->
+      RP.panic RP.ARMISA "armModifyJumpTarget" [ "Thumb rewriting is not yet supported"
+                                               ]
+
+singleton :: DA.Instruction -> Maybe (DLN.NonEmpty (Instruction A32 ()))
+singleton = Just . (DLN.:| []) . ARMInstruction . toAnnotatedARM
 
 -- FIXME: This is not actually a no-op on ARM
 armConcretizeAddresses :: MM.Memory 32

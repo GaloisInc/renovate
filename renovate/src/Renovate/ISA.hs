@@ -72,6 +72,9 @@ data JumpType arch k where
   Return :: JumpCondition -> JumpType arch NoModifiableTarget
   -- | The instruction is not a jump
   NoJump :: JumpType arch NoModifiableTarget
+  -- | The instruction is a recognized control flow transfer, but not one that
+  -- can be rewritten (and thus is not permitted to be instrumented)
+  NotInstrumentable :: RA.ConcreteAddress arch -> JumpType arch NoModifiableTarget
 
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (JumpType arch k)
 deriving instance Eq (JumpType arch k)
