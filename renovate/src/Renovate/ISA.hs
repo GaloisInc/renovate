@@ -24,6 +24,7 @@ import           Data.Word ( Word8, Word64 )
 
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Macaw.CFG as MM
+import qualified Data.Macaw.Discovery as MD
 import qualified Data.Macaw.Types as MT
 
 import qualified Renovate.Address as RA
@@ -118,10 +119,11 @@ data ISA arch = ISA
                            -> Instruction arch tp (InstructionAnnotation arch)
                            -> Instruction arch tp ()
     -- ^ Remove the annotation, with possible post-processing.
-  , isaJumpType :: forall t tp
+  , isaJumpType :: forall t tp ids
                  . Instruction arch tp t
                 -> MM.Memory (MM.ArchAddrWidth arch)
                 -> RA.ConcreteAddress arch
+                -> MD.ParsedBlock arch ids
                 -> Some (JumpType arch)
     -- ^ Test if an instruction is a jump; if it is, return some
     -- metadata about the jump (destination or offset).
@@ -149,8 +151,7 @@ data ISA arch = ISA
   , isaModifyJumpTarget :: forall tp
                          . RA.ConcreteAddress arch
                         -> Instruction arch tp ()
-                        -> JumpType arch HasModifiableTarget
-                        -> RA.ConcreteAddress arch
+                        -> RelocatableTarget arch RA.ConcreteAddress HasSomeTarget
                         -> Maybe (DLN.NonEmpty (Instruction arch tp ()))
     -- ^ Modify the given jump instruction, accounting for any fallthrough behavior specified
     --

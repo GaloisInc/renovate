@@ -173,7 +173,7 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
                 , injectedBlockLayout = [ (symAddr, caddr, bs) | (caddr, (symAddr, bs)) <- M.elems injectedAddrs ]
                 }
   where
-    bySize isa mem = Down . sum . map (symbolicBlockSize isa mem startAddr)
+    bySize isa mem = Down . sum . map (symbolicBlockSize isa mem)
 
 -- | Eliminate control flow fallthrough jumps that are unneeded
 --
@@ -416,7 +416,7 @@ allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch),
 allocateSymbolicBlockAddresses startAddr h0 blocksBySize injectedCode = do
   isa <- askISA
   mem <- askMem
-  let blockItemSize = symbolicBlockSize isa mem startAddr
+  let blockItemSize = symbolicBlockSize isa mem
   let blockItemKey sb =
         SymbolicInfo (symbolicBlockSymbolicAddress sb) (symbolicBlockOriginalAddress sb)
   let blockItemVal addr size _block = (addr, size)

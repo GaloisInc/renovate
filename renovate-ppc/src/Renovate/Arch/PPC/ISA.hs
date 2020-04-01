@@ -281,8 +281,9 @@ ppcJumpType :: (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch))
             => Instruction tp t
             -> MM.Memory (MM.ArchAddrWidth arch)
             -> R.ConcreteAddress arch
+            -> unused
             -> Some (R.JumpType arch)
-ppcJumpType i _mem insnAddr =
+ppcJumpType i _mem insnAddr _ =
   case toInst i of
     D.Instruction opc operands ->
       case operands of
@@ -372,10 +373,9 @@ ppcModifyJumpTarget :: (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch), R.Ins
                     -- ^ The address of the instruction
                     -> R.Instruction arch tp ()
                     -- ^ The instruction to modify, with new targets attached
-                    -> R.JumpType arch R.HasModifiableTarget
-                    -> R.ConcreteAddress arch
+                    -> R.RelocatableTarget arch R.ConcreteAddress R.HasSomeTarget
                     -> Maybe (DLN.NonEmpty (Instruction tp ()))
-ppcModifyJumpTarget srcAddr i _jt targetAddr =
+ppcModifyJumpTarget srcAddr i (R.RelocatableTarget targetAddr) =
   case unI i of
     D.Instruction opc operands ->
       case operands of

@@ -50,6 +50,9 @@ module Renovate
   B.symbolicBlockOriginalAddress,
   B.symbolicBlockSymbolicAddress,
   B.withSymbolicInstructions,
+  B.RelocatableTarget(..),
+  B.HasNoTarget,
+  B.HasSomeTarget,
   -- ** Concretized blocks
   B.ConcretizedBlock,
   B.concretizedBlockAddress,

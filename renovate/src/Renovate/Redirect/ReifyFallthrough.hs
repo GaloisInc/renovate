@@ -26,15 +26,13 @@ reifyFallthrough :: (MM.MemWidth (MC.ArchAddrWidth arch))
                  -> Maybe (RA.ConcreteAddress arch)
 reifyFallthrough isa mem cb =
   RB.withInstructionAddresses isa cb $ \_repr insns -> do
-    case DLN.last insns of
-      (lastInsn, lastInsnAddr)
-        | isUnconditionalJT (RI.isaJumpType isa lastInsn mem lastInsnAddr) -> Nothing
-        | otherwise ->
-            case RB.concreteDiscoveryBlock cb of
-              Some pb -> do
-                let sz = MD.blockSize pb
-                    succAddr = RB.concreteBlockAddress cb `RA.addressAddOffset` fromIntegral sz
-                Just succAddr
+    case (RB.concreteDiscoveryBlock cb, DLN.last insns) of
+      (Some pb, (lastInsn, lastInsnAddr))
+        | isUnconditionalJT (RI.isaJumpType isa lastInsn mem lastInsnAddr pb) -> Nothing
+        | otherwise -> do
+            let sz = MD.blockSize pb
+            let succAddr = RB.concreteBlockAddress cb `RA.addressAddOffset` fromIntegral sz
+            Just succAddr
 
 -- We explicitly match on all constructor patterns so that if/when new ones
 -- are added this will break instead of having some default case that does

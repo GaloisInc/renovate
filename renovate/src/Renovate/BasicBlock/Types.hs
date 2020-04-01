@@ -45,6 +45,9 @@ module Renovate.BasicBlock.Types (
   tagInstruction,
   symbolicTarget,
   projectInstruction,
+  RelocatableTarget(..),
+  HasSomeTarget,
+  HasNoTarget,
 
   ToGenericInstruction(..),
   -- * Constraints
@@ -219,6 +222,32 @@ withPaddingInstructions :: PaddingBlock arch
 withPaddingInstructions (PaddingBlock _ insns repr) k =
   k repr insns
 
+data RelocatableTargetKind = HasNoTarget
+                           | HasSomeTarget
+type HasNoTarget = 'HasNoTarget
+type HasSomeTarget = 'HasSomeTarget
+
+-- | A wrapper around the symbolic target of a control flow transfer instruction
+--
+-- This is meant for use internally within renovate and is not meant for users
+--
+-- The user facing API for generating instructions is 'tagInstruction'
+--
+-- The purpose of this tag is to provide type-level evidence that an instruction
+-- with the tag actually has a symbolic target to patch up.  We will use this
+-- with 'isaModifyJumpTarget' (to prove that we only pass in instructions that
+-- have targets).
+--
+-- There isn't yet a formal connection, but the intent is that instructions with
+-- relocatable jump targets should get these annotations when the symbolic block
+-- is created.
+--
+-- The address type is a parameter because we will be converting it from a
+-- 'SymbolicAddress' to a 'ConcreteAddress'.
+data RelocatableTarget arch addrTy (tp :: RelocatableTargetKind) where
+  RelocatableTarget :: addrTy arch -> RelocatableTarget arch addrTy HasSomeTarget
+  NoTarget :: RelocatableTarget arch addrTy HasNoTarget
+
 -- | A wrapper around a normal instruction that includes an optional
 -- 'SymbolicAddress'.
 --
@@ -231,7 +260,8 @@ withPaddingInstructions (PaddingBlock _ insns repr) k =
 -- than one possible target (if there is such a thing).  If that
 -- becomes an issue, the annotation will need to sink into the operand
 -- annotations, and we'll need a helper to collect those.
-newtype TaggedInstruction arch (tp :: InstructionArchReprKind arch) a = Tag { unTag :: (Instruction arch tp a, Maybe (SymbolicAddress arch)) }
+newtype TaggedInstruction arch (tp :: InstructionArchReprKind arch) a =
+  Tag { unTag :: (Instruction arch tp a, Some (RelocatableTarget arch SymbolicAddress)) }
 
 instance PD.Pretty (Instruction arch tp a) => PD.Pretty (TaggedInstruction arch tp a) where
   pretty (Tag (i, _)) = PD.pretty i
@@ -245,15 +275,20 @@ tagInstruction :: forall arch (tp :: InstructionArchReprKind arch) a
                 . Maybe (SymbolicAddress arch)
                -> Instruction arch tp a
                -> TaggedInstruction arch tp a
-tagInstruction ma i = Tag (i, ma)
+tagInstruction ma i =
+  case ma of
+    Nothing -> Tag (i, Some NoTarget)
+    Just sa -> Tag (i, Some (RelocatableTarget sa))
 
 -- | If the 'TaggedInstruction' has a 'SymbolicAddress' as a target,
 -- return it.
-symbolicTarget :: TaggedInstruction arch tp a -> Maybe (SymbolicAddress arch)
+symbolicTarget :: TaggedInstruction arch tp a -> Some (RelocatableTarget arch SymbolicAddress)
 symbolicTarget = snd . unTag
 
 -- | Remove the tag from an instruction
-projectInstruction :: forall arch a (tp :: InstructionArchReprKind arch) . TaggedInstruction arch tp a -> Instruction arch tp a
+projectInstruction :: forall arch a (tp :: InstructionArchReprKind arch)
+                    . TaggedInstruction arch tp a
+                   -> Instruction arch tp a
 projectInstruction = fst . unTag
 
 -- | The type of 'BasicBlock's that only have symbolic addresses.

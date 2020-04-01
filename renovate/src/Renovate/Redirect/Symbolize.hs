@@ -14,6 +14,7 @@ import qualified Data.Foldable as F
 import qualified Data.List.NonEmpty as DLN
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Map as M
+import qualified Data.Macaw.Discovery as MD
 import           Data.Maybe ( fromMaybe )
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Traversable as T
@@ -84,7 +85,7 @@ symbolizeJumps :: forall arch
                -> (ConcreteBlock arch, SymbolicBlock arch)
 symbolizeJumps isa mem symAddrMap (cb, symAddr) =
   withInstructionAddresses isa cb $ \repr insnAddrs0 ->
-    let insnAddrs1 = fmap symbolize insnAddrs0
+    let insnAddrs1 = fmap (symbolize (concreteDiscoveryBlock cb)) insnAddrs0
     in case DLN.nonEmpty (concat insnAddrs1) of
          Nothing ->
            RP.panic RP.Symbolize "symbolizeJumps" [ "Created empty block while symbolizing block at: " ++ show (concreteBlockAddress cb)
@@ -104,10 +105,11 @@ symbolizeJumps isa mem symAddrMap (cb, symAddr) =
                in (cb, symbolicBlock concAddr symAddr insnList repr (Just symSucc))
   where
     symbolize :: forall tp
-               . (Instruction arch tp (), ConcreteAddress arch)
+               . Some (MD.ParsedBlock arch)
+              -> (Instruction arch tp (), ConcreteAddress arch)
               -> [TaggedInstruction arch tp (InstructionAnnotation arch)]
-    symbolize (i, addr) =
-      case isaJumpType isa i mem addr of
+    symbolize (Some pb) (i, addr) =
+      case isaJumpType isa i mem addr pb of
         Some (AbsoluteJump _ target) ->
           let symTarget = lookupSymbolicAddress target
           in isaSymbolizeAddresses isa mem addr (Just symTarget) i

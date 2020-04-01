@@ -41,6 +41,7 @@ import qualified Data.ByteString.Lazy.Builder as B
 import qualified Data.ByteString.Lazy as LB
 import           Data.Maybe ( fromMaybe )
 import           Data.Parameterized.Classes
+import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Typeable ( Typeable )
 import           Data.Word ( Word8 )
@@ -129,8 +130,8 @@ prettyPrintWithAnnotations insn =
           AbsoluteAddress addr -> [PP.angles (PP.text $ show $ PD.pretty addr)]
 
     insnAnnStr = case R.symbolicTarget insn of
-      Just tgt -> " <<" ++ show (PD.pretty tgt) ++ ">>"
-      Nothing -> ""
+      Some (R.RelocatableTarget tgt) -> " <<" ++ show (PD.pretty tgt) ++ ">>"
+      Some R.NoTarget -> ""
 
 -- | The types of failures that can occur during disassembly of x86_64
 -- instructions.

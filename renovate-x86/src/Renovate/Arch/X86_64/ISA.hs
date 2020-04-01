@@ -250,12 +250,13 @@ x86OpSPImmediate op_bytes imm = do
 
 -- | Simple adapter for 'x64JumpTypeRaw' with the right type to be used in an
 -- ISA.
-x64JumpType :: forall (tp :: R.InstructionArchReprKind X86.X86_64) t
+x64JumpType :: forall (tp :: R.InstructionArchReprKind X86.X86_64) t unused
              . Instruction tp t
             -> MM.Memory 64
             -> R.ConcreteAddress X86.X86_64
+            -> unused
             -> Some (R.JumpType X86.X86_64)
-x64JumpType insn _ = x64JumpTypeRaw insn
+x64JumpType insn _ addr _ = x64JumpTypeRaw insn addr
 
 -- | Classify different kinds of jump instructions.
 --
@@ -372,10 +373,9 @@ x64MakeSymbolicJumpOrCall op_code sym_addr =
 -- intended to be evidence of that).
 x64ModifyJumpTarget :: R.ConcreteAddress X86.X86_64
                     -> R.Instruction X86.X86_64 tp ()
-                    -> R.JumpType arch R.HasModifiableTarget
-                    -> R.ConcreteAddress X86.X86_64
+                    -> R.RelocatableTarget X86.X86_64 R.ConcreteAddress R.HasSomeTarget
                     -> Maybe (DLN.NonEmpty (Instruction tp ()))
-x64ModifyJumpTarget srcAddr (XI ii) _jt newTarget =
+x64ModifyJumpTarget srcAddr (XI ii) (R.RelocatableTarget newTarget) =
   case D.iiOp ii of
     'j' : _ -> Just (extendDirectJump newTarget DLN.:| [])
     'c' : 'a' : 'l' : 'l' : _ -> Just (extendDirectJump newTarget DLN.:| [])
