@@ -54,7 +54,6 @@ import qualified Renovate as R
 import qualified Renovate.Arch.PPC.Panic as RP
 
 data TargetAddress arch = NoAddress
-                        | AbsoluteAddress (R.ConcreteAddress arch)
                         deriving (Eq, Ord)
 
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (TargetAddress arch)
