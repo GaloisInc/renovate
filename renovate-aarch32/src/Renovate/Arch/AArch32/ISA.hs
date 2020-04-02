@@ -25,7 +25,6 @@ module Renovate.Arch.AArch32.ISA (
   T32
   ) where
 
-import           Control.Lens ( (^.) )
 import qualified Control.Monad.Catch as C
 import qualified Data.Bits as DB
 import qualified Data.ByteString as BS
@@ -33,10 +32,12 @@ import qualified Data.ByteString.Lazy as LBS
 import           Data.Coerce ( coerce )
 import qualified Data.List.NonEmpty as DLN
 import           Data.Parameterized.Classes
+import qualified Data.Parameterized.List as PL
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Parameterized.TraversableFC as FC
 import qualified Data.Text.Prettyprint.Doc as PP
 import           Data.Word ( Word8, Word64 )
+import qualified Data.Word.Indexed as W
 
 -- NOTE: Renovate currently does not rewrite thumb blocks
 --
@@ -435,6 +436,7 @@ asParsedTerminator insnAddr pb =
               | otherwise -> NoInstruction
             _ -> curState
 
+-- | FIXME: We may have to use the long jump strategy from PowerPC here
 armModifyJumpTarget :: R.ConcreteAddress AArch32
                     -> Instruction tp ()
                     -> R.RelocatableTarget AArch32 R.ConcreteAddress R.HasSomeTarget
@@ -464,34 +466,90 @@ armModifyJumpTarget insnAddr i0 (R.RelocatableTarget newTarget) =
 singleton :: DA.Instruction -> DLN.NonEmpty (Instruction A32 ())
 singleton = (DLN.:| []) . ARMInstruction . toAnnotatedARM
 
--- FIXME: This is not actually a no-op on ARM
 armConcretizeAddresses :: MM.Memory 32
                        -> R.ConcreteAddress AArch32
                        -> Instruction tp TargetAddress
                        -> Instruction tp ()
-armConcretizeAddresses _mem _addr i =
+armConcretizeAddresses _mem insnAddr i =
   case i of
     ARMInstruction (DA.Instruction opc operands) ->
-      ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC (\(DA.Annotated _ operand) -> DA.Annotated () operand) operands))
+      case opc of
+        DA.LDRT_A1 ->
+          case operands of
+            rN DA.:< rt DA.:< u DA.:< cond DA.:< DA.Annotated (AbsoluteAddress absAddr) _off12 DA.:< DA.Nil ->
+              let newOff14 = fromIntegral (insnAddr `R.addressDiff` absAddr)
+                  newOff12 = newOff14 `DB.shiftR` 2
+                  operands' = (      rN
+                               DA.:< rt
+                               DA.:< u
+                               DA.:< cond
+                               DA.:< DA.Annotated NoAddress (DA.Bv12 newOff12)
+                               DA.:< DA.Nil
+                              )
+                  i' = DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands')
+              in ARMInstruction i'
+            _ -> ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands))
+        _ -> ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands))
     ThumbInstruction {} ->
       RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet support" ]
+  where
+    toUnitAnnotation :: forall tp
+                      . DA.Annotated TargetAddress DA.Operand tp
+                     -> DA.Annotated () DA.Operand tp
+    toUnitAnnotation (DA.Annotated _ op) = DA.Annotated () op
 
--- FIXME: This is not actually a no-op on ARM
 armSymbolizeAddresses :: MM.Memory 32
                       -> R.ConcreteAddress AArch32
                       -> Maybe (R.SymbolicAddress AArch32)
                       -> Instruction tp ()
                       -> [R.TaggedInstruction AArch32 tp TargetAddress]
-armSymbolizeAddresses _mem _insnAddr mSymbolicTarget i =
+armSymbolizeAddresses _mem insnAddr mSymbolicTarget i =
   case i of
-    ARMInstruction (DA.Instruction opc operands) ->
-      let newInsn = DA.Instruction (coerce opc) (FC.fmapFC annotateNull operands)
-      in [R.tagInstruction mSymbolicTarget (ARMInstruction newInsn)]
+    ARMInstruction (armDropAnnotations -> DA.Instruction opc operands) ->
+      case opc of
+        DA.LDRT_A1 ->
+          case operands of
+            -- LDRT_A1 :: Opcode o '["Bv4", "Bv4", "Bv1", "Bv4", "Bv12"]
+            --
+            -- Rn, Rt, U, cond, imm12
+            --
+            -- NOTE: So far, all PC-relative address computation in gcc-compiled
+            -- binaries seems to be done using this instruction
+            DA.Bv4 rN DA.:< rt DA.:< u DA.:< cond DA.:< DA.Bv12 off12 DA.:< DA.Nil
+              | isPC rN ->
+                let off14 = off12 `DB.shiftL` 2
+                    target = insnAddr `R.addressAddOffset` fromIntegral off14
+                    i' = DA.Instruction (coerce opc) (     noAddr (DA.Bv4 rN)
+                                                     DA.:< noAddr rt
+                                                     DA.:< noAddr u
+                                                     DA.:< noAddr cond
+                                                     DA.:< withAddr target (DA.Bv12 off12)
+                                                     DA.:< DA.Nil
+                                                     )
+                in [R.tagInstruction mSymbolicTarget (ARMInstruction i')]
+              | otherwise -> toATagged opc operands
+        _ -> toATagged opc operands
     ThumbInstruction {} ->
       RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet support" ]
   where
-    annotateNull :: forall x tp . DA.Annotated x DA.Operand tp -> DA.Annotated TargetAddress DA.Operand tp
-    annotateNull (DA.Annotated _ operand) = DA.Annotated NoAddress operand
+    annotateNull :: forall tp . DA.Operand tp -> DA.Annotated TargetAddress DA.Operand tp
+    annotateNull operand = DA.Annotated NoAddress operand
+    toATagged :: forall sh
+               . DA.Opcode DA.Operand sh
+              -> PL.List DA.Operand sh
+              -> [R.TaggedInstruction AArch32 A32 TargetAddress]
+    toATagged opc operands =
+      let newInsn = DA.Instruction (coerce opc) (FC.fmapFC annotateNull operands)
+      in [R.tagInstruction mSymbolicTarget (ARMInstruction newInsn)]
+
+noAddr :: DA.Operand tp -> DA.Annotated TargetAddress DA.Operand tp
+noAddr = DA.Annotated NoAddress
+
+withAddr :: R.ConcreteAddress AArch32 -> DA.Operand tp -> DA.Annotated TargetAddress DA.Operand tp
+withAddr t = DA.Annotated (AbsoluteAddress t)
+
+isPC :: W.W 4 -> Bool
+isPC i = i == 15
 
 isa :: R.ISA AArch32
 isa =
