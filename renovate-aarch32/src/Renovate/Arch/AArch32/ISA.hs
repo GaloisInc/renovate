@@ -37,7 +37,6 @@ import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Parameterized.TraversableFC as FC
 import qualified Data.Text.Prettyprint.Doc as PP
 import           Data.Word ( Word8, Word64 )
-import qualified Data.Word.Indexed as W
 
 -- NOTE: Renovate currently does not rewrite thumb blocks
 --
@@ -474,14 +473,15 @@ armConcretizeAddresses _mem insnAddr i =
   case i of
     ARMInstruction (DA.Instruction opc operands) ->
       case opc of
-        DA.LDRT_A1 ->
+        DA.LDR_l_A1 ->
           case operands of
-            rN DA.:< rt DA.:< u DA.:< cond DA.:< DA.Annotated (AbsoluteAddress absAddr) _off12 DA.:< DA.Nil ->
+            p DA.:< rt DA.:< u DA.:< w DA.:< cond DA.:< DA.Annotated (AbsoluteAddress absAddr) _off12 DA.:< DA.Nil ->
               let newOff14 = fromIntegral (insnAddr `R.addressDiff` absAddr)
                   newOff12 = newOff14 `DB.shiftR` 2
-                  operands' = (      rN
+                  operands' = (      p
                                DA.:< rt
                                DA.:< u
+                               DA.:< w
                                DA.:< cond
                                DA.:< DA.Annotated NoAddress (DA.Bv12 newOff12)
                                DA.:< DA.Nil
@@ -507,27 +507,26 @@ armSymbolizeAddresses _mem insnAddr mSymbolicTarget i =
   case i of
     ARMInstruction (armDropAnnotations -> DA.Instruction opc operands) ->
       case opc of
-        DA.LDRT_A1 ->
+        DA.LDR_l_A1 ->
           case operands of
-            -- LDRT_A1 :: Opcode o '["Bv4", "Bv4", "Bv1", "Bv4", "Bv12"]
+            -- LDRT_A1 :: Opcode o '["Bv1", "Bv4", "Bv1", "Bv1", "Bv4", "Bv12"]
             --
-            -- Rn, Rt, U, cond, imm12
+            -- P, Rt, U, W, cond, imm12
             --
             -- NOTE: So far, all PC-relative address computation in gcc-compiled
             -- binaries seems to be done using this instruction
-            DA.Bv4 rN DA.:< rt DA.:< u DA.:< cond DA.:< DA.Bv12 off12 DA.:< DA.Nil
-              | isPC rN ->
-                let off14 = off12 `DB.shiftL` 2
-                    target = insnAddr `R.addressAddOffset` fromIntegral off14
-                    i' = DA.Instruction (coerce opc) (     noAddr (DA.Bv4 rN)
-                                                     DA.:< noAddr rt
-                                                     DA.:< noAddr u
-                                                     DA.:< noAddr cond
-                                                     DA.:< withAddr target (DA.Bv12 off12)
-                                                     DA.:< DA.Nil
-                                                     )
+            p DA.:< rt DA.:< u DA.:< w DA.:< cond DA.:< DA.Bv12 off12 DA.:< DA.Nil ->
+              let off14 = off12 `DB.shiftL` 2
+                  target = insnAddr `R.addressAddOffset` fromIntegral off14
+                  i' = DA.Instruction (coerce opc) (     noAddr p
+                                                   DA.:< noAddr rt
+                                                   DA.:< noAddr u
+                                                   DA.:< noAddr w
+                                                   DA.:< noAddr cond
+                                                   DA.:< withAddr target (DA.Bv12 off12)
+                                                   DA.:< DA.Nil
+                                                   )
                 in [R.tagInstruction mSymbolicTarget (ARMInstruction i')]
-              | otherwise -> toATagged opc operands
         _ -> toATagged opc operands
     ThumbInstruction {} ->
       RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet support" ]
@@ -547,9 +546,6 @@ noAddr = DA.Annotated NoAddress
 
 withAddr :: R.ConcreteAddress AArch32 -> DA.Operand tp -> DA.Annotated TargetAddress DA.Operand tp
 withAddr t = DA.Annotated (AbsoluteAddress t)
-
-isPC :: W.W 4 -> Bool
-isPC i = i == 15
 
 isa :: R.ISA AArch32
 isa =
