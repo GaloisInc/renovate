@@ -289,7 +289,14 @@ armMakeRelativeJumpTo :: R.ConcreteAddress AArch32
                       -> R.ConcreteAddress AArch32
                       -> R.InstructionArchRepr AArch32 tp
                       -> DLN.NonEmpty (Instruction tp ())
-armMakeRelativeJumpTo = error "make relative jump to"
+armMakeRelativeJumpTo src dest repr =
+  case repr of
+    ArchRepr A32Repr ->
+      let off = fromIntegral ((src `R.addressDiff` dest) `DB.shiftR` 2)
+      in singleton (DA.Instruction DA.B_A1 (DA.Bv4 0 DA.:< DA.Bv24 off DA.:< DA.Nil))
+    ArchRepr T32Repr ->
+      RP.panic RP.ARMISA "armMakeRelativeJumpTo" [ "Thumb rewriting is not yet supported"
+                                                 ]
 
 armMaxRelativeJumpSize :: R.InstructionArchRepr AArch32 tp -> Word64
 armMaxRelativeJumpSize repr =
@@ -391,14 +398,6 @@ armJumpType i mem insnAddr pb =
   where
     nextInsnAddr = insnAddr `R.addressAddOffset` fromIntegral (armInstrSize i)
 
--- asConstantIP :: MM.Memory 32
---              -> MC.RegState (MC.ArchReg AArch32) (MC.Value AArch32 ids)
---              -> Maybe (R.ConcreteAddress AArch32)
--- asConstantIP mem regs = do
---   let val = regs ^. MC.boundValue MC.ip_reg
---   segOff <- MC.valueAsSegmentOff mem val
---   R.concreteFromSegmentOff mem segOff
-
 data CurrentInstruction = NoInstruction
                         | InInstruction (MC.ArchAddrWord AArch32)
                         | FoundTarget
@@ -447,13 +446,13 @@ armModifyJumpTarget insnAddr i0 (R.RelocatableTarget newTarget) =
         DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
           -- FIXME: Assert in range
           let newOff = fromIntegral ((insnAddr `R.addressDiff` newTarget) `DB.shiftR` 2)
-          in singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+          in Just $ singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
         DA.Instruction DA.BL_i_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
           let newOff = fromIntegral ((insnAddr `R.addressDiff` newTarget) `DB.shiftR` 2)
-          in singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+          in Just $ singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
         DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
           let newOff = fromIntegral ((insnAddr `R.addressDiff` newTarget) `DB.shiftR` 2)
-          in singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+          in Just $ singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
         _ ->
           RP.panic RP.ARMISA "armModifyJumpTarget" [ "Encountered unmodifiable instruction that should not have reached here"
                                                    , "  " ++ armPrettyInstruction i0
@@ -462,8 +461,8 @@ armModifyJumpTarget insnAddr i0 (R.RelocatableTarget newTarget) =
       RP.panic RP.ARMISA "armModifyJumpTarget" [ "Thumb rewriting is not yet supported"
                                                ]
 
-singleton :: DA.Instruction -> Maybe (DLN.NonEmpty (Instruction A32 ()))
-singleton = Just . (DLN.:| []) . ARMInstruction . toAnnotatedARM
+singleton :: DA.Instruction -> DLN.NonEmpty (Instruction A32 ())
+singleton = (DLN.:| []) . ARMInstruction . toAnnotatedARM
 
 -- FIXME: This is not actually a no-op on ARM
 armConcretizeAddresses :: MM.Memory 32
@@ -474,8 +473,8 @@ armConcretizeAddresses _mem _addr i =
   case i of
     ARMInstruction (DA.Instruction opc operands) ->
       ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC (\(DA.Annotated _ operand) -> DA.Annotated () operand) operands))
-    ThumbInstruction (DT.Instruction opc operands) ->
-      ThumbInstruction (DT.Instruction (coerce opc) (FC.fmapFC (\(DT.Annotated _ operand) -> DT.Annotated () operand) operands))
+    ThumbInstruction {} ->
+      RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet support" ]
 
 -- FIXME: This is not actually a no-op on ARM
 armSymbolizeAddresses :: MM.Memory 32
@@ -488,6 +487,8 @@ armSymbolizeAddresses _mem _insnAddr mSymbolicTarget i =
     ARMInstruction (DA.Instruction opc operands) ->
       let newInsn = DA.Instruction (coerce opc) (FC.fmapFC annotateNull operands)
       in [R.tagInstruction mSymbolicTarget (ARMInstruction newInsn)]
+    ThumbInstruction {} ->
+      RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet support" ]
   where
     annotateNull :: forall x tp . DA.Annotated x DA.Operand tp -> DA.Annotated TargetAddress DA.Operand tp
     annotateNull (DA.Annotated _ operand) = DA.Annotated NoAddress operand
