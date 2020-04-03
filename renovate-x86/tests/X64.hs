@@ -4,6 +4,7 @@
 {-# LANGUAGE GADTs            #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeOperators #-}
 -- | Tests for the x64 ABI
 module X64 ( x64Tests ) where
 
@@ -108,11 +109,12 @@ analysis expected env =
 
 data TestConfig a = TestCfg Bool [String]
 
-testBlockRecovery :: (w ~ MM.ArchAddrWidth arch,
-                      R.InstructionConstraints arch,
-                      MBL.BinaryLoader arch binFmt,
-                      E.ElfWidthConstraints w,
-                      MS.SymArchConstraints arch
+testBlockRecovery :: ( w ~ MM.ArchAddrWidth arch
+                     , R.InstructionConstraints arch
+                     , MBL.BinaryLoader arch binFmt
+                     , E.ElfWidthConstraints w
+                     , MS.SymArchConstraints arch
+                     , 16 NR.<= w
                      )
                   => C.HandleAllocator
                   -> R.RenovateConfig arch binFmt R.AnalyzeOnly TestConfig
