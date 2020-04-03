@@ -233,8 +233,10 @@ mapJumpAddress concreteAddressMap sf = do
               S.put (insnAddr `addressAddOffset` fromInteger totalSize)
               return (insns, fromInteger totalSize)
       | otherwise ->
-        RP.panic RP.Concretize "mapJumpAddress" [ "Expected a symbolic target for an instruction that is a modifiable jump: " ++ isaPrettyInstruction isa concreteInstr
-                                                ]
+        -- NOTE: This case implies that a client of renovate added a (hopefully
+        -- intra-block) jump that does not need to be rewritten
+        let instrSize = isaInstructionSize isa concreteInstr
+        in return (concreteInstr DLN.:| [], fromIntegral instrSize)
 
 data WithModifiableJump arch =
   ModifiableJump (JumpType arch HasModifiableTarget)
