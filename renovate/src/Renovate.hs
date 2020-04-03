@@ -43,10 +43,9 @@ module Renovate
   B.concreteBlockAddress,
   B.concreteBlockInstructions,
   -- ** Symbolic blocks
-  B.SymbolicBlock,
-  B.symbolicBlockOriginalAddress,
-  B.symbolicBlockSymbolicAddress,
-  B.symbolicBlockInstructions,
+  B.SymbolicBlock(..),
+  B.symbolicBlock,
+  B.SymbolicInfo(..),
   -- ** Concretized blocks
   B.ConcretizedBlock,
   B.concretizedBlockAddress,

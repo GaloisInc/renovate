@@ -20,13 +20,10 @@ module Renovate.BasicBlock.Types (
   concreteBlockInstructions,
   concreteDiscoveryBlock,
   -- * Symbolic blocks
-  SymbolicBlock,
+  SymbolicBlock(..),
   symbolicBlock,
-  symbolicBlockOriginalAddress,
-  symbolicBlockSymbolicAddress,
-  symbolicBlockInstructions,
-  symbolicBlockSymbolicSuccessor,
   symbolicBlockWithoutSuccessor,
+  SymbolicInfo(..),
   -- * Padding blocks
   PaddingBlock,
   paddingBlock,
@@ -37,10 +34,6 @@ module Renovate.BasicBlock.Types (
   concretizedBlock,
   concretizedBlockAddress,
   concretizedBlockInstructions,
-
-  SymbolicInfo(..),
-
-
   AddressAssignedBlock(..),
   TaggedInstruction,
   tagInstruction,
