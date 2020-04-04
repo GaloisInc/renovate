@@ -50,10 +50,11 @@ module Renovate
   B.symbolicBlockSymbolicAddress,
   B.symbolicBlockInstructions,
   B.symbolicBlockSymbolicSuccessor,
-  B.SymbolicInfo,
+  B.SymbolicInfo(..),
   B.symbolicInfo,
   -- ** Concretized blocks
   B.ConcretizedBlock,
+  B.concretizedBlock,
   B.concretizedBlockAddress,
   B.concretizedBlockInstructions,
   -- ** Block helpers

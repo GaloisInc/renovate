@@ -20,6 +20,7 @@ module Renovate.ISA
 
 import qualified Data.List.NonEmpty as DLN
 import           Data.Word ( Word8, Word64 )
+import           Data.Type.Equality
 
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Macaw.CFG as MM
@@ -73,6 +74,28 @@ data JumpType arch k where
 
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (JumpType arch k)
 deriving instance Eq (JumpType arch k)
+
+instance TestEquality (JumpType arch) where
+  testEquality (RelativeJump cond addr w) (RelativeJump cond' addr' w')
+    | cond == cond' && addr == addr' && w == w'
+    = Just Refl
+  testEquality (AbsoluteJump cond addr) (AbsoluteJump cond' addr')
+    | cond == cond' && addr == addr'
+    = Just Refl
+  testEquality (IndirectJump cond) (IndirectJump cond')
+    | cond == cond'
+    = Just Refl
+  testEquality (DirectCall addr w) (DirectCall addr' w')
+    | addr == addr' && w == w'
+    = Just Refl
+  testEquality IndirectCall IndirectCall
+    = Just Refl
+  testEquality (Return cond) (Return cond')
+    | cond == cond'
+    = Just Refl
+  testEquality NoJump NoJump
+    = Just Refl
+  testEquality _ _ = Nothing
 
 -- | Information about an ISA.
 --
