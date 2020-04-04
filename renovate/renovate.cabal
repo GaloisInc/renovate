@@ -28,9 +28,9 @@ library
                        Renovate.Redirect.Internal
                        Renovate.Redirect.LayoutBlocks
                        Renovate.Redirect.LayoutBlocks.Compact
-                       Renovate.Redirect.LayoutBlocks.SuccessorMap
                        Renovate.Redirect.LayoutBlocks.Types
                        Renovate.Redirect.Monad
+                       Renovate.Redirect.ReifyFallthrough
                        Renovate.Redirect.Symbolize
                        Renovate.Rewrite
                        Renovate.ABI
@@ -38,32 +38,39 @@ library
                        Renovate.Analysis.FunctionRecovery
                        Renovate.BasicBlock
                        Renovate.BinaryFormat.ELF
+                       Renovate.BinaryFormat.ELF.Common
                        Renovate.BinaryFormat.ELF.BSS
                        Renovate.BinaryFormat.ELF.Rewriter
+                       Renovate.BinaryFormat.ELF.Rewriter.Env
                        Renovate.ISA
+                       Renovate.Panic
                        Renovate.Recovery
                        Renovate.Recovery.Overlap
                        Renovate.Recovery.SymbolMap
                        Renovate.Redirect
   -- other-extensions:    
   build-depends:       base >=4.10 && <5,
+                       panic >= 0.4 && < 0.5,
                        bytestring,
                        text,
                        containers >= 0.5 && < 0.7,
                        heaps >= 0.3 && < 0.4,
                        IntervalMap >= 0.6 && < 0.7,
                        mtl >= 2.2 && < 2.3,
+                       unliftio-core >= 0.2 && < 0.3,
                        mwc-random >= 0.13.6.0 && < 0.15,
                        exceptions >= 0.7 && < 0.11,
                        vector >= 0.10 && < 0.13,
                        lens >= 4 && < 5,
                        generic-lens >= 0.5 && < 1.1,
                        located-base >= 0.1 && < 0.2,
+                       lumberjack >= 0.1 && < 0.2,
                        union-find >= 0.2 && < 0.3,
                        prettyprinter,
                        ansi-wl-pprint,
                        parameterized-utils,
                        macaw-base >= 0.3.2,
+                       macaw-refinement,
                        macaw-loader,
                        macaw-symbolic,
                        crucible,

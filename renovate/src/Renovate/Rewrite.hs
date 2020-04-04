@@ -248,7 +248,7 @@ getBlockIndex = RWS.asks envBlockCFGIndex
 lookupBlockCFG :: B.SymbolicBlock arch -> RewriteM lm arch (Maybe (FR.FunctionCFG arch))
 lookupBlockCFG sb = do
   idx <- RWS.asks envBlockCFGIndex
-  let mcfgs = M.lookup (B.concreteAddress (B.basicBlockAddress sb)) idx
+  let mcfgs = M.lookup (B.symbolicBlockOriginalAddress sb) idx
   return $ do -- 'Maybe' monad
     [cfg] <- S.elems <$> mcfgs
     Just cfg

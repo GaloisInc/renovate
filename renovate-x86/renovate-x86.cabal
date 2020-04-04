@@ -20,10 +20,12 @@ library
   other-modules:       Renovate.Arch.X86_64.ABI
                        Renovate.Arch.X86_64.ISA
                        Renovate.Arch.X86_64.Internal
+                       Renovate.Arch.X86_64.Panic
   -- other-extensions:    
   build-depends:       base >=4.10 && <5,
                        bytestring,
-                       flexdis86,
+                       panic >= 0.4 && < 0.5,
+                       flexdis86 >=0.1.4,
                        macaw-x86,
                        macaw-x86-symbolic,
                        macaw-base,

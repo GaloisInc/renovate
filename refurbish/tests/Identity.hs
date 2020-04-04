@@ -14,7 +14,7 @@ analysis =
   R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
                       , R.arAnalyze = \_ _ -> return (Const ())
                       , R.arPreRewrite = \_ _ -> return (Const ())
-                      , R.arRewrite = \_ _ _ b -> return (Just (R.basicBlockInstructions b))
+                      , R.arRewrite = \_ _ _ b -> return (Just (R.symbolicBlockInstructions b))
                       }
 
 allOutputEqual :: (E.ExitCode, E.ExitCode) -> (String, String) -> (String, String) -> IO ()

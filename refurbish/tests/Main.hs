@@ -5,6 +5,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 module Main ( main ) where
 
 import           Control.DeepSeq ( force )
@@ -15,6 +16,7 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ElfEdit as E
 import qualified Data.Foldable as F
 import           Data.Functor.Const ( Const(..) )
+import           GHC.TypeLits
 import qualified System.Directory as SD
 import qualified System.Exit as E
 import           System.FilePath ( (</>), (<.>) )
@@ -58,12 +60,13 @@ main = do
   hdlAlloc <- C.newHandleAllocator
   let injection = [ ("tests/injection-base/injection-base.ppc64.exe", "tests/injection-base/ppc64-exit.bin")]
   T.defaultMain $ T.testGroup "RefurbishTests" [
+    rewritingTests mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline) exes,
     rewritingTests mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.WholeFunctionTrampoline) exes,
-    rewritingTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.WholeFunctionTrampoline) exes,
-    rewritingTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.LoopGrouping R.WholeFunctionTrampoline) exes,
+    rewritingTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.AlwaysTrampoline) exes,
+    rewritingTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.LoopGrouping R.AlwaysTrampoline) exes,
     rewritingTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.FunctionGrouping R.WholeFunctionTrampoline) exes,
-    codeInjectionTests mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.WholeFunctionTrampoline) injection,
-    codeInjectionTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.WholeFunctionTrampoline) injection
+    codeInjectionTests mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline) injection,
+    codeInjectionTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.AlwaysTrampoline) injection
     ]
 
 -- | Generate a set of tests for the code injection API
@@ -122,6 +125,7 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , E.ElfWidthConstraints w
                 , MS.SymArchConstraints arch
                 , R.InstructionConstraints arch
+                , 16 <= w
                 , MBL.BinaryLoader arch (E.Elf w)
                 )
              => Maybe RD.Runner
@@ -134,7 +138,7 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
              -> MBL.LoadedBinary arch (E.Elf w)
              -> IO ()
 testRewriter mRunner hdlAlloc strat exePath assertions rc e loadedBinary = do
-  (e', _, _) <- R.rewriteElf rc hdlAlloc e loadedBinary strat
+  (e', _, _, _) <- R.rewriteElf rc hdlAlloc e loadedBinary strat
   let !bs = force (E.renderElf e')
   T.assertBool "Invalid ELF length" (LBS.length bs > 0)
   -- If we have a runner available, compare the output of the original
@@ -182,6 +186,7 @@ withELF :: FilePath
         -> [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite lm) a)]
         -> (forall arch . ( MS.SymArchConstraints arch
                           , MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch))
+                          , 16 <= MM.ArchAddrWidth arch
                           , E.ElfWidthConstraints (MM.ArchAddrWidth arch)
                           , R.InstructionConstraints arch
                           ) =>
