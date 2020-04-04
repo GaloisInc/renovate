@@ -16,6 +16,7 @@ module Renovate.BasicBlock (
   -- * Symbolic blocks
   SymbolicBlock,
   symbolicBlock,
+  symbolicBlockFromAddress,
   symbolicBlockOriginalAddress,
   symbolicBlockSymbolicAddress,
   symbolicBlockInstructions,
@@ -45,6 +46,7 @@ module Renovate.BasicBlock (
   RegisterType,
   AddressAssignedBlock(..),
   SymbolicInfo(..),
+  symbolicInfo,
   instructionStreamSize,
   terminatorType,
   TaggedInstruction,

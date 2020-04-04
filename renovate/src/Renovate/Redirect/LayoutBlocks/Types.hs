@@ -11,8 +11,6 @@ module Renovate.Redirect.LayoutBlocks.Types (
   CompactOrdering(..),
   Grouping(..),
   TrampolineStrategy(..),
-  LayoutPair(..),
-  ConcretePair(..),
   RewritePair(..),
   toRewritePair,
   Status(..),
@@ -143,8 +141,6 @@ changeable Unmodified = True
 changeable Immutable = False
 changeable Subsumed = True
 
-newtype ConcretePair arch = ConcretePair { unConcretePair :: LayoutPair (ConcreteBlock arch) arch }
-
 -- RewritePair is basically a ConcretePair, but in a format that's more
 -- friendly for sharing with the outside world. It also serves as a gatekeeper:
 -- we export RewritePair from the package, but not ConcretePair, and since an
@@ -156,12 +152,11 @@ newtype ConcretePair arch = ConcretePair { unConcretePair :: LayoutPair (Concret
 -- position.
 data RewritePair arch = RewritePair
   { rpOrig :: ConcreteBlock arch
-  , rpNew :: Maybe (ConcreteBlock arch)
+  , rpNew :: Maybe (ConcretizedBlock arch)
   }
 
-deriving instance Eq (Instruction arch ()) => Eq (RewritePair arch)
 deriving instance (Show (Instruction arch ()), MC.MemWidth (MC.ArchAddrWidth arch)) => Show (RewritePair arch)
 
-toRewritePair :: ConcretePair arch -> RewritePair arch
-toRewritePair (ConcretePair (LayoutPair orig new status))
+toRewritePair :: WithProvenance ConcretizedBlock arch -> RewritePair arch
+toRewritePair (WithProvenance orig new status)
   = RewritePair orig (guard (changed status) *> Just new)

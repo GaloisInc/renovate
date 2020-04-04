@@ -22,6 +22,7 @@ module Renovate.BasicBlock.Types (
   -- * Symbolic blocks
   SymbolicBlock,
   symbolicBlock,
+  symbolicBlockFromAddress,
   symbolicBlockOriginalAddress,
   symbolicBlockSymbolicAddress,
   symbolicBlockInstructions,
@@ -39,7 +40,7 @@ module Renovate.BasicBlock.Types (
   concretizedBlockInstructions,
 
   SymbolicInfo(..),
-
+  symbolicInfo,
 
   AddressAssignedBlock(..),
   TaggedInstruction,
@@ -208,8 +209,23 @@ symbolicBlock :: ConcreteBlock arch
               -- This could be Nothing if the block ends in an unconditional
               -- jump (note: calls have a fallthrough because they return)
               -> SymbolicBlock arch
-symbolicBlock cb symAddr symInsns symSucc =
-  SymbolicBlock { symbolicBlockOriginalAddress = concreteBlockAddress cb
+symbolicBlock cb = symbolicBlockFromAddress (concreteBlockAddress cb)
+
+symbolicBlockFromAddress
+  :: ConcreteAddress arch
+  -- ^ The 'ConcreteAddress' of the block this 'SymbolicBlock' was lifted from
+  -> SymbolicAddress arch
+  -- ^ The symbolic address assigned to this block
+  -> DLN.NonEmpty (TaggedInstruction arch (InstructionAnnotation arch))
+  -- ^ Instructions with symbolic address annotations
+  -> Maybe (SymbolicAddress arch)
+  -- ^ The symbolic address of the successor, if any
+  --
+  -- This could be Nothing if the block ends in an unconditional
+  -- jump (note: calls have a fallthrough because they return)
+  -> SymbolicBlock arch
+symbolicBlockFromAddress ca symAddr symInsns symSucc =
+  SymbolicBlock { symbolicBlockOriginalAddress = ca
                 , symbolicBlockSymbolicAddress = symAddr
                 , symbolicBlockInstructions = symInsns
                 , symbolicBlockSymbolicSuccessor = symSucc
@@ -276,3 +292,6 @@ deriving instance (MC.MemWidth (MC.ArchAddrWidth arch)) => Show (SymbolicInfo ar
 
 instance (MC.MemWidth (MC.ArchAddrWidth arch)) => PD.Pretty (SymbolicInfo arch) where
   pretty si = PD.pretty (symbolicAddress si)
+
+symbolicInfo :: SymbolicBlock arch -> SymbolicInfo arch
+symbolicInfo sb = SymbolicInfo (symbolicBlockSymbolicAddress sb) (symbolicBlockOriginalAddress sb)

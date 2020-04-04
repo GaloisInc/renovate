@@ -53,9 +53,6 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , TrampolineStrategy(..)
                                                       , Status(..)
                                                       , Layout(..)
-                                                      , ConcretePair(..)
-                                                      , SymbolicPair(..)
-                                                      , LayoutPair(..)
                                                       , RewritePair(..)
                                                       , WithProvenance(..)
                                                       , changed
@@ -93,7 +90,7 @@ redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch
          -- ^ The start address for the copied blocks
          -> [(ConcreteBlock arch, SymbolicBlock arch)]
          -- ^ Symbolized basic blocks
-         -> RM.RewriterT arch m ([ConcretizedBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)], [ConcretePair arch])
+         -> RM.RewriterT arch m ([ConcretizedBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)], [WithProvenance ConcretizedBlock arch])
 redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr baseSymBlocks = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   RM.recordSection "text" (RM.SectionInfo textStart textEnd)
@@ -163,10 +160,12 @@ toBlockMapping wps =
   , let concBlock = withoutProvenance wp
   ]
 
-toBackwardBlockMapping :: [ConcretePair arch] -> Map (ConcreteAddress arch) (ConcreteAddress arch)
+toBackwardBlockMapping :: [WithProvenance ConcretizedBlock arch] -> Map (ConcreteAddress arch) (ConcreteAddress arch)
 toBackwardBlockMapping ps = M.fromList
   [ (new, old)
-  | ConcretePair (LayoutPair (BasicBlock _ caddr) (BasicBlock _ saddr) status) <- ps
+  | WithProvenance cb sb status <- ps
+  , let caddr = concreteBlockAddress cb
+        saddr = concretizedBlockAddress sb
   , (new, old) <- [(caddr, caddr) | status /= Subsumed]
                ++ [(saddr, caddr) | changed status]
   ]

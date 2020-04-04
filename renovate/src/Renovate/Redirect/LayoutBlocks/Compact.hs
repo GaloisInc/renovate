@@ -389,9 +389,9 @@ assignConcreteAddress :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
                       -> WithProvenance SymbolicBlock arch
                       -> RewriterT arch m (WithProvenance AddressAssignedBlock arch)
 assignConcreteAddress assignedAddrs wp
-  | changed status = case M.lookup (keyOf sb) assignedAddrs of
+  | changed status = case M.lookup (symbolicInfo sb) assignedAddrs of
     Nothing -> error $ printf "Expected an assigned address for symbolic block %s (derived from concrete block %s)"
-                                (show (keyOf sb))
+                                (show (symbolicInfo sb))
                                 (show (concreteBlockAddress cb))
     Just (addr, size) ->
       return $ WithProvenance cb (AddressAssignedBlock sb addr size) status
@@ -401,7 +401,6 @@ assignConcreteAddress assignedAddrs wp
     cb = originalBlock wp
     sb = withoutProvenance wp
     status = rewriteStatus wp
-    keyOf sblock = SymbolicInfo (symbolicBlockSymbolicAddress sblock) (symbolicBlockOriginalAddress sblock)
 
 allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch), F.Foldable t, Functor t)
                                => ConcreteAddress arch
