@@ -45,6 +45,9 @@ isUnconditionalJT (Some (RI.RelativeJump cond _ _)) = isUnconditionalCond cond
 isUnconditionalJT (Some (RI.IndirectCall         )) = False
 isUnconditionalJT (Some (RI.DirectCall {}        )) = False
 isUnconditionalJT (Some (RI.NoJump               )) = False
+-- This case is unfortunate, but no uninstrumentable blocks will ultimately need
+-- the fallthrough information.
+isUnconditionalJT (Some (RI.NotInstrumentable {} )) = False
 
 isUnconditionalCond :: RI.JumpCondition -> Bool
 isUnconditionalCond RI.Unconditional = True

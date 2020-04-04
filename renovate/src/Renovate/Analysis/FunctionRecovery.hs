@@ -173,6 +173,7 @@ processWorklist = do
             markFunctionIncomplete
           Some (DirectCall {}) -> addSuccessor
           Some IndirectCall -> addSuccessor
+          Some (NotInstrumentable {}) -> markFunctionIncomplete
         processWorklist
 
 nextBlockAddress :: (MM.MemWidth (MM.ArchAddrWidth arch)) => ConcreteBlock arch -> M arch (ConcreteAddress arch)

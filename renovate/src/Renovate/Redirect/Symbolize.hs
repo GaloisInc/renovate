@@ -126,6 +126,8 @@ symbolizeJumps isa mem symAddrMap (cb, symAddr) =
         Some IndirectCall -> isaSymbolizeAddresses isa mem addr Nothing i
         Some (Return _) -> isaSymbolizeAddresses isa mem addr Nothing i
         Some NoJump -> isaSymbolizeAddresses isa mem addr Nothing i
+        Some (NotInstrumentable _) ->
+          isaSymbolizeAddresses isa mem addr Nothing i
 
     lookupSymbolicAddress target = fromMaybe (StableAddress target) (M.lookup target symAddrMap)
 

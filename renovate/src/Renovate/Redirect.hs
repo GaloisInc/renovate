@@ -167,6 +167,7 @@ isRelocatableTerminatorType :: Some (JumpType arch) -> Bool
 isRelocatableTerminatorType jt =
   case jt of
     Some (IndirectJump {}) -> False
+    Some (NotInstrumentable {}) -> False
     _ -> True
 
 {- Note [Redirection]
