@@ -25,11 +25,14 @@ module Renovate.Arch.X86_64 (
   prettyPrintWithAnnotations,
   x64Size,
   makeInstr,
+  X86Repr(..),
+  R.InstructionArchRepr(..),
+  OnlyEncoding,
   -- * Types
   X86.X86_64,
   Instruction,
   TargetAddress,
-  Value,
+  Value(..),
   AssemblyFailure(..),
   DisassemblyFailure(..)
   ) where
@@ -39,7 +42,7 @@ import qualified Data.Macaw.X86 as X86
 import qualified Renovate as R
 import           Renovate.Arch.X86_64.ABI
 import           Renovate.Arch.X86_64.ISA
-import           Renovate.Arch.X86_64.Internal ( Value, Instruction, TargetAddress, AssemblyFailure(..), DisassemblyFailure(..), toFlexInst, fromFlexInst, annotateInstr, noAddr, prettyPrintWithAnnotations, x64Size, makeInstr )
+import           Renovate.Arch.X86_64.Internal
 
 -- | The configuration for an x86_64 rewriter
 --

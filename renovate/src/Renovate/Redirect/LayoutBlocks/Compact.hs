@@ -62,7 +62,7 @@ type AddressHeap arch = H.Heap (H.Entry (Down Int) (ConcreteAddress arch))
 -- Right now, we use an inefficient encoding of jumps.  We could do
 -- better later on.
 compactLayout :: forall m t arch
-              .  (MonadIO m, T.Traversable t, InstructionConstraints arch)
+              .  (MonadIO m, T.Traversable t, InstructionConstraints arch, Typeable arch)
               => ConcreteAddress arch
               -- ^ Address to begin block layout of instrumented blocks
               -> LayoutStrategy
@@ -571,7 +571,7 @@ data OverlappingFreeBlocks arch
   deriving (Eq, Ord, Typeable)
 deriving instance MM.MemWidth (MM.ArchAddrWidth arch) => Show (OverlappingFreeBlocks arch)
 
-instance (MM.MemWidth (MM.ArchAddrWidth arch), Typeable arch) => Exception (OverlappingFreeBlocks arch)
+instance (MM.MemWidth (MM.ArchAddrWidth arch), (Typeable arch)) => Exception (OverlappingFreeBlocks arch)
 
 coalesceHeap ::
   (Monad m, MM.MemWidth (MM.ArchAddrWidth arch), Typeable arch) =>

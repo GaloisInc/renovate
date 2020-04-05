@@ -93,7 +93,7 @@ isa :: R.ISA X86.X86_64
 isa = R.ISA
   { R.isaInstructionSize = x64Size
   , R.isaJumpType = x64JumpType
-  , R.isaDefaultInstructionArchRepr = R.SomeInstructionArchRepr onlyRepr
+  , R.isaInstructionArchReprs = R.SomeInstructionArchRepr onlyRepr DLN.:| []
   , R.isaMakeRelativeJumpTo = x64MakeRelativeJumpTo
   , R.isaMaxRelativeJumpSize = const (bit 31 - 1)
   , R.isaModifyJumpTarget = x64ModifyJumpTarget

@@ -64,6 +64,7 @@ module Renovate.BasicBlock (
   prettyConcreteBlock,
   prettyConcretizedBlock,
   -- * Constraints
+  ArchConstraints,
   InstructionConstraints
   ) where
 
@@ -94,10 +95,7 @@ class HasConcreteAddresses b where
                            => ISA arch
                            -> b arch
                            -> (forall (tp :: InstructionArchReprKind arch)
-                               . ( MC.MemWidth (MC.ArchAddrWidth arch)
-                                 , Show (Instruction arch tp ())
-                                 , PD.Pretty (Instruction arch tp ())
-                                 )
+                               . ( ArchConstraints arch tp )
                                 => InstructionArchRepr arch tp -> DLN.NonEmpty (Instruction arch tp (), ConcreteAddress arch) -> a)
                            -> a
   -- | Compute the size of a block in bytes.

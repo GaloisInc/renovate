@@ -14,6 +14,7 @@ import qualified Data.ByteString as BS
 import           Control.Monad.IO.Class ( MonadIO )
 import           Data.Map ( Map )
 import qualified Data.Traversable as T
+import           Data.Typeable ( Typeable )
 
 import           Renovate.Address
 import           Renovate.BasicBlock ( InstructionConstraints, AddressAssignedBlock, SymbolicBlock )
@@ -32,7 +33,7 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
 --
 -- Right now, we use an inefficient encoding of jumps.  We could do
 -- better later on.
-layoutBlocks :: (MonadIO m, T.Traversable t, InstructionConstraints arch)
+layoutBlocks :: (MonadIO m, T.Traversable t, InstructionConstraints arch, Typeable arch)
              => LayoutStrategy
              -> ConcreteAddress arch
              -- ^ Address to begin block layout of instrumented blocks

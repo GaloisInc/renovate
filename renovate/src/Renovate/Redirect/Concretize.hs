@@ -18,6 +18,7 @@ import qualified Data.List.NonEmpty as DLN
 import qualified Data.Map as M
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Traversable as T
+import           Data.Typeable ( Typeable )
 import qualified Data.Macaw.CFG as MC
 import qualified Data.Map as Map
 import           Data.Maybe ( fromMaybe, maybeToList )
@@ -53,7 +54,7 @@ import           Renovate.Redirect.Monad
 -- Note that blocks have to be laid out in order; using M.toList is
 -- sufficient to sort by original address, which maintains the order
 -- invariant.
-concretize :: (MonadIO m, T.Traversable t, InstructionConstraints arch)
+concretize :: (MonadIO m, T.Traversable t, InstructionConstraints arch, Typeable arch)
            => LayoutStrategy
            -> ConcreteAddress arch
            -- ^ The start address of the concretized (instrumented) blocks

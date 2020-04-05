@@ -51,15 +51,16 @@ module Renovate.BasicBlock.Types (
 
   ToGenericInstruction(..),
   -- * Constraints
+  ArchConstraints,
   InstructionConstraints
   ) where
 
 import qualified Data.Foldable as F
 import           Data.Kind ( Type )
 import qualified Data.List.NonEmpty as DLN
+import           Data.Parameterized.Classes
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Text.Prettyprint.Doc as PD
-import           Data.Typeable ( Typeable )
 import           Data.Word
 
 import qualified Data.Macaw.CFG as MC
@@ -78,11 +79,20 @@ type family InstructionArchReprKind arch :: k
 -- block has instructions from only a single architecture.
 data family InstructionArchRepr arch :: InstructionArchReprKind arch -> Type
 
+type ArchConstraints arch (tp :: InstructionArchReprKind arch) =
+  ( MC.MemWidth (MC.ArchAddrWidth arch)
+  , Show (Instruction arch tp ())
+  , PD.Pretty (Instruction arch tp ())
+  , TestEquality (InstructionArchRepr arch)
+  , OrdF (InstructionArchRepr arch)
+  , Ord (RegisterType arch tp)
+  , Eq (RegisterType arch tp)
+  , OrdF (RegisterType arch)
+  , InstructionConstraints arch
+  )
+
 data SomeInstructionArchRepr arch where
-  SomeInstructionArchRepr :: ( MC.MemWidth (MC.ArchAddrWidth arch)
-                             , Show (Instruction arch tp ())
-                             , PD.Pretty (Instruction arch tp ())
-                             )
+  SomeInstructionArchRepr :: ( ArchConstraints arch tp )
                           => InstructionArchRepr arch tp
                           -> SomeInstructionArchRepr arch
 
@@ -120,8 +130,6 @@ type InstructionConstraints arch =
   , Show (Instruction arch (InstructionArchReprKind arch) ())
   , Eq (Instruction arch (InstructionArchReprKind arch) ())
   , Ord (RegisterType arch (InstructionArchReprKind arch))
-  , Typeable arch
-  , Typeable (InstructionAnnotation arch)
   , MC.MemWidth (MC.ArchAddrWidth arch)
   )
 
@@ -133,10 +141,7 @@ type InstructionConstraints arch =
 -- to associate with them on a one-to-one basis.
 data ConcreteBlock arch =
   forall (tp :: InstructionArchReprKind arch) .
-  ( MC.MemWidth (MC.ArchAddrWidth arch)
-  , Show (Instruction arch tp ())
-  , PD.Pretty (Instruction arch tp ())
-  ) =>
+  ( ArchConstraints arch tp ) =>
   ConcreteBlock { concreteBlockAddress :: ConcreteAddress arch
                 , concreteBlockInstructions :: DLN.NonEmpty (Instruction arch tp ())
                 , concreteBlockRepr :: InstructionArchRepr arch tp
@@ -163,10 +168,7 @@ instance PD.Pretty (ConcreteBlock arch) where
 
 
 concreteBlock :: forall arch (tp :: InstructionArchReprKind arch) ids
-               . ( MC.MemWidth (MC.ArchAddrWidth arch)
-                 , Show (Instruction arch tp ())
-                 , PD.Pretty (Instruction arch tp ())
-                 )
+               . ( ArchConstraints arch tp )
               => ConcreteAddress arch
               -> DLN.NonEmpty (Instruction arch tp ())
               -> InstructionArchRepr arch tp
@@ -177,10 +179,8 @@ concreteBlock addr insns repr pb =
 
 withConcreteInstructions :: ConcreteBlock arch
                          -> ( forall (tp :: InstructionArchReprKind arch)
-                            . ( MC.MemWidth (MC.ArchAddrWidth arch)
-                              , Show (Instruction arch tp ())
-                              , PD.Pretty (Instruction arch tp ())
-                              ) => InstructionArchRepr arch tp -> DLN.NonEmpty (Instruction arch tp ()) -> a)
+                            . ( ArchConstraints arch tp )
+                           => InstructionArchRepr arch tp -> DLN.NonEmpty (Instruction arch tp ()) -> a)
                          -> a
 withConcreteInstructions (ConcreteBlock _addr insns repr _) k =
   k repr insns
@@ -192,20 +192,14 @@ withConcreteInstructions (ConcreteBlock _addr insns repr _) k =
 -- as some users want to put meaningful data in padding.
 data PaddingBlock arch =
   forall (tp :: InstructionArchReprKind arch) .
-  ( MC.MemWidth (MC.ArchAddrWidth arch)
-  , Show (Instruction arch tp ())
-  , PD.Pretty (Instruction arch tp ())
-  ) =>
+  ( ArchConstraints arch tp ) =>
   PaddingBlock { paddingBlockAddress :: ConcreteAddress arch
                , _paddingBlockInstructions :: DLN.NonEmpty (Instruction arch tp ())
                , _paddingBlockRepr :: InstructionArchRepr arch tp
                }
 
 paddingBlock :: forall arch (tp :: InstructionArchReprKind arch)
-              . ( MC.MemWidth (MC.ArchAddrWidth arch)
-                , Show (Instruction arch tp ())
-                , PD.Pretty (Instruction arch tp ())
-                )
+              . ( ArchConstraints arch tp )
              => ConcreteAddress arch
              -> DLN.NonEmpty (Instruction arch tp ())
              -> InstructionArchRepr arch tp
@@ -214,10 +208,8 @@ paddingBlock = PaddingBlock
 
 withPaddingInstructions :: PaddingBlock arch
                         -> ( forall (tp :: InstructionArchReprKind arch)
-                           . ( MC.MemWidth (MC.ArchAddrWidth arch)
-                             , Show (Instruction arch tp ())
-                             , PD.Pretty (Instruction arch tp ())
-                             ) => InstructionArchRepr arch tp -> DLN.NonEmpty (Instruction arch tp ()) -> a)
+                           . ( ArchConstraints arch tp )
+                           => InstructionArchRepr arch tp -> DLN.NonEmpty (Instruction arch tp ()) -> a)
                         -> a
 withPaddingInstructions (PaddingBlock _ insns repr) k =
   k repr insns
@@ -296,10 +288,7 @@ projectInstruction = fst . unTag
 -- which refer to other 'SymbolicBlock's.
 data SymbolicBlock arch =
   forall (tp :: InstructionArchReprKind arch) .
-  ( MC.MemWidth (MC.ArchAddrWidth arch)
-  , Show (Instruction arch tp ())
-  , PD.Pretty (Instruction arch tp ())
-  ) =>
+  ( ArchConstraints arch tp ) =>
   SymbolicBlock { symbolicBlockOriginalAddress :: ConcreteAddress arch
                 , symbolicBlockSymbolicAddress :: SymbolicAddress arch
                 , symbolicBlockInstructions :: DLN.NonEmpty (TaggedInstruction arch tp (InstructionAnnotation arch))
@@ -308,10 +297,7 @@ data SymbolicBlock arch =
                 }
 
 symbolicBlock :: forall arch (tp :: InstructionArchReprKind arch)
-               . ( MC.MemWidth (MC.ArchAddrWidth arch)
-                 , Show (Instruction arch tp ())
-                 , PD.Pretty (Instruction arch tp ())
-                 )
+               . ( ArchConstraints arch tp )
               => ConcreteAddress arch
               -- ^ The 'ConcreteBlock' this 'SymbolicBlock' was lifted from
               -> SymbolicAddress arch
@@ -341,10 +327,8 @@ symbolicBlockWithoutSuccessor sb =
 
 withSymbolicInstructions :: SymbolicBlock arch
                          -> ( forall (tp :: InstructionArchReprKind arch)
-                            . ( MC.MemWidth (MC.ArchAddrWidth arch)
-                              , Show (Instruction arch tp ())
-                              , PD.Pretty (Instruction arch tp ())
-                              ) => InstructionArchRepr arch tp -> DLN.NonEmpty (TaggedInstruction arch tp (InstructionAnnotation arch)) -> a)
+                            . ( ArchConstraints arch tp )
+                            => InstructionArchRepr arch tp -> DLN.NonEmpty (TaggedInstruction arch tp (InstructionAnnotation arch)) -> a)
                          -> a
 withSymbolicInstructions (SymbolicBlock _caddr _saddr insns repr _) k =
   k repr insns
@@ -365,10 +349,7 @@ data AddressAssignedBlock arch = AddressAssignedBlock
 -- corresponding to it.
 data ConcretizedBlock arch =
   forall (tp :: InstructionArchReprKind arch) .
-  ( MC.MemWidth (MC.ArchAddrWidth arch)
-  , Show (Instruction arch tp ())
-  , PD.Pretty (Instruction arch tp ())
-  ) =>
+  ( ArchConstraints arch tp ) =>
   ConcretizedBlock { concretizedBlockAddress :: ConcreteAddress arch
                    , concretizedBlockInstructions :: DLN.NonEmpty (Instruction arch tp ())
                    , concretizedBlockRepr :: InstructionArchRepr arch tp
@@ -387,10 +368,7 @@ instance PD.Pretty (ConcretizedBlock arch) where
     PD.pretty addr PD.<> ":" PD.<+> PD.align (PD.vsep (map PD.pretty (F.toList insns)))
 
 concretizedBlock :: forall arch (tp :: InstructionArchReprKind arch)
-                  . ( Show (Instruction arch tp ())
-                    , PD.Pretty (Instruction arch tp ())
-                    , MC.MemWidth (MC.ArchAddrWidth arch)
-                    )
+                  . ( ArchConstraints arch tp )
                  => ConcreteAddress arch
                  -> DLN.NonEmpty (Instruction arch tp ())
                  -> InstructionArchRepr arch tp
@@ -398,7 +376,7 @@ concretizedBlock :: forall arch (tp :: InstructionArchReprKind arch)
 concretizedBlock = ConcretizedBlock
 
 withConcretizedInstructions :: ConcretizedBlock arch
-                            -> (forall (tp :: InstructionArchReprKind arch) . InstructionArchRepr arch tp -> DLN.NonEmpty (Instruction arch tp ()) -> a)
+                            -> (forall (tp :: InstructionArchReprKind arch) . (ArchConstraints arch tp) => InstructionArchRepr arch tp -> DLN.NonEmpty (Instruction arch tp ()) -> a)
                             -> a
 withConcretizedInstructions (ConcretizedBlock _addr insns repr) k =
   k repr insns

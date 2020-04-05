@@ -135,6 +135,7 @@ withElfConfig :: (C.MonadThrow m)
               => E.SomeElf E.Elf
               -> [(Arch.Architecture, SomeConfig callbacks b)]
               -> (forall arch . (MS.SymArchConstraints arch,
+                                  Typeable arch,
                                   16 <= MM.ArchAddrWidth arch,
                                   MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch)),
                                   E.ElfWidthConstraints (MM.ArchAddrWidth arch),
@@ -183,6 +184,7 @@ withElfConfig e0 configs k = do
 -- metadata is provided by rewriter passes in the 'RW.RewriteM' environment.
 rewriteElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
+               Typeable arch,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                16 <= MM.ArchAddrWidth arch,
                MS.SymArchConstraints arch)
@@ -316,6 +318,7 @@ sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
 --    are currently page aligned - is that necessary?)
 doRewrite :: (B.InstructionConstraints arch,
               MBL.BinaryLoader arch binFmt,
+              Typeable arch,
               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
               16 <= MM.ArchAddrWidth arch,
               MS.SymArchConstraints arch)
@@ -872,6 +875,7 @@ instrumentTextSection :: forall w arch binFmt b lm
                        . (w ~ MM.ArchAddrWidth arch,
                           MBL.BinaryLoader arch binFmt,
                           B.InstructionConstraints arch,
+                          Typeable arch,
                           Integral (E.ElfWordType w),
                           16 <= w,
                           MS.SymArchConstraints arch)

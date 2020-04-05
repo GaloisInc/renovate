@@ -17,6 +17,7 @@ module Renovate.ISA
   , StackAddress(..)
   , HasModifiableTarget
   , NoModifiableTarget
+  , isaDefaultInstructionArchRepr
   ) where
 
 import qualified Data.List.NonEmpty as DLN
@@ -168,7 +169,7 @@ data ISA arch = ISA
     -- pass in a manually-constructed jump type to circumvent the protection.
     --
     -- The fourth argument is the concretized new target
-  , isaDefaultInstructionArchRepr :: SomeInstructionArchRepr arch
+  , isaInstructionArchReprs :: DLN.NonEmpty (SomeInstructionArchRepr arch)
   -- ^ The default arch repr to use if there is nothing else, used in particular
   -- in the creation of padding.
   , isaMakePadding :: forall tp . Word64 -> InstructionArchRepr arch tp -> [Instruction arch tp ()]
@@ -244,6 +245,9 @@ data StackAddress arch (tp :: InstructionArchReprKind arch) = StackAddress
 deriving instance Eq (RegisterType arch tp) => Eq (StackAddress arch tp)
 deriving instance Ord (RegisterType arch tp) => Ord (StackAddress arch tp)
 deriving instance Show (RegisterType arch tp) => Show (StackAddress arch tp)
+
+isaDefaultInstructionArchRepr :: ISA arch -> SomeInstructionArchRepr arch
+isaDefaultInstructionArchRepr isa = DLN.head (isaInstructionArchReprs isa)
 
 {-
 

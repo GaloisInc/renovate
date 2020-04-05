@@ -71,11 +71,17 @@ data PPCRepr tp where
 instance TestEquality PPCRepr where
   testEquality PPCRepr PPCRepr = Just Refl
 
+instance OrdF PPCRepr where
+  compareF PPCRepr PPCRepr = EQF
+
 type instance R.InstructionArchReprKind (MP.AnyPPC v) = EncodingKind
 data instance R.InstructionArchRepr (MP.AnyPPC v) tp = OnlyRepr (PPCRepr tp)
 
 instance TestEquality (R.InstructionArchRepr (MP.AnyPPC v)) where
   testEquality (OnlyRepr PPCRepr) (OnlyRepr PPCRepr) = Just Refl
+
+instance OrdF (R.InstructionArchRepr (MP.AnyPPC v)) where
+  compareF (OnlyRepr PPCRepr) (OnlyRepr PPCRepr) = EQF
 
 onlyRepr :: R.InstructionArchRepr (MP.AnyPPC v) OnlyEncoding
 onlyRepr = OnlyRepr PPCRepr
@@ -161,7 +167,7 @@ isa =
   R.ISA { R.isaInstructionSize = ppcInstrSize
         , R.isaPrettyInstruction = ppcPrettyInstruction
         , R.isaMakePadding = ppcMakePadding
-        , R.isaDefaultInstructionArchRepr = R.SomeInstructionArchRepr onlyRepr
+        , R.isaInstructionArchReprs = R.SomeInstructionArchRepr onlyRepr DLN.:| []
         , R.isaMakeRelativeJumpTo = ppcMakeRelativeJumpTo
         , R.isaMaxRelativeJumpSize = const ppcMaxRelativeJumpSize
         , R.isaJumpType = ppcJumpType

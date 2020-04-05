@@ -122,9 +122,10 @@ myRewriter :: (R.HasAnalysisEnv env)
            -> Const Int arch
            -> RewriteState arch
            -> R.SymbolicBlock arch
-           -> R.RewriteM lm arch (Maybe (DLN.NonEmpty (R.TaggedInstruction arch (R.InstructionAnnotation arch))))
+           -> R.RewriteM lm arch (Maybe (R.ModifiedInstructions arch))
 myRewriter env nBlocks (RewriteState newFuncAddr) symBlock =
-  return (Just (R.symbolicBlockInstructions symBlock))
+  R.withSymbolicInstructions symBlock $ \repr insns ->
+    return (Just (R.ModifiedInstructions repr insns))
 :}
 
 >>> :{

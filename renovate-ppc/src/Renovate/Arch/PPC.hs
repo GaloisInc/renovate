@@ -15,11 +15,14 @@ module Renovate.Arch.PPC (
   abi64,
   OnlyEncoding,
   onlyRepr,
+  PPCRepr(..),
+  R.InstructionArchRepr(..),
   -- * Assembly and Disassembly
   assemble,
   disassemble,
   Instruction,
   TargetAddress(..),
+  Operand(..),
 
   -- * Exceptions
   InstructionDisassemblyFailure(..)

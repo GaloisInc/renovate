@@ -32,6 +32,7 @@ import qualified Data.List as L
 import           Data.Ord ( comparing )
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Traversable as T
+import           Data.Typeable ( Typeable )
 
 import           Prelude
 
@@ -69,7 +70,7 @@ import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions )
 -- The function runs in an arbitrary 'Monad' to allow instrumentors to
 -- carry around their own state.
 --
-redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch)
+redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch, Typeable arch)
          => ISA arch
          -- ^ Information about the ISA in use
          -> BlockInfo arch

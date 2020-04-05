@@ -29,7 +29,7 @@ import           Control.Monad.ST ( ST, RealWorld )
 import qualified Data.ByteString as B
 import qualified Data.List.NonEmpty as DLN
 import           Data.Map.Strict ( Map )
-import qualified Data.Text.Prettyprint.Doc as PD
+import           Data.Typeable ( Typeable )
 import           Data.Word ( Word64 )
 
 import qualified Data.Parameterized.NatRepr as NR
@@ -66,6 +66,7 @@ import qualified Renovate.Rewrite as RW
 data SomeConfig callbacks (b :: * -> *) = forall arch binFmt
                   . (B.InstructionConstraints arch,
                      MS.SymArchConstraints arch,
+                     Typeable arch,
                      MBL.BinaryLoader arch binFmt
                     )
                   => SomeConfig (NR.NatRepr (MM.ArchAddrWidth arch)) (MBL.BinaryRepr binFmt) (RenovateConfig arch binFmt callbacks b)
@@ -153,10 +154,7 @@ data AnalyzeOnly arch binFmt b =
 -- Note that we avoid having the caller return an entire 'B.SymbolicBlock' to
 -- prevent metadata from changing.
 data ModifiedInstructions arch where
-  ModifiedInstructions :: ( Show (B.Instruction arch tp ())
-                          , PD.Pretty (B.Instruction arch tp ())
-                          , MC.MemWidth (MC.ArchAddrWidth arch)
-                          )
+  ModifiedInstructions :: ( B.ArchConstraints arch tp )
                        => B.InstructionArchRepr arch tp
                        -> DLN.NonEmpty (B.TaggedInstruction arch tp (B.InstructionAnnotation arch))
                        -> ModifiedInstructions arch

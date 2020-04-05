@@ -16,6 +16,7 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ElfEdit as E
 import qualified Data.Foldable as F
 import           Data.Functor.Const ( Const(..) )
+import           Data.Typeable ( Typeable )
 import           GHC.TypeLits
 import qualified System.Directory as SD
 import qualified System.Exit as E
@@ -125,6 +126,7 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , E.ElfWidthConstraints w
                 , MS.SymArchConstraints arch
                 , R.InstructionConstraints arch
+                , Typeable arch
                 , 16 <= w
                 , MBL.BinaryLoader arch (E.Elf w)
                 )
@@ -187,6 +189,7 @@ withELF :: FilePath
         -> (forall arch . ( MS.SymArchConstraints arch
                           , MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch))
                           , 16 <= MM.ArchAddrWidth arch
+                          , Typeable arch
                           , E.ElfWidthConstraints (MM.ArchAddrWidth arch)
                           , R.InstructionConstraints arch
                           ) =>

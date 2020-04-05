@@ -62,6 +62,14 @@ instance Eq (Value tp) where
 instance Ord (Value tp) where
   compare (Value v1) (Value v2) = compare v1 v2
 
+instance TestEquality Value where
+  testEquality (Value v1) (Value v2)
+    | v1 == v2 = Just Refl
+    | otherwise = Nothing
+
+instance OrdF Value where
+  compareF (Value v1) (Value v2) = fromOrdering (compare v1 v2)
+
 toFlexValue :: Value tp -> D.Value
 toFlexValue (Value v) = v
 
@@ -94,12 +102,19 @@ data X86Repr tp where
 instance TestEquality X86Repr where
   testEquality X86Repr X86Repr = Just Refl
 
+instance OrdF X86Repr where
+  compareF X86Repr X86Repr = EQF
+
 instance TestEquality (R.InstructionArchRepr X86.X86_64) where
   testEquality (OnlyRepr X86Repr) (OnlyRepr X86Repr) = Just Refl
 
+instance OrdF (R.InstructionArchRepr X86.X86_64) where
+  compareF (OnlyRepr X86Repr) (OnlyRepr X86Repr) = EQF
+
 -- | A wrapper around a flexdis86 instruction with an arbitrary
 -- annotation on each operand of type @a@.
-newtype Instruction tp a = XI { unXI :: D.InstructionInstanceF (AnnotatedOperand a) }
+newtype Instruction (tp :: R.InstructionArchReprKind X86.X86_64) a =
+  XI { unXI :: D.InstructionInstanceF (AnnotatedOperand a) }
                          deriving (Functor, Eq, Show)
 
 type instance R.Instruction X86.X86_64 = Instruction

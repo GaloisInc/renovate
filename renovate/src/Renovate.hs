@@ -47,8 +47,10 @@ module Renovate
   B.concreteDiscoveryBlock,
   -- ** Symbolic blocks
   B.SymbolicBlock,
+  B.symbolicBlock,
   B.symbolicBlockOriginalAddress,
   B.symbolicBlockSymbolicAddress,
+  B.symbolicBlockSymbolicSuccessor,
   B.withSymbolicInstructions,
   B.RelocatableTarget(..),
   B.HasNoTarget,
@@ -93,6 +95,7 @@ module Renovate
   A.concreteFromAbsolute,
   A.addressAddOffset,
   A.addressDiff,
+  B.SymbolicInfo(..),
   -- * Analysis
   -- ** Function Recovery
   FR.recoverFunctions,
@@ -117,6 +120,7 @@ module Renovate
   -- * ABI
   ABI.ABI(..),
   ISA.ISA(..),
+  ISA.isaDefaultInstructionArchRepr,
   ISA.JumpType(..),
   ISA.JumpCondition(..),
   ISA.HasModifiableTarget,
@@ -157,6 +161,7 @@ module Renovate
   D.Diagnostic(..),
   D.Diagnostics(..),
   -- * Constraints
+  B.ArchConstraints,
   B.InstructionConstraints,
   -- * Exceptions
   A.BlockAssemblyException(..)
