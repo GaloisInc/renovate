@@ -34,8 +34,10 @@ library
                        macaw-base,
                        macaw-symbolic,
                        macaw-loader,
+                       macaw-loader-aarch32,
                        semmc-aarch32,
                        macaw-aarch32,
+                       macaw-aarch32-symbolic,
                        dismantle-tablegen,
                        dismantle-arm-xml,
                        renovate

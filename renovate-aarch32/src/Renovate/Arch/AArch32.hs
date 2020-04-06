@@ -15,6 +15,8 @@ module Renovate.Arch.AArch32 (
 
 import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.ARM as MA32
+import           Data.Macaw.AArch32.Symbolic ()
+import           Data.Macaw.BinaryLoader.AArch32 ()
 
 import qualified Renovate as R
 import qualified Renovate.Arch.AArch32.ISA as ISA
