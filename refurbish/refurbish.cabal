@@ -37,6 +37,7 @@ library
                  macaw-loader,
                  macaw-loader-x86,
                  renovate,
+                 renovate-aarch32,
                  renovate-ppc,
                  renovate-x86
   hs-source-dirs: src
@@ -63,10 +64,13 @@ executable refurbish
                        macaw-base,
                        macaw-loader,
                        macaw-loader-x86,
+                       macaw-loader-aarch32,
                        macaw-x86-symbolic,
                        macaw-ppc-symbolic,
+                       macaw-aarch32-symbolic,
                        mwc-random,
                        renovate,
+                       renovate-aarch32,
                        renovate-ppc,
                        renovate-x86
   hs-source-dirs:      tools/refurbish

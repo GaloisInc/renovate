@@ -40,14 +40,17 @@ import           Text.Read ( readMaybe )
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.BinaryLoader as MBL
 import           Data.Macaw.BinaryLoader.X86 ()
+import           Data.Macaw.BinaryLoader.AArch32 ()
 import           Data.Macaw.X86.Symbolic ()
 import           Data.Macaw.PPC.Symbolic ()
+import           Data.Macaw.AArch32.Symbolic ()
 import qualified Data.Parameterized.NatRepr as NR
 import qualified Lang.Crucible.FunctionHandle as C
 
 import qualified Renovate as R
 import qualified Renovate.Arch.PPC as RP
 import qualified Renovate.Arch.X86_64 as RX
+import qualified Renovate.Arch.AArch32 as RA
 
 import           Prelude hiding ((<>))
 
@@ -163,6 +166,7 @@ mainWithOptions o = do
       configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 (analysis o)))
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 (analysis o)))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config (analysis o)))
+                , (R.ARM, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RA.config (analysis o)))
                 ]
   allocator <-
     if oCompact o
