@@ -61,7 +61,7 @@ ppc64Inject :: forall env binFmt b lm
             -> R.RewriteM lm RP.PPC64 (Maybe (R.ModifiedInstructions RP.PPC64))
 ppc64Inject env _ (InjectedAddr addr) sb = do
   R.withSymbolicInstructions sb $ \repr insns -> do
-    case testEquality repr RP.onlyRepr of
+    case testEquality repr RP.PPCRepr of
       Nothing -> error "Unexpected impossible repr"
       Just Refl -> do
         let callI = DP.Instruction DP.BL (DP.Calltarget (DP.BT 0) PL.:< PL.Nil)
