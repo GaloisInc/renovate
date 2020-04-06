@@ -9,6 +9,7 @@
 module X64 ( x64Tests ) where
 
 import qualified Data.ByteString as B
+import qualified Data.Foldable as F
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Word ( Word64 )
@@ -92,18 +93,19 @@ analysis expected env =
   return $ foldr go (TestCfg True []) (R.biBlocks (R.analysisBlockInfo env))
   where
     go b inp@(TestCfg _bacc sacc) =
-      let actual = ExpectedBlock { addr = fromIntegral (R.absoluteAddress (R.basicBlockAddress b))
-                                 , byteCount = R.concreteBlockSize (R.analysisISA env) b
-                                 , insnCount = length (R.basicBlockInstructions b)
-                                 }
-          blockStr = unlines (map (R.isaPrettyInstruction (R.analysisISA env)) (R.basicBlockInstructions b))
-      in case M.lookup (addr actual) expectedMap of
-        Nothing
-          | S.member (addr actual) ignoreSet -> inp
-          | otherwise -> TestCfg False (("Unexpected block: " ++ show actual ++ " with instructions\n" ++ blockStr):sacc)
-        Just eb -> case eb == actual of
-                   True  -> inp
-                   False -> TestCfg False $ ("Block mismatch:\n" ++ blockStr):sacc
+      R.withConcreteInstructions b $ \_repr insns ->
+        let actual = ExpectedBlock { addr = fromIntegral (R.absoluteAddress (R.concreteBlockAddress b))
+                                   , byteCount = R.blockSize (R.analysisISA env) b
+                                   , insnCount = length insns
+                                   }
+            blockStr = unlines (F.toList (fmap (R.isaPrettyInstruction (R.analysisISA env)) insns))
+        in case M.lookup (addr actual) expectedMap of
+          Nothing
+            | S.member (addr actual) ignoreSet -> inp
+            | otherwise -> TestCfg False (("Unexpected block: " ++ show actual ++ " with instructions\n" ++ blockStr):sacc)
+          Just eb -> case eb == actual of
+                     True  -> inp
+                     False -> TestCfg False $ ("Block mismatch:\n" ++ blockStr):sacc
     expectedMap = M.fromList [ (addr eb, eb) | eb <- expectedBlocks expected ]
     ignoreSet = S.fromList (ignoreBlocks expected)
 
