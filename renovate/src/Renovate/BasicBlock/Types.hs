@@ -77,7 +77,7 @@ type family InstructionArchReprKind arch :: k
 -- The intent of this is to support architectures with multiple instruction sets
 -- (e.g., AArch32 with ARM and Thumb).  This lets us enforce that each basic
 -- block has instructions from only a single architecture.
-data family InstructionArchRepr arch :: InstructionArchReprKind arch -> Type
+type family InstructionArchRepr arch :: InstructionArchReprKind arch -> Type
 
 type ArchConstraints arch (tp :: InstructionArchReprKind arch) =
   ( MC.MemWidth (MC.ArchAddrWidth arch)

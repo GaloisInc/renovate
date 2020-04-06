@@ -22,6 +22,7 @@ library
   other-modules:       Renovate.Arch.AArch32.ABI
                        Renovate.Arch.AArch32.ISA
                        Renovate.Arch.AArch32.Panic
+                       Renovate.Arch.AArch32.Repr
   -- other-extensions:
   build-depends:       base >=4.10 && <5,
                        bytestring,
@@ -33,6 +34,8 @@ library
                        macaw-base,
                        macaw-symbolic,
                        macaw-loader,
+                       semmc-aarch32,
+                       macaw-aarch32,
                        dismantle-tablegen,
                        dismantle-arm-xml,
                        renovate

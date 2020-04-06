@@ -22,14 +22,18 @@ packages: deps/elf-edit/
           deps/semmc/semmc-ppc/
           deps/semmc/semmc-learning/
           deps/semmc/semmc-synthesis/
+          deps/semmc/semmc-aarch32/
           deps/macaw-loader/macaw-loader/
           deps/macaw-loader/macaw-loader-ppc/
           deps/macaw-loader/macaw-loader-x86/
           deps/macaw/macaw-ppc/
           deps/macaw/macaw-ppc-symbolic/
           deps/macaw/macaw-semmc/
+          deps/macaw/macaw-aarch32/
           renovate/
           renovate-x86/
           renovate-ppc/
           renovate-aarch32/
           refurbish/
+
+          deps/bv-sized

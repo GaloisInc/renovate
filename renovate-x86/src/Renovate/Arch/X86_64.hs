@@ -26,7 +26,6 @@ module Renovate.Arch.X86_64 (
   x64Size,
   makeInstr,
   X86Repr(..),
-  R.InstructionArchRepr(..),
   OnlyEncoding,
   -- * Types
   X86.X86_64,

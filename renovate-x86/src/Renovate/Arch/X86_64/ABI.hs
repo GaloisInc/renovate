@@ -57,7 +57,7 @@ x64IsReturn ii = instrOpcode ii == "ret"
 x64CallerSaveRegisters :: R.InstructionArchRepr X86.X86_64 tp -> [Value tp]
 x64CallerSaveRegisters repr =
   case repr of
-    OnlyRepr X86Repr ->
+    X86Repr ->
       fmap Value [ D.QWordReg D.RCX
                  , D.QWordReg D.RSI
                  , D.QWordReg D.RDI

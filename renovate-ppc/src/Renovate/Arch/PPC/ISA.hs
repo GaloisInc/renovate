@@ -17,11 +17,9 @@ module Renovate.Arch.PPC.ISA (
   Instruction,
   TargetAddress(..),
   OnlyEncoding,
-  onlyRepr,
   fromInst,
   toInst,
   Operand(..),
-  R.InstructionArchRepr(OnlyRepr),
   PPCRepr(..),
   -- * Exceptions
   InstructionDisassemblyFailure(..)
@@ -36,7 +34,6 @@ import qualified Data.ByteString.Lazy as LB
 import           Data.Coerce ( coerce )
 import           Data.Int ( Int32 )
 import qualified Data.List.NonEmpty as DLN
-import           Data.Maybe ( isJust )
 import qualified Data.Text.Prettyprint.Doc as PP
 import           Data.Typeable ( Typeable )
 import           Data.Word ( Word8, Word64 )
@@ -75,16 +72,7 @@ instance OrdF PPCRepr where
   compareF PPCRepr PPCRepr = EQF
 
 type instance R.InstructionArchReprKind (MP.AnyPPC v) = EncodingKind
-data instance R.InstructionArchRepr (MP.AnyPPC v) tp = OnlyRepr (PPCRepr tp)
-
-instance TestEquality (R.InstructionArchRepr (MP.AnyPPC v)) where
-  testEquality (OnlyRepr PPCRepr) (OnlyRepr PPCRepr) = Just Refl
-
-instance OrdF (R.InstructionArchRepr (MP.AnyPPC v)) where
-  compareF (OnlyRepr PPCRepr) (OnlyRepr PPCRepr) = EQF
-
-onlyRepr :: R.InstructionArchRepr (MP.AnyPPC v) OnlyEncoding
-onlyRepr = OnlyRepr PPCRepr
+type instance R.InstructionArchRepr (MP.AnyPPC v) = PPCRepr
 
 data Operand (tp :: EncodingKind) where
   Operand :: D.Operand sh -> Operand OnlyEncoding
@@ -133,7 +121,7 @@ disassemble pb start end b0 = do
   insns0 <- go 0 start b0 []
   case DLN.nonEmpty insns0 of
     Nothing -> C.throwM (EmptyBlock (show start))
-    Just insns -> return (R.concreteBlock start insns onlyRepr pb)
+    Just insns -> return (R.concreteBlock start insns PPCRepr pb)
   where
     go totalRead insnAddr b insns =
       case D.disassembleInstruction (LB.fromStrict b) of
@@ -167,7 +155,7 @@ isa =
   R.ISA { R.isaInstructionSize = ppcInstrSize
         , R.isaPrettyInstruction = ppcPrettyInstruction
         , R.isaMakePadding = ppcMakePadding
-        , R.isaInstructionArchReprs = R.SomeInstructionArchRepr onlyRepr DLN.:| []
+        , R.isaInstructionArchReprs = R.SomeInstructionArchRepr PPCRepr DLN.:| []
         , R.isaMakeRelativeJumpTo = ppcMakeRelativeJumpTo
         , R.isaMaxRelativeJumpSize = const ppcMaxRelativeJumpSize
         , R.isaJumpType = ppcJumpType
@@ -189,7 +177,7 @@ ppcInstrSize _ = 4
 -- four, as that is the only instruction size on PowerPC.
 ppcMakePadding :: (HasCallStack)
                => Word64
-               -> R.InstructionArchRepr arch tp
+               -> R.InstructionArchRepr (MP.AnyPPC v) tp
                -> [Instruction tp ()]
 ppcMakePadding nBytes _
   | leftover == 0 = replicate nInsns (fromInst nopInsn)

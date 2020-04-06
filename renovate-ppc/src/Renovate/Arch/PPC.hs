@@ -14,9 +14,7 @@ module Renovate.Arch.PPC (
   abi32,
   abi64,
   OnlyEncoding,
-  onlyRepr,
   PPCRepr(..),
-  R.InstructionArchRepr(..),
   -- * Assembly and Disassembly
   assemble,
   disassemble,

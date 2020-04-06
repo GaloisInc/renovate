@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -10,9 +11,11 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeInType #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 module Renovate.Arch.AArch32.ISA (
-  AArch32, -- FIXME: temporary
+  A32.AArch32,
   isa,
   assemble,
   disassemble,
@@ -20,7 +23,6 @@ module Renovate.Arch.AArch32.ISA (
   TargetAddress(..),
   InstructionDisassemblyFailure(..),
   ARMRepr(..),
-  R.InstructionArchRepr(ArchRepr),
   A32,
   T32
   ) where
@@ -31,6 +33,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Coerce ( coerce )
 import qualified Data.List.NonEmpty as DLN
+import           Data.Maybe ( isJust )
 import           Data.Parameterized.Classes
 import qualified Data.Parameterized.List as PL
 import           Data.Parameterized.Some ( Some(..) )
@@ -45,65 +48,45 @@ import           Data.Word ( Word8, Word64 )
 -- makes that difficult to enforce
 import qualified Dismantle.ARM.A32 as DA
 import qualified Dismantle.ARM.T32 as DT
--- import qualified Data.Macaw.AArch32 as MA32
 import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Discovery as MD
 import qualified Data.Macaw.Memory as MM
-import qualified Data.Macaw.Types as MT
+import qualified Data.Macaw.ARM as MA
+import qualified SemMC.Architecture.AArch32 as A32
 
 import qualified Renovate as R
 import qualified Renovate.Arch.AArch32.Panic as RP
+import           Renovate.Arch.AArch32.Repr
 
 -- FIXME: Pull this from macaw/semmc instead
-data AArch32
-data ARMReg (tp :: MT.Type) where
-  ARMReg :: Int -> ARMReg (MT.BVType 32)
-type instance MC.RegAddrWidth ARMReg = 32
-type instance MC.ArchReg AArch32 = ARMReg
-instance MC.RegisterInfo ARMReg where
-instance ShowF ARMReg where
-  showF (ARMReg r) = "r" ++ show r
-instance Show (ARMReg tp) where
-  show = showF
-instance MT.HasRepr ARMReg MT.TypeRepr where
-  typeRepr (ARMReg _) = MT.BVTypeRepr (MT.knownNat @32)
+-- data AArch32
+-- data ARMReg (tp :: MT.Type) where
+--   ARMReg :: Int -> ARMReg (MT.BVType 32)
+-- type instance MC.RegAddrWidth ARMReg = 32
+-- type instance MC.ArchReg AArch32 = ARMReg
+-- instance MC.RegisterInfo ARMReg where
+-- instance ShowF ARMReg where
+--   showF (ARMReg r) = "r" ++ show r
+-- instance Show (ARMReg tp) where
+--   show = showF
+-- instance MT.HasRepr ARMReg MT.TypeRepr where
+--   typeRepr (ARMReg _) = MT.BVTypeRepr (MT.knownNat @32)
 
-instance TestEquality ARMReg where
-  testEquality (ARMReg r1) (ARMReg r2)
-    | r1 == r2 = Just Refl
-    | otherwise = Nothing
+-- instance TestEquality ARMReg where
+--   testEquality (ARMReg r1) (ARMReg r2)
+--     | r1 == r2 = Just Refl
+--     | otherwise = Nothing
 
-instance OrdF ARMReg where
-  compareF (ARMReg r1) (ARMReg r2)
-    | r1 == r2 = EQF
-    | otherwise = fromOrdering (compare r1 r2)
+-- instance OrdF ARMReg where
+--   compareF (ARMReg r1) (ARMReg r2)
+--     | r1 == r2 = EQF
+--     | otherwise = fromOrdering (compare r1 r2)
 
 -- END temporary definitions
 
-data ARMKind = A32 | T32
-type A32 = 'A32
-type T32 = 'T32
-
-type instance R.InstructionArchReprKind AArch32 = ARMKind
-
-data ARMRepr tp where
-  A32Repr :: ARMRepr A32
-  T32Repr :: ARMRepr T32
-
-data instance R.InstructionArchRepr AArch32 tp = ArchRepr (ARMRepr tp)
-
-instance TestEquality ARMRepr where
-  testEquality A32Repr A32Repr = Just Refl
-  testEquality T32Repr T32Repr = Just Refl
-  testEquality _ _ = Nothing
-
-instance TestEquality (R.InstructionArchRepr AArch32) where
-  testEquality (ArchRepr r1) (ArchRepr r2) = do
-    Refl <- testEquality r1 r2
-    return Refl
 
 data TargetAddress = NoAddress
-                   | AbsoluteAddress (R.ConcreteAddress AArch32)
+                   | AbsoluteAddress (R.ConcreteAddress MA.ARM)
   deriving (Eq, Ord, Show)
 
 data Instruction tp a where
@@ -116,9 +99,9 @@ instance Show (Instruction tp a) where
 pattern AI i <- ARMInstruction (armDropAnnotations -> i)
 pattern TI i <- ThumbInstruction (thumbDropAnnotations -> i)
 
-type instance R.Instruction AArch32 = Instruction
-type instance R.InstructionAnnotation AArch32 = TargetAddress
-type instance R.RegisterType AArch32 = Operand
+type instance R.Instruction MA.ARM = Instruction
+type instance R.InstructionAnnotation MA.ARM = TargetAddress
+type instance R.RegisterType MA.ARM = Operand
 
 
 -- | ARM operands
@@ -140,10 +123,45 @@ instance Functor (Instruction tp) where
       ThumbInstruction (DT.Instruction opc operands) ->
         ThumbInstruction (DT.Instruction (coerce opc) (FC.fmapFC (\(DT.Annotated a o) -> DT.Annotated (f a) o) operands))
 
+instance Eq (Instruction tp ()) where
+  ARMInstruction i1 == ARMInstruction i2 = i1 == i2
+  ThumbInstruction i1 == ThumbInstruction i2 = i1 == i2
+
+instance Eq (Operand tp) where
+  ARMOperand o1 == ARMOperand o2 = isJust (testEquality o1 o2)
+  ThumbOperand o1 == ThumbOperand o2 = isJust (testEquality o1 o2)
+
+instance Ord (Operand tp) where
+  compare (ARMOperand o1) (ARMOperand o2) = toOrdering (compareF o1 o2)
+  compare (ThumbOperand o1) (ThumbOperand o2) = toOrdering (compareF o1 o2)
+
+instance TestEquality Operand where
+  testEquality (ARMOperand o1) (ARMOperand o2) = do
+    Refl <- testEquality o1 o2
+    return Refl
+  testEquality (ThumbOperand o1) (ThumbOperand o2) = do
+    Refl <- testEquality o1 o2
+    return Refl
+  testEquality _ _ = Nothing
+
+instance OrdF Operand where
+  compareF (ARMOperand o1) (ARMOperand o2) =
+    case compareF o1 o2 of
+      EQF -> EQF
+      LTF -> LTF
+      GTF -> GTF
+  compareF (ThumbOperand o1) (ThumbOperand o2) =
+    case compareF o1 o2 of
+      EQF -> EQF
+      LTF -> LTF
+      GTF -> GTF
+  compareF (ARMOperand _) _ = GTF
+  compareF (ThumbOperand _) _ = LTF
+
 data InstructionDisassemblyFailure =
   InstructionDisassemblyFailure LBS.ByteString Int
-  | EmptyBlock (R.ConcreteAddress AArch32)
-  | OverlappingBlocks (R.ConcreteAddress AArch32) (R.ConcreteAddress AArch32)
+  | EmptyBlock (R.ConcreteAddress MA.ARM)
+  | OverlappingBlocks (R.ConcreteAddress MA.ARM) (R.ConcreteAddress MA.ARM)
   deriving (Show)
 
 instance C.Exception InstructionDisassemblyFailure
@@ -166,22 +184,22 @@ assemble i =
 -- doing so is tough because it is just string matching.
 disassemble :: forall m ids
              . (C.MonadThrow m)
-            => MD.ParsedBlock AArch32 ids
-            -> R.ConcreteAddress AArch32
-            -> R.ConcreteAddress AArch32
+            => MD.ParsedBlock MA.ARM ids
+            -> R.ConcreteAddress MA.ARM
+            -> R.ConcreteAddress MA.ARM
             -> BS.ByteString
-            -> m (R.ConcreteBlock AArch32)
+            -> m (R.ConcreteBlock MA.ARM)
 disassemble pb startAddr endAddr bs0 = do
   let acon = ARMInstruction . toAnnotatedARM
   let minsns0 = go A32Repr acon DA.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
   case DLN.nonEmpty =<< minsns0 of
-    Just insns -> return (R.concreteBlock startAddr insns (ArchRepr A32Repr) pb)
+    Just insns -> return (R.concreteBlock startAddr insns (A32Repr) pb)
     Nothing -> do
       let tcon = ThumbInstruction . toAnnotatedThumb
       minsns1 <- go T32Repr tcon DT.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
       case DLN.nonEmpty minsns1 of
         Nothing -> C.throwM (EmptyBlock startAddr)
-        Just insns -> return (R.concreteBlock startAddr insns (ArchRepr T32Repr) pb)
+        Just insns -> return (R.concreteBlock startAddr insns (T32Repr) pb)
   where
     go :: forall tp i m'
         . (C.MonadThrow m')
@@ -189,7 +207,7 @@ disassemble pb startAddr endAddr bs0 = do
        -> (i -> Instruction tp ())
        -> (LBS.ByteString -> (Int, Maybe i))
        -> Int
-       -> R.ConcreteAddress AArch32
+       -> R.ConcreteAddress MA.ARM
        -> LBS.ByteString
        -> [Instruction tp ()]
        -> m' [Instruction tp ()]
@@ -254,23 +272,17 @@ armInstrSize i =
       let bytes = DT.assembleInstruction (thumbDropAnnotations ti)
       in fromIntegral (LBS.length bytes)
 
--- | If we are making a block for some arbitrary purpose, we will use the ARM
--- architecture.  If there is a more specific need, the caller should provide
--- their own repr.
-armDefaultInstructionArchRepr :: R.SomeInstructionArchRepr AArch32
-armDefaultInstructionArchRepr = R.SomeInstructionArchRepr (ArchRepr A32Repr)
-
-armMakePadding :: Word64 -> R.InstructionArchRepr AArch32 tp -> [Instruction tp ()]
+armMakePadding :: Word64 -> R.InstructionArchRepr MA.ARM tp -> [Instruction tp ()]
 armMakePadding nBytes repr =
   case repr of
-    ArchRepr A32Repr
+    A32Repr
       | leftoverARM == 0 ->
         fmap (ARMInstruction . toAnnotatedARM) (replicate (fromIntegral nARMInsns) aBrk)
       | otherwise ->
         RP.panic RP.ARMISA "armMakePadding" [ "Unexpected byte count (A32): " ++ show nBytes
                                             , "Only instruction-sized padding (4 bytes) is supported"
                                             ]
-    ArchRepr T32Repr
+    T32Repr
       | leftoverThumb == 0 ->
         fmap (ThumbInstruction . toAnnotatedThumb) (replicate (fromIntegral nThumbInsns) tBrk)
       | otherwise ->
@@ -285,24 +297,24 @@ armMakePadding nBytes repr =
     (nARMInsns, leftoverARM) = nBytes `divMod` 4
     (nThumbInsns, leftoverThumb) = nBytes `divMod` 2
 
-armMakeRelativeJumpTo :: R.ConcreteAddress AArch32
-                      -> R.ConcreteAddress AArch32
-                      -> R.InstructionArchRepr AArch32 tp
+armMakeRelativeJumpTo :: R.ConcreteAddress MA.ARM
+                      -> R.ConcreteAddress MA.ARM
+                      -> R.InstructionArchRepr MA.ARM tp
                       -> DLN.NonEmpty (Instruction tp ())
 armMakeRelativeJumpTo src dest repr =
   case repr of
-    ArchRepr A32Repr ->
+    A32Repr ->
       let off = fromIntegral ((src `R.addressDiff` dest) `DB.shiftR` 2)
       in singleton (DA.Instruction DA.B_A1 (DA.Bv4 0 DA.:< DA.Bv24 off DA.:< DA.Nil))
-    ArchRepr T32Repr ->
+    T32Repr ->
       RP.panic RP.ARMISA "armMakeRelativeJumpTo" [ "Thumb rewriting is not yet supported"
                                                  ]
 
-armMaxRelativeJumpSize :: R.InstructionArchRepr AArch32 tp -> Word64
+armMaxRelativeJumpSize :: R.InstructionArchRepr MA.ARM tp -> Word64
 armMaxRelativeJumpSize repr =
   case repr of
-    ArchRepr A32Repr -> DB.bit 25 - 4
-    ArchRepr T32Repr -> DB.bit 10 - 4
+    A32Repr -> DB.bit 25 - 4
+    T32Repr -> DB.bit 10 - 4
 
 -- FIXME: This one will be tricky - I think we can simplify it a lot if we pass
 -- in the macaw block containing the instruction.  If it isn't the entire block,
@@ -317,9 +329,9 @@ armMaxRelativeJumpSize repr =
 -- instruction pointer value out of it
 armJumpType :: Instruction tp a
             -> MM.Memory 32
-            -> R.ConcreteAddress AArch32
-            -> MD.ParsedBlock AArch32 ids
-            -> Some (R.JumpType AArch32)
+            -> R.ConcreteAddress MA.ARM
+            -> MD.ParsedBlock MA.ARM ids
+            -> Some (R.JumpType MA.ARM)
 armJumpType i mem insnAddr pb =
   case asParsedTerminator insnAddr pb of
     Nothing -> Some R.NoJump
@@ -399,7 +411,7 @@ armJumpType i mem insnAddr pb =
     nextInsnAddr = insnAddr `R.addressAddOffset` fromIntegral (armInstrSize i)
 
 data CurrentInstruction = NoInstruction
-                        | InInstruction (MC.ArchAddrWord AArch32)
+                        | InInstruction (MC.ArchAddrWord MA.ARM)
                         | FoundTarget
 
 -- | If the given address corresponds to the block terminator, return that
@@ -409,9 +421,9 @@ data CurrentInstruction = NoInstruction
 --
 -- Scan through an open an active instruction at the 'MD.InstructionStart'
 -- statement and close it at 'MD.ArchState'
-asParsedTerminator :: R.ConcreteAddress AArch32
-                   -> MD.ParsedBlock AArch32 ids
-                   -> Maybe (MD.ParsedTermStmt AArch32 ids)
+asParsedTerminator :: R.ConcreteAddress MA.ARM
+                   -> MD.ParsedBlock MA.ARM ids
+                   -> Maybe (MD.ParsedTermStmt MA.ARM ids)
 asParsedTerminator insnAddr pb =
   case foldr searchTarget NoInstruction (MD.pblockStmts pb) of
     NoInstruction -> Nothing
@@ -436,9 +448,9 @@ asParsedTerminator insnAddr pb =
             _ -> curState
 
 -- | FIXME: We may have to use the long jump strategy from PowerPC here
-armModifyJumpTarget :: R.ConcreteAddress AArch32
+armModifyJumpTarget :: R.ConcreteAddress MA.ARM
                     -> Instruction tp ()
-                    -> R.RelocatableTarget AArch32 R.ConcreteAddress R.HasSomeTarget
+                    -> R.RelocatableTarget MA.ARM R.ConcreteAddress R.HasSomeTarget
                     -> Maybe (DLN.NonEmpty (Instruction tp ()))
 armModifyJumpTarget insnAddr i0 (R.RelocatableTarget newTarget) =
   case i0 of
@@ -466,7 +478,7 @@ singleton :: DA.Instruction -> DLN.NonEmpty (Instruction A32 ())
 singleton = (DLN.:| []) . ARMInstruction . toAnnotatedARM
 
 armConcretizeAddresses :: MM.Memory 32
-                       -> R.ConcreteAddress AArch32
+                       -> R.ConcreteAddress MA.ARM
                        -> Instruction tp TargetAddress
                        -> Instruction tp ()
 armConcretizeAddresses _mem insnAddr i =
@@ -499,10 +511,10 @@ armConcretizeAddresses _mem insnAddr i =
     toUnitAnnotation (DA.Annotated _ op) = DA.Annotated () op
 
 armSymbolizeAddresses :: MM.Memory 32
-                      -> R.ConcreteAddress AArch32
-                      -> Maybe (R.SymbolicAddress AArch32)
+                      -> R.ConcreteAddress MA.ARM
+                      -> Maybe (R.SymbolicAddress MA.ARM)
                       -> Instruction tp ()
-                      -> [R.TaggedInstruction AArch32 tp TargetAddress]
+                      -> [R.TaggedInstruction MA.ARM tp TargetAddress]
 armSymbolizeAddresses _mem insnAddr mSymbolicTarget i =
   case i of
     ARMInstruction (armDropAnnotations -> DA.Instruction opc operands) ->
@@ -536,7 +548,7 @@ armSymbolizeAddresses _mem insnAddr mSymbolicTarget i =
     toATagged :: forall sh
                . DA.Opcode DA.Operand sh
               -> PL.List DA.Operand sh
-              -> [R.TaggedInstruction AArch32 A32 TargetAddress]
+              -> [R.TaggedInstruction MA.ARM A32 TargetAddress]
     toATagged opc operands =
       let newInsn = DA.Instruction (coerce opc) (FC.fmapFC annotateNull operands)
       in [R.tagInstruction mSymbolicTarget (ARMInstruction newInsn)]
@@ -544,15 +556,17 @@ armSymbolizeAddresses _mem insnAddr mSymbolicTarget i =
 noAddr :: DA.Operand tp -> DA.Annotated TargetAddress DA.Operand tp
 noAddr = DA.Annotated NoAddress
 
-withAddr :: R.ConcreteAddress AArch32 -> DA.Operand tp -> DA.Annotated TargetAddress DA.Operand tp
+withAddr :: R.ConcreteAddress MA.ARM -> DA.Operand tp -> DA.Annotated TargetAddress DA.Operand tp
 withAddr t = DA.Annotated (AbsoluteAddress t)
 
-isa :: R.ISA AArch32
+isa :: R.ISA MA.ARM
 isa =
   R.ISA { R.isaInstructionSize = armInstrSize
         , R.isaPrettyInstruction = armPrettyInstruction
         , R.isaMakePadding = armMakePadding
-        , R.isaDefaultInstructionArchRepr = armDefaultInstructionArchRepr
+        , R.isaInstructionArchReprs =
+          R.SomeInstructionArchRepr A32Repr DLN.:|
+          [R.SomeInstructionArchRepr T32Repr]
         , R.isaMakeRelativeJumpTo = armMakeRelativeJumpTo
         , R.isaMaxRelativeJumpSize = armMaxRelativeJumpSize
         , R.isaJumpType = armJumpType

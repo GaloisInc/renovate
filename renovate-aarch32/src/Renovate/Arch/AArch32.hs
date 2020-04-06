@@ -9,18 +9,12 @@ module Renovate.Arch.AArch32 (
   ISA.TargetAddress(..),
   ISA.InstructionDisassemblyFailure(..),
   ISA.ARMRepr(..),
-  R.InstructionArchRepr(ISA.ArchRepr),
   ISA.A32,
   ISA.T32
   ) where
 
 import qualified Data.Macaw.BinaryLoader as MBL
-import qualified Data.Macaw.CFG.Core as MC
-import qualified Data.Macaw.Memory as MM
-
--- TODO: Macaw imports after Ben gets them compiling
--- import qualified Data.Macaw.AArch32 as MA32
--- import qualified Data.Macaw.BinaryLoader.AArch32 as MBLA32
+import qualified Data.Macaw.ARM as MA32
 
 import qualified Renovate as R
 import qualified Renovate.Arch.AArch32.ISA as ISA
@@ -32,7 +26,7 @@ config :: (MBL.BinaryLoader ISA.AArch32 binFmt)
 config analysis = R.RenovateConfig
   { R.rcISA = ISA.isa
   , R.rcABI = ABI.abi
-  , R.rcArchInfo = error "MA32.aarch32_linux_info"
+  , R.rcArchInfo = const MA32.arm_linux_info
   , R.rcAssembler = ISA.assemble
   , R.rcDisassembler = ISA.disassemble
   , R.rcBlockCallback = Nothing

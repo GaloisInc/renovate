@@ -64,7 +64,7 @@ ppcIsReturn _                        = False
 ppcCallerSaveRegisters64 :: R.InstructionArchRepr PPC.PPC64 tp -> [R.RegisterType PPC.PPC64 tp]
 ppcCallerSaveRegisters64 repr =
   case repr of
-    OnlyRepr PPCRepr -> map (Operand . D.Gprc . D.GPR)  [4..10]
+    PPCRepr -> map (Operand . D.Gprc . D.GPR)  [4..10]
 --    generalRegisters   = [0] ++ [3..12]
 --    floatingRegisters  = [0..13]
 --    conditionRegisters = [0,1,5,6,7,8]
@@ -77,7 +77,7 @@ ppcCallerSaveRegisters64 repr =
 ppcCallerSaveRegisters32 :: R.InstructionArchRepr PPC.PPC32 tp -> [R.RegisterType PPC.PPC32 tp]
 ppcCallerSaveRegisters32 repr =
   case repr of
-    OnlyRepr PPCRepr -> map (Operand . D.Gprc . D.GPR)  [5..12]
+    PPCRepr -> map (Operand . D.Gprc . D.GPR)  [5..12]
 
 -- | Create an instruction to clear a register (i.e., set it to zero or some
 -- other distinguished neutral value).

@@ -24,10 +24,8 @@ module Renovate.Arch.X86_64.Internal (
   noAddr,
   x64Size,
   prettyPrintWithAnnotations,
-  onlyRepr,
   OnlyEncoding,
   X86Repr(..),
-  R.InstructionArchRepr(OnlyRepr),
   -- * Errors
   AssemblyFailure(..),
   DisassemblyFailure(..)
@@ -91,10 +89,7 @@ data EncodingKind = OnlyEncoding
 type OnlyEncoding = 'OnlyEncoding
 
 type instance R.InstructionArchReprKind X86.X86_64 = EncodingKind
-data instance R.InstructionArchRepr X86.X86_64 tp = OnlyRepr (X86Repr tp)
-
-onlyRepr :: R.InstructionArchRepr X86.X86_64 OnlyEncoding
-onlyRepr = OnlyRepr X86Repr
+type instance R.InstructionArchRepr X86.X86_64 = X86Repr
 
 data X86Repr tp where
   X86Repr :: X86Repr OnlyEncoding
@@ -104,12 +99,6 @@ instance TestEquality X86Repr where
 
 instance OrdF X86Repr where
   compareF X86Repr X86Repr = EQF
-
-instance TestEquality (R.InstructionArchRepr X86.X86_64) where
-  testEquality (OnlyRepr X86Repr) (OnlyRepr X86Repr) = Just Refl
-
-instance OrdF (R.InstructionArchRepr X86.X86_64) where
-  compareF (OnlyRepr X86Repr) (OnlyRepr X86Repr) = EQF
 
 -- | A wrapper around a flexdis86 instruction with an arbitrary
 -- annotation on each operand of type @a@.

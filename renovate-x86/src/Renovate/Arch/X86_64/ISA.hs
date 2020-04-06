@@ -64,7 +64,7 @@ disassemble pb start end b0 = do
   insns0 <- go 0 start b0 []
   case DLN.nonEmpty insns0 of
     Nothing -> C.throwM (EmptyBlock start)
-    Just insns -> return (R.concreteBlock start insns onlyRepr pb)
+    Just insns -> return (R.concreteBlock start insns X86Repr pb)
   where
     go totalRead insnAddr b insns =
       case D.tryDisassemble b of
@@ -93,7 +93,7 @@ isa :: R.ISA X86.X86_64
 isa = R.ISA
   { R.isaInstructionSize = x64Size
   , R.isaJumpType = x64JumpType
-  , R.isaInstructionArchReprs = R.SomeInstructionArchRepr onlyRepr DLN.:| []
+  , R.isaInstructionArchReprs = R.SomeInstructionArchRepr X86Repr DLN.:| []
   , R.isaMakeRelativeJumpTo = x64MakeRelativeJumpTo
   , R.isaMaxRelativeJumpSize = const (bit 31 - 1)
   , R.isaModifyJumpTarget = x64ModifyJumpTarget
@@ -118,7 +118,7 @@ x86StackAddress :: R.InstructionArchRepr X86.X86_64 tp
                 -> Value tp
 x86StackAddress repr addr (Some tp) =
   case repr of
-    OnlyRepr X86Repr -> do
+    X86Repr -> do
       let (D.QWordReg base_reg) = toFlexValue (R.saBase addr)
       let x86_addr = D.Addr_64 D.SS
             (Just base_reg)
@@ -162,7 +162,7 @@ x86MakeMovInstr
   -> Instruction tp TargetAddress
 x86MakeMovInstr tp repr dest src =
   case repr of
-    OnlyRepr X86Repr ->
+    X86Repr ->
       noAddr $ makeInstr (x86MovName tp) $ map (toFlexValue . x86YMMToXMM tp) [dest, src]
 
 x86Move
@@ -183,19 +183,19 @@ x86MoveImmediate
   -> Instruction tp TargetAddress
 x86MoveImmediate tp repr dest_reg imm =
   case repr of
-    OnlyRepr X86Repr ->
+    X86Repr ->
       x86MakeMovInstr tp repr dest_reg (Value (D.QWordImm $ D.UImm64Concrete $ fromIntegral imm))
 
 x86Load
   :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
    . Some MT.TypeRepr
-  -> InstructionArchRepr X86.X86_64 tp
+  -> R.InstructionArchRepr X86.X86_64 tp
   -> Value tp
   -> R.StackAddress X86.X86_64 tp
   -> Instruction tp TargetAddress
 x86Load tp repr reg addr =
   case repr of
-    OnlyRepr X86Repr ->
+    X86Repr ->
       x86MakeMovInstr tp repr reg (x86StackAddress repr addr tp)
 
 x86Store
@@ -207,19 +207,19 @@ x86Store
   -> Instruction tp TargetAddress
 x86Store tp repr addr reg =
   case repr of
-    OnlyRepr X86Repr ->
+    X86Repr ->
       x86MakeMovInstr tp repr (x86StackAddress repr addr tp) reg
 
 x86StoreImmediate
   :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
    . Some MT.TypeRepr
-  -> InstructionArchRepr X86.X86_64 tp
+  -> R.InstructionArchRepr X86.X86_64 tp
   -> R.StackAddress X86.X86_64 tp
   -> Integer
   -> Instruction tp TargetAddress
 x86StoreImmediate tp repr addr imm =
   case repr of
-    OnlyRepr X86Repr ->
+    X86Repr ->
       x86MakeMovInstr tp repr (x86StackAddress repr addr tp) (Value (D.QWordImm $ D.UImm64Concrete $ fromIntegral imm))
 
 x86AddImmediate :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
