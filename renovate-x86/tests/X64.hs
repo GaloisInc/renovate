@@ -11,6 +11,7 @@ module X64 ( x64Tests ) where
 import qualified Data.ByteString as B
 import qualified Data.Map as M
 import qualified Data.Set as S
+import qualified Data.Foldable as F
 import Data.Word ( Word64 )
 import System.FilePath ( (<.>), replaceExtension )
 import qualified Test.Tasty as T
@@ -92,11 +93,11 @@ analysis expected env =
   return $ foldr go (TestCfg True []) (R.biBlocks (R.analysisBlockInfo env))
   where
     go b inp@(TestCfg _bacc sacc) =
-      let actual = ExpectedBlock { addr = fromIntegral (R.absoluteAddress (R.basicBlockAddress b))
-                                 , byteCount = R.concreteBlockSize (R.analysisISA env) b
-                                 , insnCount = length (R.basicBlockInstructions b)
+      let actual = ExpectedBlock { addr = fromIntegral (R.absoluteAddress (R.blockAddress b))
+                                 , byteCount = R.blockSize (R.analysisISA env) b
+                                 , insnCount = length (R.concreteBlockInstructions b)
                                  }
-          blockStr = unlines (map (R.isaPrettyInstruction (R.analysisISA env)) (R.basicBlockInstructions b))
+          blockStr = unlines (map (R.isaPrettyInstruction (R.analysisISA env)) (F.toList $ R.concreteBlockInstructions b))
       in case M.lookup (addr actual) expectedMap of
         Nothing
           | S.member (addr actual) ignoreSet -> inp
