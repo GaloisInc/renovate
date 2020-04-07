@@ -51,7 +51,9 @@ module Renovate.BinaryFormat.ELF (
   riDiscoveredBlocks,
   riInstrumentedBytes,
   riBlockMapping,
+  riBackwardBlockMapping,
   riOutputBlocks,
+  riRewritePairs,
   riFunctionBlocks,
   riSections,
   ) where
@@ -108,6 +110,7 @@ import qualified Renovate.Diagnostic as RD
 import qualified Renovate.Metrics as RM
 import qualified Renovate.Recovery as R
 import qualified Renovate.Redirect as RE
+import qualified Renovate.Redirect.LayoutBlocks.Types as RT
 import qualified Renovate.Redirect.Symbolize as RS
 import qualified Renovate.Rewrite as RW
 
@@ -936,7 +939,8 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
             let rewriter = RW.hoist . rewrite rae analysisResult setupVal
             r <- RE.redirect isa blockInfo textAddrRange rewriter mem strat layoutAddr baseSymBlocks
             return (analysisResult, r)
-        (analysisResult, (allBlocks, injected)) <- extractOrThrowRewriterResult eBlocks r1
+        (analysisResult, (allBlocks, injected, blockPairs)) <- extractOrThrowRewriterResult eBlocks r1
+        riRewritePairs L..= map RT.toRewritePair blockPairs
         let s1 = RE.rrState r1
         let newSyms = RE.rwsNewSymbolsMap s1
 

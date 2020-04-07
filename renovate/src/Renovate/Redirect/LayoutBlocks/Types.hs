@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 module Renovate.Redirect.LayoutBlocks.Types (
   LayoutStrategy(..),
@@ -10,6 +11,8 @@ module Renovate.Redirect.LayoutBlocks.Types (
   CompactOrdering(..),
   Grouping(..),
   TrampolineStrategy(..),
+  RewritePair(..),
+  toRewritePair,
   Status(..),
   changed,
   changeable,
@@ -18,6 +21,7 @@ module Renovate.Redirect.LayoutBlocks.Types (
   RandomSeed
   ) where
 
+import           Control.Monad ( guard )
 import qualified Data.ByteString as BS
 import qualified Data.Vector.Unboxed as V
 import           Data.Word ( Word32 )
@@ -136,40 +140,22 @@ changeable Unmodified = True
 changeable Immutable = False
 changeable Subsumed = True
 
+-- RewritePair is basically a ConcretePair, but in a format that's more
+-- friendly for sharing with the outside world. It also serves as a gatekeeper:
+-- we export RewritePair from the package, but not ConcretePair, and since an
+-- explicit conversion is required between them, this forces us to be conscious
+-- about sending internal data to the outside world.
 
-{-
-ppBlocks :: ( MC.MemWidth (MC.ArchAddrWidth arch)
-            , PD.Pretty (i a)
-            , PD.Pretty (i b)
-            )
-         => ConcreteAddress arch
-         -> [i a]
-         -> [i b]
-         -> PD.Doc ann
-ppBlocks addr origInsns newInsns=
-  PD.vcat (PD.pretty addr PD.<> PD.pretty ":"
-          : ppInsnLists (F.toList origInsns) newInsns
-          )
+-- | A block, together with what it's been rewritten to. If 'rpNew' is
+-- 'Nothing', this means that we kept the original code in the original
+-- position.
+data RewritePair arch = RewritePair
+  { rpOrig :: ConcreteBlock arch
+  , rpNew :: Maybe (ConcretizedBlock arch)
+  }
 
--- | This lays out the instruction lists side by side with a divider (eg., |)
--- between the columns. The instruction sequences do not need to be the same
--- length.
-ppInsnLists :: ( PD.Pretty (i a)
-               , PD.Pretty (i b)
-               ) => [i a] -> [i b] -> [PD.Doc ann]
-ppInsnLists xs ys = go xs ys
+deriving instance Show (RewritePair arch)
 
-  where
-  divider           = PD.pretty "|"
-  maxLen            = maxOrDefault 0 (map (length . show . PD.pretty) xs)
-  spacing           = 0
-  maxOrDefault d [] = d
-  maxOrDefault _ zs = maximum zs
-  go (o:os)    (n:ns)      =
-       (PD.pretty o PD.<+> PD.indent (maxLen - curLen + spacing) (divider PD.<+> PD.pretty n)) : go os ns
-       where
-       curLen = length (show (PD.pretty o))
-  go (os@(_:_)) []         = map PD.pretty os
-  go []         (ns@(_:_)) = (PD.indent (maxLen + spacing + 1)) <$> map (\x -> divider PD.<+> PD.pretty x) ns
-  go []         []         = [PD.emptyDoc]
--}
+toRewritePair :: WithProvenance ConcretizedBlock arch -> RewritePair arch
+toRewritePair (WithProvenance orig new status)
+  = RewritePair orig (guard (changed status) *> Just new)

@@ -7,7 +7,8 @@ module Renovate.Redirect.LayoutBlocks (
   Allocator(..),
   TrampolineStrategy(..),
   Grouping(..),
-  CompactOrdering(..)
+  CompactOrdering(..),
+  RewritePair(..)
   ) where
 
 import qualified Data.ByteString as BS
@@ -26,6 +27,7 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , Allocator(..)
                                                       , TrampolineStrategy(..)
                                                       , CompactOrdering(..)
+                                                      , RewritePair(..)
                                                       , WithProvenance
                                                       )
 

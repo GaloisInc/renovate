@@ -57,6 +57,7 @@ module Renovate.BasicBlock (
   RegisterType,
   AddressAssignedBlock(..),
   SymbolicInfo(..),
+  symbolicInfo,
   instructionStreamSize,
   terminatorType,
 

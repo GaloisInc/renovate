@@ -38,7 +38,7 @@ module Renovate.BasicBlock.Types (
   concretizedBlock,
   withConcretizedInstructions,
   SymbolicInfo(..),
-
+  symbolicInfo,
 
   AddressAssignedBlock(..),
   TaggedInstruction,
@@ -404,3 +404,6 @@ deriving instance (MC.MemWidth (MC.ArchAddrWidth arch)) => Show (SymbolicInfo ar
 
 instance (MC.MemWidth (MC.ArchAddrWidth arch)) => PD.Pretty (SymbolicInfo arch) where
   pretty si = PD.pretty (symbolicAddress si)
+
+symbolicInfo :: SymbolicBlock arch -> SymbolicInfo arch
+symbolicInfo sb = SymbolicInfo (symbolicBlockSymbolicAddress sb) (symbolicBlockOriginalAddress sb)

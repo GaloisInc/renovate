@@ -12,6 +12,7 @@ module Renovate.Redirect (
   ConcreteAddress,
   SymbolicAddress,
   TaggedInstruction,
+  RewritePair(..),
   -- * Rewriter Monad
   RM.runRewriterT,
   RM.Diagnostic(..),
@@ -29,6 +30,7 @@ import           Control.Monad.Trans ( MonadIO, lift )
 import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import qualified Data.List as L
+import qualified Data.Map as M
 import           Data.Ord ( comparing )
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Traversable as T
@@ -51,7 +53,9 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , TrampolineStrategy(..)
                                                       , Status(..)
                                                       , Layout(..)
+                                                      , RewritePair(..)
                                                       , WithProvenance(..)
+                                                      , changed
                                                       )
 import           Renovate.Redirect.Internal
 import qualified Renovate.Redirect.Monad as RM
@@ -86,7 +90,7 @@ redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch
          -- ^ The start address for the copied blocks
          -> [(ConcreteBlock arch, SymbolicBlock arch)]
          -- ^ Symbolized basic blocks
-         -> RM.RewriterT arch m ([ConcretizedBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)])
+         -> RM.RewriterT arch m ([ConcretizedBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)], [WithProvenance ConcretizedBlock arch])
 redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr baseSymBlocks = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   RM.recordSection "text" (RM.SectionInfo textStart textEnd)
@@ -136,8 +140,9 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
   let injectedBlocks = injectedBlockLayout layout
   RM.recordBlockMap (toBlockMapping concretizedBlocks)
   redirectedBlocks <- redirectOriginalBlocks concretizedBlocks
+  RM.recordBackwardBlockMap (toBackwardBlockMapping redirectedBlocks)
   let sortedBlocks = L.sortBy (comparing concretizedBlockAddress) (fmap concretizePadding paddingBlocks ++ concatMap unPair (F.toList redirectedBlocks))
-  return (sortedBlocks, injectedBlocks)
+  return (sortedBlocks, injectedBlocks, concretizedBlocks)
   where
     concretizePadding :: PaddingBlock arch -> ConcretizedBlock arch
     concretizePadding pb =
@@ -162,6 +167,17 @@ toBlockMapping wps =
   | wp <- wps
   , let origBlock = originalBlock wp
   , let concBlock = withoutProvenance wp
+  ]
+
+toBackwardBlockMapping :: [WithProvenance ConcretizedBlock arch]
+                       -> M.Map (ConcreteAddress arch) (ConcreteAddress arch)
+toBackwardBlockMapping ps = M.fromList
+  [ (new, old)
+  | WithProvenance cb sb status <- ps
+  , let caddr = concreteBlockAddress cb
+        saddr = concretizedBlockAddress sb
+  , (new, old) <- [(caddr, caddr) | status /= Subsumed]
+               ++ [(saddr, caddr) | changed status]
   ]
 
 isRelocatableTerminatorType :: Some (JumpType arch) -> Bool

@@ -57,6 +57,7 @@ module Renovate
   B.HasSomeTarget,
   -- ** Concretized blocks
   B.ConcretizedBlock,
+  B.concretizedBlock,
   B.concretizedBlockAddress,
   B.withConcretizedInstructions,
   -- ** Block helpers
@@ -155,11 +156,14 @@ module Renovate
   E.riDiscoveredBlocks,
   E.riInstrumentedBytes,
   E.riBlockMapping,
+  E.riBackwardBlockMapping,
   E.riOutputBlocks,
+  E.riRewritePairs,
   E.riFunctionBlocks,
   E.riSections,
   D.Diagnostic(..),
   D.Diagnostics(..),
+  LB.RewritePair(..),
   -- * Constraints
   B.ArchConstraints,
   B.InstructionConstraints,

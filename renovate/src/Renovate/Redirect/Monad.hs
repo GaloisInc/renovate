@@ -40,6 +40,7 @@ module Renovate.Redirect.Monad (
   recordDiscoveredBlock,
   recordInstrumentedBytes,
   recordBlockMap,
+  recordBackwardBlockMap,
   recordFunctionBlocks,
   recordSection,
   ) where
@@ -107,6 +108,8 @@ data RewriterStats arch = RewriterStats
   -- ^ A count of the bytes in blocks that were modified by the instrumentor
   , blockMapping          :: [(ConcreteAddress arch, ConcreteAddress arch)]
   -- ^ A mapping of original block addresses to the address they were redirected to
+  , backwardBlockMapping  :: !(Map (ConcreteAddress arch) (ConcreteAddress arch))
+  -- ^ A mapping of rewritten block addresses to the address from the original that should have the same behavior
   , functionBlocks        :: !(Map (ConcreteAddress arch) [ConcreteAddress arch])
   -- ^ Keys are the addresses of function entry points; values are the addresses of all blocks contained in that function
   , sections              :: !(Map String (SectionInfo arch))
@@ -123,6 +126,7 @@ emptyRewriterStats = RewriterStats
   , discoveredBlocks  = M.empty
   , instrumentedBytes = 0
   , blockMapping      = []
+  , backwardBlockMapping = M.empty
   , functionBlocks    = M.empty
   , sections          = M.empty
   }
@@ -232,6 +236,9 @@ recordReusedBytes nBytes = onStats $ \s -> s { reusedByteCount = reusedByteCount
 
 recordBlockMap :: (Monad m) => [(ConcreteAddress arch, ConcreteAddress arch)] -> RewriterT arch m ()
 recordBlockMap m = onStats $ \s -> s { blockMapping = m }
+
+recordBackwardBlockMap :: Monad m => Map (ConcreteAddress arch) (ConcreteAddress arch) -> RewriterT arch m ()
+recordBackwardBlockMap m = onStats $ \s -> s { backwardBlockMapping = m }
 
 recordIncompleteBlock :: (Monad m) => RewriterT arch m ()
 recordIncompleteBlock = onStats $ \s -> s { incompleteBlocks = incompleteBlocks s + 1 }

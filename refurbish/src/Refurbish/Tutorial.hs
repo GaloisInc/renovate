@@ -138,7 +138,7 @@ analysis = R.AnalyzeAndRewrite { R.arPreAnalyze = myPreAnalysis
 :}
 
 >>> :{
-analysisConfigs :: [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite lm) (Const Int))]
+analysisConfigs :: [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite lm Bool) (Const Int))]
 analysisConfigs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analysis))
                   , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
                   , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))
@@ -146,7 +146,7 @@ analysisConfigs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.c
 :}
 
 >>> :{
-myAnalyzeElf :: E.SomeElf E.Elf -> IO Int
+myAnalyzeElf :: E.SomeElf E.Elf -> IO (Int, Bool)
 myAnalyzeElf someElf = do
   fha <- FH.newHandleAllocator
   R.withElfConfig someElf analysisConfigs $ \config e loadedBinary -> do
@@ -154,7 +154,7 @@ myAnalyzeElf someElf = do
     (newElf, res, ri, _) <- R.rewriteElf config fha e loadedBinary strat
     print (getConst res)
     print (ri ^. R.riBlockMapping)
-    return (getConst res)
+    return res
 :}
 
 
