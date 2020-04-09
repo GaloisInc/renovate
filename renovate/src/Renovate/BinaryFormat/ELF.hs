@@ -158,6 +158,14 @@ withElfConfig e0 configs k = do
           , Just PC.Refl <- PC.testEquality binRep MBL.Elf32Repr -> do
               MBL.loadBinary loadOpts e >>= k cfg e
           | otherwise -> error ("Invalid NatRepr for PPC32: " ++ show nr)
+    (E.Elf32 e, E.EM_ARM) ->
+      case lookup Arch.ARM configs of
+        Nothing -> C.throwM (UnsupportedArchitecture E.EM_ARM)
+        Just (SomeConfig nr binRep cfg)
+          | Just PC.Refl <- PC.testEquality nr (NR.knownNat @32)
+          , Just PC.Refl <- PC.testEquality binRep MBL.Elf32Repr -> do
+              MBL.loadBinary loadOpts e >>= k cfg e
+          | otherwise -> error ("Invalid NatRepr for AArch32: " ++ show nr)
     (E.Elf32 _, mach) -> C.throwM (UnsupportedArchitecture mach)
     (E.Elf64 e, E.EM_X86_64) ->
       case lookup Arch.X86_64 configs of
