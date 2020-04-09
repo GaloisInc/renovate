@@ -2,4 +2,4 @@ module Renovate.Arch.AArch32.ABI (
   abi
   ) where
 
-abi = undefined
+abi = error "The ARM ABI functions are not yet implemented"
