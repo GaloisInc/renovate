@@ -62,8 +62,6 @@ import qualified Renovate as R
 import qualified Renovate.Arch.AArch32.Panic as RP
 import           Renovate.Arch.AArch32.Repr
 
-import Debug.Trace
-
 data TargetAddress = NoAddress
                    | AbsoluteAddress (R.ConcreteAddress MA.ARM)
   deriving (Eq, Ord, Show)
@@ -285,16 +283,26 @@ armMakeRelativeJumpTo src dest repr =
     A32Repr ->
       -- NOTE: Our offsets are signed, but the operands to ARM instructions are
       -- all unsigned fixed-width words.  We need to do a safe conversion to an
-      -- unsigned value (keeping the same bit pattern)
-      let off :: Integer
-          off = fromIntegral ((src `R.addressDiff` dest) `DB.shiftR` 2)
+      -- unsigned value (keeping the same bit pattern) into the W type.
+      let rawOff :: Integer
+          rawOff = toInteger (dest `R.addressDiff` src)
+          -- We have to correct by 8 because reading the PC in ARM actually
+          -- returns PC+8 due to some odd interactions with prefetch and the ISA
+          -- definition.
+          --
+          -- We further have to shift by two because branch offsets are stored
+          -- this way to ensure alignment (and compactness)
+          off :: Integer
+          off = (rawOff - 8) `DB.shiftR` 2
           off24 :: W.W 24
           off24 = W.wRep (PN.knownNat @24) off
-      in trace ("Making a branch with offset: " ++ show off ++ " as W 24: " ++ show off24) $
-        singleton (DA.Instruction DA.B_A1 (DA.Bv4 0 DA.:< DA.Bv24 off24 DA.:< DA.Nil))
+      in singleton (DA.Instruction DA.B_A1 (DA.Bv4 unconditional DA.:< DA.Bv24 off24 DA.:< DA.Nil))
     T32Repr ->
       RP.panic RP.ARMISA "armMakeRelativeJumpTo" [ "Thumb rewriting is not yet supported"
                                                  ]
+
+unconditional :: W.W 4
+unconditional = 14
 
 armMaxRelativeJumpSize :: R.InstructionArchRepr MA.ARM tp -> Word64
 armMaxRelativeJumpSize repr =
