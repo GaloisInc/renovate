@@ -73,8 +73,17 @@ data Instruction tp a where
 instance Show (Instruction tp a) where
   show i = show (PP.pretty i)
 
+pattern AI :: forall (tp :: ARMKind) a
+            . ()
+           => (tp ~ A32)
+           => DA.Instruction -> Instruction tp a
 pattern AI i <- ARMInstruction (armDropAnnotations -> i)
-pattern TI i <- ThumbInstruction (thumbDropAnnotations -> i)
+
+-- pattern TI :: forall (tp :: ARMKind) a
+--             . ()
+--            => (tp ~ T32)
+--            => DT.Instruction -> Instruction tp a
+-- pattern TI i <- ThumbInstruction (thumbDropAnnotations -> i)
 
 type instance R.Instruction MA.ARM = Instruction
 type instance R.InstructionAnnotation MA.ARM = TargetAddress
