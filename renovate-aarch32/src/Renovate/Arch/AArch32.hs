@@ -35,7 +35,7 @@ config analysis = R.RenovateConfig
   , R.rcFunctionCallback = Nothing
   , R.rcAnalysis = analysis
   , R.rcUpdateSymbolTable = True
-  , R.rcDataLayoutBase = 0xf000
+  , R.rcDataLayoutBase = 0x30000
   , R.rcExtratextOffset = 0
   , R.rcRefinementConfig = Nothing
   }
