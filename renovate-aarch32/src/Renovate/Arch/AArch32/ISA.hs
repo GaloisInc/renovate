@@ -12,6 +12,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 module Renovate.Arch.AArch32.ISA (
@@ -42,6 +43,7 @@ import qualified Data.Parameterized.TraversableFC as FC
 import qualified Data.Text.Prettyprint.Doc as PP
 import           Data.Word ( Word8, Word64 )
 import qualified Data.Word.Indexed as W
+import           GHC.TypeNats ( KnownNat )
 
 -- NOTE: Renovate currently does not rewrite thumb blocks
 --
@@ -300,6 +302,9 @@ armMaxRelativeJumpSize repr =
     A32Repr -> DB.bit 25 - 4
     T32Repr -> DB.bit 10 - 4
 
+asInteger :: forall n . (KnownNat n, 1 PN.<= n) => W.W n -> Integer
+asInteger w = PN.toSigned (PN.knownNat @n) (toInteger w)
+
 -- FIXME: This one will be tricky - I think we can simplify it a lot if we pass
 -- in the macaw block containing the instruction.  If it isn't the entire block,
 -- perhaps just the sequence of macaw statements corresponding to this
@@ -330,9 +335,10 @@ armJumpType i mem insnAddr pb =
         -- FIXME: Implement thumb cases
         MD.ParsedCall _regs _retLoc ->
           case i of
-            AI (DA.Instruction DA.BL_i_A1 (DA.Bv4 _cond DA.:< DA.Bv24 off DA.:< DA.Nil)) ->
+            -- FIXME: These offsets all come out unsigned - we have to interpret them
+            AI (DA.Instruction DA.BL_i_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asInteger -> off) DA.:< DA.Nil)) ->
               Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2)))
-            AI (DA.Instruction DA.BL_i_A2 (DA.Bv1 _ DA.:< DA.Bv4 _ DA.:< DA.Bv24 off DA.:< DA.Nil)) ->
+            AI (DA.Instruction DA.BL_i_A2 (DA.Bv1 _ DA.:< DA.Bv4 _ DA.:< DA.Bv24 (asInteger -> off) DA.:< DA.Nil)) ->
               Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2)))
             AI (DA.Instruction DA.BLX_r_A1 (DA.Bv4 _cond DA.:< DA.Bv4 _reg DA.:< DA.QuasiMask12 _ DA.:< DA.Nil)) ->
               Some R.IndirectCall
@@ -356,7 +362,7 @@ armJumpType i mem insnAddr pb =
              , nextInsnAddr == tgtAddr -> Some R.NoJump
              | otherwise ->
                case i of
-                 AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 off DA.:< DA.Nil)) ->
+                 AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asInteger -> off) DA.:< DA.Nil)) ->
                    Some (R.RelativeJump R.Unconditional insnAddr (fromIntegral (off `DB.shiftL` 2)))
                  -- FIXME: Handle Thumb cases
                  _ -> Some (R.NotInstrumentable insnAddr)
@@ -365,7 +371,7 @@ armJumpType i mem insnAddr pb =
         -- We are only handling B with condition codes here.
         MD.ParsedBranch {} ->
           case i of
-            AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 off DA.:< DA.Nil)) ->
+            AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asInteger -> off) DA.:< DA.Nil)) ->
               Some (R.RelativeJump R.Conditional insnAddr (fromIntegral (off `DB.shiftL` 2)))
             -- FIXME: Handle T32 cases
             _ -> Some (R.NotInstrumentable insnAddr)
@@ -443,13 +449,16 @@ armModifyJumpTarget insnAddr i0 (R.RelocatableTarget newTarget) =
         DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
           -- FIXME: Assert in range
           let newOff = fromIntegral ((insnAddr `R.addressDiff` newTarget) `DB.shiftR` 2)
-          in Just $ singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+              off24 = W.wRep (PN.knownNat @24) newOff
+          in Just $ singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 off24 DA.:< DA.Nil))
         DA.Instruction DA.BL_i_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
           let newOff = fromIntegral ((insnAddr `R.addressDiff` newTarget) `DB.shiftR` 2)
-          in Just $ singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+              off24 = W.wRep (PN.knownNat @24) newOff
+          in Just $ singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 off24 DA.:< DA.Nil))
         DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
           let newOff = fromIntegral ((insnAddr `R.addressDiff` newTarget) `DB.shiftR` 2)
-          in Just $ singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+              off24 = W.wRep (PN.knownNat @24) newOff
+          in Just $ singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 off24 DA.:< DA.Nil))
         _ ->
           RP.panic RP.ARMISA "armModifyJumpTarget" [ "Encountered unmodifiable instruction that should not have reached here"
                                                    , "  " ++ armPrettyInstruction i0
@@ -474,12 +483,13 @@ armConcretizeAddresses _mem insnAddr i =
             p DA.:< rt DA.:< u DA.:< w DA.:< cond DA.:< DA.Annotated (AbsoluteAddress absAddr) _off12 DA.:< DA.Nil ->
               let newOff14 = fromIntegral (insnAddr `R.addressDiff` absAddr)
                   newOff12 = newOff14 `DB.shiftR` 2
+                  off12 = W.wRep (PN.knownNat @12) newOff12
                   operands' = (      p
                                DA.:< rt
                                DA.:< u
                                DA.:< w
                                DA.:< cond
-                               DA.:< DA.Annotated NoAddress (DA.Bv12 newOff12)
+                               DA.:< DA.Annotated NoAddress (DA.Bv12 off12)
                                DA.:< DA.Nil
                               )
                   i' = DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands')
@@ -511,7 +521,7 @@ armSymbolizeAddresses _mem insnAddr mSymbolicTarget i =
             --
             -- NOTE: So far, all PC-relative address computation in gcc-compiled
             -- binaries seems to be done using this instruction
-            p DA.:< rt DA.:< u DA.:< w DA.:< cond DA.:< DA.Bv12 off12 DA.:< DA.Nil ->
+            p DA.:< rt DA.:< u DA.:< w DA.:< cond DA.:< op12@(DA.Bv12 (asInteger -> off12)) DA.:< DA.Nil ->
               let off14 = off12 `DB.shiftL` 2
                   target = insnAddr `R.addressAddOffset` fromIntegral off14
                   i' = DA.Instruction (coerce opc) (     noAddr p
@@ -519,7 +529,7 @@ armSymbolizeAddresses _mem insnAddr mSymbolicTarget i =
                                                    DA.:< noAddr u
                                                    DA.:< noAddr w
                                                    DA.:< noAddr cond
-                                                   DA.:< withAddr target (DA.Bv12 off12)
+                                                   DA.:< withAddr target op12
                                                    DA.:< DA.Nil
                                                    )
                 in [R.tagInstruction mSymbolicTarget (ARMInstruction i')]
