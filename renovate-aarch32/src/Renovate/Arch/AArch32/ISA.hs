@@ -36,10 +36,12 @@ import qualified Data.List.NonEmpty as DLN
 import           Data.Maybe ( isJust )
 import           Data.Parameterized.Classes
 import qualified Data.Parameterized.List as PL
+import qualified Data.Parameterized.NatRepr as PN
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Parameterized.TraversableFC as FC
 import qualified Data.Text.Prettyprint.Doc as PP
 import           Data.Word ( Word8, Word64 )
+import qualified Data.Word.Indexed as W
 
 -- NOTE: Renovate currently does not rewrite thumb blocks
 --
@@ -58,32 +60,7 @@ import qualified Renovate as R
 import qualified Renovate.Arch.AArch32.Panic as RP
 import           Renovate.Arch.AArch32.Repr
 
--- FIXME: Pull this from macaw/semmc instead
--- data AArch32
--- data ARMReg (tp :: MT.Type) where
---   ARMReg :: Int -> ARMReg (MT.BVType 32)
--- type instance MC.RegAddrWidth ARMReg = 32
--- type instance MC.ArchReg AArch32 = ARMReg
--- instance MC.RegisterInfo ARMReg where
--- instance ShowF ARMReg where
---   showF (ARMReg r) = "r" ++ show r
--- instance Show (ARMReg tp) where
---   show = showF
--- instance MT.HasRepr ARMReg MT.TypeRepr where
---   typeRepr (ARMReg _) = MT.BVTypeRepr (MT.knownNat @32)
-
--- instance TestEquality ARMReg where
---   testEquality (ARMReg r1) (ARMReg r2)
---     | r1 == r2 = Just Refl
---     | otherwise = Nothing
-
--- instance OrdF ARMReg where
---   compareF (ARMReg r1) (ARMReg r2)
---     | r1 == r2 = EQF
---     | otherwise = fromOrdering (compare r1 r2)
-
--- END temporary definitions
-
+import Debug.Trace
 
 data TargetAddress = NoAddress
                    | AbsoluteAddress (R.ConcreteAddress MA.ARM)
@@ -304,8 +281,15 @@ armMakeRelativeJumpTo :: R.ConcreteAddress MA.ARM
 armMakeRelativeJumpTo src dest repr =
   case repr of
     A32Repr ->
-      let off = fromIntegral ((src `R.addressDiff` dest) `DB.shiftR` 2)
-      in singleton (DA.Instruction DA.B_A1 (DA.Bv4 0 DA.:< DA.Bv24 off DA.:< DA.Nil))
+      -- NOTE: Our offsets are signed, but the operands to ARM instructions are
+      -- all unsigned fixed-width words.  We need to do a safe conversion to an
+      -- unsigned value (keeping the same bit pattern)
+      let off :: Integer
+          off = fromIntegral ((src `R.addressDiff` dest) `DB.shiftR` 2)
+          off24 :: W.W 24
+          off24 = W.wRep (PN.knownNat @24) off
+      in trace ("Making a branch with offset: " ++ show off ++ " as W 24: " ++ show off24) $
+        singleton (DA.Instruction DA.B_A1 (DA.Bv4 0 DA.:< DA.Bv24 off24 DA.:< DA.Nil))
     T32Repr ->
       RP.panic RP.ARMISA "armMakeRelativeJumpTo" [ "Thumb rewriting is not yet supported"
                                                  ]
