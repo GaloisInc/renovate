@@ -9,6 +9,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
@@ -33,6 +34,7 @@ import qualified Data.Bits as DB
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Coerce ( coerce )
+import qualified Data.Foldable as F
 import qualified Data.List.NonEmpty as DLN
 import           Data.Maybe ( isJust )
 import           Data.Parameterized.Classes
@@ -290,25 +292,37 @@ armMakeRelativeJumpTo :: R.ConcreteAddress MA.ARM
 armMakeRelativeJumpTo src dest repr =
   case repr of
     A32Repr ->
-      -- NOTE: Our offsets are signed, but the operands to ARM instructions are
-      -- all unsigned fixed-width words.  We need to do a safe conversion to an
-      -- unsigned value (keeping the same bit pattern) into the W type.
-      let rawOff :: Integer
-          rawOff = toInteger (dest `R.addressDiff` src)
-          -- We have to correct by 8 because reading the PC in ARM actually
-          -- returns PC+8 due to some odd interactions with prefetch and the ISA
-          -- definition.
-          --
-          -- We further have to shift by two because branch offsets are stored
-          -- this way to ensure alignment (and compactness)
-          off :: Integer
-          off = (rawOff - 8) `DB.shiftR` 2
-          off24 :: W.W 24
-          off24 = W.wRep (PN.knownNat @24) off
+      let off24 = jumpOffset src dest
       in singleton (DA.Instruction DA.B_A1 (DA.Bv4 unconditional DA.:< DA.Bv24 off24 DA.:< DA.Nil))
     T32Repr ->
       RP.panic RP.ARMISA "armMakeRelativeJumpTo" [ "Thumb rewriting is not yet supported"
                                                  ]
+
+-- We have to correct by 8 because reading the PC in ARM actually
+-- returns PC+8 due to some odd interactions with prefetch and the ISA
+-- definition.
+--
+-- We further have to shift by two because branch offsets are stored
+-- this way to ensure alignment (and compactness)
+--
+-- NOTE: Our offsets are signed, but the operands to ARM instructions are
+-- all unsigned fixed-width words.  We need to do a safe conversion to an
+-- unsigned value (keeping the same bit pattern) into the W type.
+jumpOffset :: (MM.MemWidth (MC.ArchAddrWidth arch))
+           => R.ConcreteAddress arch
+           -> R.ConcreteAddress arch
+           -> W.W 24
+jumpOffset source target =
+  W.wRep (PN.knownNat @24) adjustedOffset
+  where
+    -- Offset we actually want
+    rawOff :: Integer
+    rawOff = toInteger (target `R.addressDiff` source)
+    -- Offset adjusted to account for the PC diff (by 8) and the required right
+    -- shift for alignment
+    adjustedOffset :: Integer
+    adjustedOffset = (rawOff - 8) `DB.shiftR` 2
+
 
 unconditional :: W.W 4
 unconditional = 14
@@ -339,7 +353,7 @@ armJumpType :: Instruction tp a
             -> MD.ParsedBlock MA.ARM ids
             -> Some (R.JumpType MA.ARM)
 armJumpType i mem insnAddr pb =
-  case asParsedTerminator insnAddr pb of
+  case asParsedTerminator mem insnAddr pb of
     Nothing -> Some R.NoJump
     Just term ->
       case term of
@@ -352,11 +366,10 @@ armJumpType i mem insnAddr pb =
         -- FIXME: Implement thumb cases
         MD.ParsedCall _regs _retLoc ->
           case i of
-            -- FIXME: These offsets all come out unsigned - we have to interpret them
             AI (DA.Instruction DA.BL_i_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asInteger -> off) DA.:< DA.Nil)) ->
-              Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2)))
+              Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
             AI (DA.Instruction DA.BL_i_A2 (DA.Bv1 _ DA.:< DA.Bv4 _ DA.:< DA.Bv24 (asInteger -> off) DA.:< DA.Nil)) ->
-              Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2)))
+              Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
             AI (DA.Instruction DA.BLX_r_A1 (DA.Bv4 _cond DA.:< DA.Bv4 _reg DA.:< DA.QuasiMask12 _ DA.:< DA.Nil)) ->
               Some R.IndirectCall
             _ -> Some (R.NotInstrumentable insnAddr)
@@ -380,7 +393,7 @@ armJumpType i mem insnAddr pb =
              | otherwise ->
                case i of
                  AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asInteger -> off) DA.:< DA.Nil)) ->
-                   Some (R.RelativeJump R.Unconditional insnAddr (fromIntegral (off `DB.shiftL` 2)))
+                   Some (R.RelativeJump R.Unconditional insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
                  -- FIXME: Handle Thumb cases
                  _ -> Some (R.NotInstrumentable insnAddr)
         -- Any instruction in ARM can be a conditional jump due to predication...
@@ -389,7 +402,7 @@ armJumpType i mem insnAddr pb =
         MD.ParsedBranch {} ->
           case i of
             AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asInteger -> off) DA.:< DA.Nil)) ->
-              Some (R.RelativeJump R.Conditional insnAddr (fromIntegral (off `DB.shiftL` 2)))
+              Some (R.RelativeJump R.Conditional insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
             -- FIXME: Handle T32 cases
             _ -> Some (R.NotInstrumentable insnAddr)
         MD.ParsedLookupTable _regs _cond _tgts ->
@@ -418,7 +431,7 @@ armJumpType i mem insnAddr pb =
     nextInsnAddr = insnAddr `R.addressAddOffset` fromIntegral (armInstrSize i)
 
 data CurrentInstruction = NoInstruction
-                        | InInstruction (MC.ArchAddrWord MA.ARM)
+                        | InInstruction (MC.MemSegmentOff 32)
                         | FoundTarget
 
 -- | If the given address corresponds to the block terminator, return that
@@ -428,31 +441,44 @@ data CurrentInstruction = NoInstruction
 --
 -- Scan through an open an active instruction at the 'MD.InstructionStart'
 -- statement and close it at 'MD.ArchState'
-asParsedTerminator :: R.ConcreteAddress MA.ARM
+asParsedTerminator :: MM.Memory 32
+                   -> R.ConcreteAddress MA.ARM
                    -> MD.ParsedBlock MA.ARM ids
                    -> Maybe (MD.ParsedTermStmt MA.ARM ids)
-asParsedTerminator insnAddr pb =
-  case foldr searchTarget NoInstruction (MD.pblockStmts pb) of
+asParsedTerminator mem insnAddr pb =
+  case F.foldl' searchTarget NoInstruction (markLast (MD.pblockStmts pb)) of
     NoInstruction -> Nothing
     InInstruction addr
-      | insnAddr == R.concreteFromAbsolute addr -> Just (MD.pblockTermStmt pb)
+      | Just insnAddr == R.concreteFromSegmentOff mem addr -> Just (MD.pblockTermStmt pb)
       | otherwise -> Nothing
     FoundTarget ->
       -- If we found a 'MD.ArchState' corresponding to our target, it is a
       -- non-terminator instruction
       Nothing
   where
-    searchTarget stmt curState =
+    searchTarget curState (stmt, isLast) =
       case curState of
         FoundTarget -> FoundTarget
         _ ->
           case stmt of
-            MC.InstructionStart addr _ -> InInstruction addr
+            MC.InstructionStart blockOff _ ->
+              case MM.incSegmentOff (MD.pblockAddr pb) (fromIntegral blockOff) of
+                Nothing -> NoInstruction
+                Just insnAddrSegOff -> InInstruction insnAddrSegOff
             MC.ArchState addr _
+              | isLast -> curState
               | Just caddrWord <- MM.asAbsoluteAddr addr
               , insnAddr == R.concreteFromAbsolute caddrWord -> FoundTarget
               | otherwise -> NoInstruction
             _ -> curState
+
+-- | Mark the last element of a list with a Bool (True) indicating it is the last
+markLast :: [a] -> [(a, Bool)]
+markLast lst =
+  case reverse (fmap (, False) lst) of
+    [] -> []
+    (lastItem, _) : rest -> reverse ((lastItem, True) : rest)
+
 
 -- | FIXME: We may have to use the long jump strategy from PowerPC here
 armModifyJumpTarget :: R.ConcreteAddress MA.ARM
@@ -465,17 +491,14 @@ armModifyJumpTarget insnAddr i0 (R.RelocatableTarget newTarget) =
       case armDropAnnotations i of
         DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
           -- FIXME: Assert in range
-          let newOff = fromIntegral ((insnAddr `R.addressDiff` newTarget) `DB.shiftR` 2)
-              off24 = W.wRep (PN.knownNat @24) newOff
-          in Just $ singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 off24 DA.:< DA.Nil))
+          let newOff = jumpOffset insnAddr newTarget
+          in Just $ singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
         DA.Instruction DA.BL_i_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
-          let newOff = fromIntegral ((insnAddr `R.addressDiff` newTarget) `DB.shiftR` 2)
-              off24 = W.wRep (PN.knownNat @24) newOff
-          in Just $ singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 off24 DA.:< DA.Nil))
+          let newOff = jumpOffset insnAddr newTarget
+          in Just $ singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
         DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
-          let newOff = fromIntegral ((insnAddr `R.addressDiff` newTarget) `DB.shiftR` 2)
-              off24 = W.wRep (PN.knownNat @24) newOff
-          in Just $ singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 off24 DA.:< DA.Nil))
+          let newOff = jumpOffset insnAddr newTarget
+          in Just $ singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
         _ ->
           RP.panic RP.ARMISA "armModifyJumpTarget" [ "Encountered unmodifiable instruction that should not have reached here"
                                                    , "  " ++ armPrettyInstruction i0
@@ -483,6 +506,8 @@ armModifyJumpTarget insnAddr i0 (R.RelocatableTarget newTarget) =
     ThumbInstruction {} ->
       RP.panic RP.ARMISA "armModifyJumpTarget" [ "Thumb rewriting is not yet supported"
                                                ]
+
+
 
 singleton :: DA.Instruction -> DLN.NonEmpty (Instruction A32 ())
 singleton = (DLN.:| []) . ARMInstruction . toAnnotatedARM
@@ -498,8 +523,8 @@ armConcretizeAddresses _mem insnAddr i =
         DA.LDR_l_A1 ->
           case operands of
             p DA.:< rt DA.:< u DA.:< w DA.:< cond DA.:< DA.Annotated (AbsoluteAddress absAddr) _off12 DA.:< DA.Nil ->
-              let newOff14 = fromIntegral (insnAddr `R.addressDiff` absAddr)
-                  newOff12 = newOff14 `DB.shiftR` 2
+              let newOff14 = fromIntegral (absAddr `R.addressDiff` insnAddr)
+                  newOff12 = (newOff14 - 8) `DB.shiftR` 2
                   off12 = W.wRep (PN.knownNat @12) newOff12
                   operands' = (      p
                                DA.:< rt
@@ -538,6 +563,8 @@ armSymbolizeAddresses _mem insnAddr mSymbolicTarget i =
             --
             -- NOTE: So far, all PC-relative address computation in gcc-compiled
             -- binaries seems to be done using this instruction
+            --
+            -- FIXME: Do we need to do a PC correction here?
             p DA.:< rt DA.:< u DA.:< w DA.:< cond DA.:< op12@(DA.Bv12 (asInteger -> off12)) DA.:< DA.Nil ->
               let off14 = off12 `DB.shiftL` 2
                   target = insnAddr `R.addressAddOffset` fromIntegral off14
