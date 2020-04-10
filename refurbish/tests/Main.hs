@@ -41,6 +41,7 @@ import qualified Lang.Crucible.FunctionHandle as C
 import qualified Renovate as R
 import qualified Renovate.Arch.PPC as RP
 import qualified Renovate.Arch.X86_64 as RX
+import qualified Renovate.Arch.AArch32 as RA
 
 import qualified Refurbish.Docker as RD
 
@@ -118,6 +119,7 @@ toRewritingTest mRunner hdlAlloc strat exePath = T.testCase exePath $ do
   let configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 RTId.analysis))
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 RTId.analysis))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config RTId.analysis))
+                , (R.ARM, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RA.config RTId.analysis))
                 ]
 
   withELF exePath configs (testRewriter mRunner hdlAlloc strat exePath RTId.allOutputEqual)
