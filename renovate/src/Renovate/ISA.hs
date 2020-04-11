@@ -100,6 +100,8 @@ deriving instance Eq (JumpType arch k)
 data ISA arch = ISA
   { isaInstructionSize :: forall t tp . Instruction arch tp t -> Word8
     -- ^ Compute the size of an instruction in bytes
+  , isaInstructionRepr :: forall t tp . Instruction arch tp t -> InstructionArchRepr arch tp
+    -- ^ Return the type representative for an instruction
   , isaSymbolizeAddresses :: forall tp
                            . MM.Memory (MM.ArchAddrWidth arch)
                           -> RA.ConcreteAddress arch
@@ -117,12 +119,18 @@ data ISA arch = ISA
     -- concretization phase to increase the size of the instructions, provided
     -- that concretizing to targets that are 'isaMaxRelativeJumpSize' far away
     -- has the worst case size behavior.
-  , isaConcretizeAddresses :: forall tp
+  , isaConcretizeAddresses :: forall tp tk
                             . MM.Memory (MM.ArchAddrWidth arch)
                            -> RA.ConcreteAddress arch
                            -> Instruction arch tp (InstructionAnnotation arch)
-                           -> Instruction arch tp ()
+                           -> RelocatableTarget arch RA.ConcreteAddress tk
+                           -> DLN.NonEmpty (Instruction arch tp ())
     -- ^ Remove the annotation, with possible post-processing.
+    --
+    -- This is intended to fix up PC-relative memory references in operands and
+    -- modify relative jump targets to point to the proper locations.
+    --
+    -- NOTE: It is allowed to return extra instructions to accomplish these things.
   , isaJumpType :: forall t tp ids
                  . Instruction arch tp t
                 -> MM.Memory (MM.ArchAddrWidth arch)
@@ -152,23 +160,6 @@ data ISA arch = ISA
     -- New code blocks will be laid out in virtual address space within this
     -- many bytes of the original code blocks, so that the two can jump to each
     -- other as necessary.
-  , isaModifyJumpTarget :: forall tp
-                         . RA.ConcreteAddress arch
-                        -> Instruction arch tp ()
-                        -> RelocatableTarget arch RA.ConcreteAddress HasSomeTarget
-                        -> Maybe (DLN.NonEmpty (Instruction arch tp ()))
-    -- ^ Modify the given jump instruction, accounting for any fallthrough behavior specified
-    --
-    -- The first argument is the address of the original jump instruction
-    --
-    -- The second argument is the jump instruction itself
-    --
-    -- The third argument is evidence that the instruction is actually one that
-    -- can have its target modified.  NOTE: There is currently no formal
-    -- connection between the instruction and the jump type, so a caller could
-    -- pass in a manually-constructed jump type to circumvent the protection.
-    --
-    -- The fourth argument is the concretized new target
   , isaInstructionArchReprs :: DLN.NonEmpty (SomeInstructionArchRepr arch)
   -- ^ The default arch repr to use if there is nothing else, used in particular
   -- in the creation of padding.
@@ -185,7 +176,8 @@ data ISA arch = ISA
   -- target.
   , isaMakeSymbolicCall
       :: forall tp
-       . RA.SymbolicAddress arch
+       . InstructionArchRepr arch tp
+      -> RA.SymbolicAddress arch
       -> TaggedInstruction arch tp (InstructionAnnotation arch)
   -- ^ Make an call that takes execution to the given symbolic target.
   , isaPrettyInstruction :: forall t tp. Instruction arch tp t -> String

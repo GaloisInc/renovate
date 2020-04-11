@@ -70,8 +70,8 @@ x64CallerSaveRegisters repr =
 x64ClearRegister :: R.InstructionArchRepr X86.X86_64 tp
                  -> Value tp
                  -> Instruction tp TargetAddress
-x64ClearRegister _ r =
-  fmap (const NoAddress) (makeInstr "xor" [toFlexValue r, toFlexValue r])
+x64ClearRegister repr r =
+  fmap (const NoAddress) (makeInstr repr "xor" [toFlexValue r, toFlexValue r])
 
 -- | Allocate memory using mmap with an anonymous mapping
 --
@@ -84,34 +84,34 @@ x64AllocateMemory :: R.InstructionArchRepr X86.X86_64 tp
                   -> Word32
                   -> R.ConcreteAddress X86.X86_64
                   -> [Instruction tp TargetAddress]
-x64AllocateMemory _ nBytes addr = [ noAddr $ makeInstr "push" [D.QWordReg D.RAX]
-                                , noAddr $ makeInstr "push" [D.QWordReg D.RDI]
-                                , noAddr $ makeInstr "push" [D.QWordReg D.RSI]
-                                , noAddr $ makeInstr "push" [D.QWordReg D.RDX]
-                                , noAddr $ makeInstr "push" [D.QWordReg (D.Reg64 10)]
-                                , noAddr $ makeInstr "push" [D.QWordReg (D.Reg64 9)]
-                                , noAddr $ makeInstr "push" [D.QWordReg (D.Reg64 8)]
+x64AllocateMemory repr nBytes addr = [ noAddr $ makeInstr repr "push" [D.QWordReg D.RAX]
+                                , noAddr $ makeInstr repr "push" [D.QWordReg D.RDI]
+                                , noAddr $ makeInstr repr "push" [D.QWordReg D.RSI]
+                                , noAddr $ makeInstr repr "push" [D.QWordReg D.RDX]
+                                , noAddr $ makeInstr repr "push" [D.QWordReg (D.Reg64 10)]
+                                , noAddr $ makeInstr repr "push" [D.QWordReg (D.Reg64 9)]
+                                , noAddr $ makeInstr repr "push" [D.QWordReg (D.Reg64 8)]
                                 -- Set up syscall
-                                , noAddr $ makeInstr "mov" [D.QWordReg D.RAX, D.QWordImm (D.UImm64Concrete 9)] -- Syscall number
-                                , noAddr $ makeInstr "xor" [D.QWordReg D.RDI, D.QWordReg D.RDI] -- Start address (no request, kernel decides)
-                                , noAddr $ makeInstr "mov" [D.QWordReg D.RSI, D.QWordImm (D.UImm64Concrete (fromIntegral nBytes))] -- Amount to map
-                                , noAddr $ makeInstr "mov" [D.QWordReg D.RDX, D.QWordImm (D.UImm64Concrete (prot_Read .|. prot_Write))] -- Memory protection
-                                , noAddr $ makeInstr "mov" [D.QWordReg (D.Reg64 10), D.QWordImm (D.UImm64Concrete map_Anon)] -- An anonymous mapping
-                                , noAddr $ makeInstr "mov" [D.QWordReg (D.Reg64 8), D.QWordImm (D.UImm64Concrete maxBound)] -- FD (should be -1)
-                                , noAddr $ makeInstr "xor" [D.QWordReg (D.Reg64 9), D.QWordReg (D.Reg64 9)]
-                                , noAddr $ makeInstr "syscall" []
+                                , noAddr $ makeInstr repr "mov" [D.QWordReg D.RAX, D.QWordImm (D.UImm64Concrete 9)] -- Syscall number
+                                , noAddr $ makeInstr repr "xor" [D.QWordReg D.RDI, D.QWordReg D.RDI] -- Start address (no request, kernel decides)
+                                , noAddr $ makeInstr repr "mov" [D.QWordReg D.RSI, D.QWordImm (D.UImm64Concrete (fromIntegral nBytes))] -- Amount to map
+                                , noAddr $ makeInstr repr "mov" [D.QWordReg D.RDX, D.QWordImm (D.UImm64Concrete (prot_Read .|. prot_Write))] -- Memory protection
+                                , noAddr $ makeInstr repr "mov" [D.QWordReg (D.Reg64 10), D.QWordImm (D.UImm64Concrete map_Anon)] -- An anonymous mapping
+                                , noAddr $ makeInstr repr "mov" [D.QWordReg (D.Reg64 8), D.QWordImm (D.UImm64Concrete maxBound)] -- FD (should be -1)
+                                , noAddr $ makeInstr repr "xor" [D.QWordReg (D.Reg64 9), D.QWordReg (D.Reg64 9)]
+                                , noAddr $ makeInstr repr "syscall" []
                                 -- Save the result FIXME: Error checking
                                   -- Put the address to store the result at into a register
-                                , noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (D.UImm64Concrete (fromIntegral (R.absoluteAddress addr)))]
-                                , noAddr $ makeInstr "mov" [D.Mem64 destAddr, D.QWordReg D.RAX]
+                                , noAddr $ makeInstr repr "mov" [D.QWordReg D.RDI, D.QWordImm (D.UImm64Concrete (fromIntegral (R.absoluteAddress addr)))]
+                                , noAddr $ makeInstr repr "mov" [D.Mem64 destAddr, D.QWordReg D.RAX]
                                 -- Restore registers
-                                , noAddr $ makeInstr "pop" [D.QWordReg (D.Reg64 8)]
-                                , noAddr $ makeInstr "pop" [D.QWordReg (D.Reg64 9)]
-                                , noAddr $ makeInstr "pop" [D.QWordReg (D.Reg64 10)]
-                                , noAddr $ makeInstr "pop" [D.QWordReg D.RDX]
-                                , noAddr $ makeInstr "pop" [D.QWordReg D.RSI]
-                                , noAddr $ makeInstr "pop" [D.QWordReg D.RDI]
-                                , noAddr $ makeInstr "pop" [D.QWordReg D.RAX]
+                                , noAddr $ makeInstr repr "pop" [D.QWordReg (D.Reg64 8)]
+                                , noAddr $ makeInstr repr "pop" [D.QWordReg (D.Reg64 9)]
+                                , noAddr $ makeInstr repr "pop" [D.QWordReg (D.Reg64 10)]
+                                , noAddr $ makeInstr repr "pop" [D.QWordReg D.RDX]
+                                , noAddr $ makeInstr repr "pop" [D.QWordReg D.RSI]
+                                , noAddr $ makeInstr repr "pop" [D.QWordReg D.RDI]
+                                , noAddr $ makeInstr repr "pop" [D.QWordReg D.RAX]
                                 ]
   where
     destAddr = D.Addr_64 D.DS (Just D.RDI) Nothing D.NoDisplacement
@@ -130,11 +130,11 @@ map_Anon = 0x20
 x64ComputeStackPointerOffset :: R.InstructionArchRepr X86.X86_64 tp
                              -> R.ConcreteAddress X86.X86_64
                              -> [Instruction tp TargetAddress]
-x64ComputeStackPointerOffset _ memAddr =
-  [ noAddr $ makeInstr "push" [D.QWordReg D.RBX]
-  , noAddr $ makeInstr "mov" [D.QWordReg D.RBX, D.QWordImm (D.UImm64Concrete (fromIntegral (R.absoluteAddress memAddr)))]
-  , noAddr $ makeInstr "sub" [D.Mem64 memRef, D.QWordReg D.RSP]
-  , noAddr $ makeInstr "pop" [D.QWordReg D.RBX]
+x64ComputeStackPointerOffset repr memAddr =
+  [ noAddr $ makeInstr repr "push" [D.QWordReg D.RBX]
+  , noAddr $ makeInstr repr "mov" [D.QWordReg D.RBX, D.QWordImm (D.UImm64Concrete (fromIntegral (R.absoluteAddress memAddr)))]
+  , noAddr $ makeInstr repr "sub" [D.Mem64 memRef, D.QWordReg D.RSP]
+  , noAddr $ makeInstr repr "pop" [D.QWordReg D.RBX]
   ]
   where
     memRef = D.Addr_64 D.DS (Just D.RBX) Nothing D.NoDisplacement
@@ -150,15 +150,15 @@ x64ComputeStackPointerOffset _ memAddr =
 x64SaveReturnAddress :: R.InstructionArchRepr X86.X86_64 tp
                      -> R.ConcreteAddress X86.X86_64
                      -> [Instruction tp TargetAddress]
-x64SaveReturnAddress _ memAddr =
-  [ noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (D.UImm64Concrete (fromIntegral (R.absoluteAddress memAddr)))]
-  , noAddr $ makeInstr "mov" [D.QWordReg D.RSI, D.QWordReg D.RSP]
-  , noAddr $ makeInstr "add" [D.QWordReg D.RSI, D.Mem64 offsetMemRef]
+x64SaveReturnAddress repr memAddr =
+  [ noAddr $ makeInstr repr "mov" [D.QWordReg D.RDI, D.QWordImm (D.UImm64Concrete (fromIntegral (R.absoluteAddress memAddr)))]
+  , noAddr $ makeInstr repr "mov" [D.QWordReg D.RSI, D.QWordReg D.RSP]
+  , noAddr $ makeInstr repr "add" [D.QWordReg D.RSI, D.Mem64 offsetMemRef]
   -- The offset to write the return address to is now in %rsi (%rdi is now free)
   --
   -- Next, put the return address in %rdi, then move % to [rsi]
-  , noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.Mem64 retAddrRef]
-  , noAddr $ makeInstr "mov" [D.Mem64 shadowMemRef, D.QWordReg D.RDI]
+  , noAddr $ makeInstr repr "mov" [D.QWordReg D.RDI, D.Mem64 retAddrRef]
+  , noAddr $ makeInstr repr "mov" [D.Mem64 shadowMemRef, D.QWordReg D.RDI]
   ]
   where
     offsetMemRef = D.Addr_64 D.DS (Just D.RDI) Nothing D.NoDisplacement
@@ -172,17 +172,17 @@ x64CheckShadowStack :: forall tp
                      . R.InstructionArchRepr X86.X86_64 tp
                     -> R.ConcreteAddress X86.X86_64
                     -> [Instruction tp TargetAddress]
-x64CheckShadowStack _ memAddr =
-  [ noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.QWordImm (D.UImm64Concrete (fromIntegral (R.absoluteAddress memAddr)))]
-  , noAddr $ makeInstr "mov" [D.QWordReg D.RSI, D.QWordReg D.RSP]
-  , noAddr $ makeInstr "add" [D.QWordReg D.RSI, D.Mem64 offsetMemRef]
+x64CheckShadowStack repr memAddr =
+  [ noAddr $ makeInstr repr "mov" [D.QWordReg D.RDI, D.QWordImm (D.UImm64Concrete (fromIntegral (R.absoluteAddress memAddr)))]
+  , noAddr $ makeInstr repr "mov" [D.QWordReg D.RSI, D.QWordReg D.RSP]
+  , noAddr $ makeInstr repr "add" [D.QWordReg D.RSI, D.Mem64 offsetMemRef]
   -- The address of the shadow return value is now in %rsi, while %rdi is free
-  , noAddr $ makeInstr "mov" [D.QWordReg D.RSI, D.Mem64 shadowMemRef]
+  , noAddr $ makeInstr repr "mov" [D.QWordReg D.RSI, D.Mem64 shadowMemRef]
   -- The shadow return address is now in rsi
-  , noAddr $ makeInstr "mov" [D.QWordReg D.RDI, D.Mem64 retAddrRef]
+  , noAddr $ makeInstr repr "mov" [D.QWordReg D.RDI, D.Mem64 retAddrRef]
   -- The real return address is now in rdi
-  , noAddr $ makeInstr "cmp" [D.QWordReg D.RDI, D.QWordReg D.RSI]
-  , noAddr $ makeInstr "je" [jmpOff]
+  , noAddr $ makeInstr repr "cmp" [D.QWordReg D.RDI, D.QWordReg D.RSI]
+  , noAddr $ makeInstr repr "je" [jmpOff]
   , noAddr trap
   ]
   where
@@ -192,5 +192,5 @@ x64CheckShadowStack _ memAddr =
     retAddrRef = D.Addr_64 D.DS (Just D.RSP) Nothing (D.Disp8 8)
 
     trap :: Instruction tp ()
-    trap = makeInstr "int3" []
+    trap = makeInstr repr "int3" []
     jmpOff = D.JumpOffset D.JSize32 (D.FixedOffset (fromIntegral (x64Size trap)))

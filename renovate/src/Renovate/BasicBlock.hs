@@ -2,6 +2,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeInType #-}
 -- | Tools for working with 'BasicBlock's
 --
@@ -83,7 +84,6 @@ import qualified Data.Macaw.CFG as MC
 import           Renovate.Address
 import           Renovate.BasicBlock.Types
 import           Renovate.ISA
-import qualified Renovate.Panic as RP
 
 -- | Functions that work on any block that has unannotated instructions and concrete addresses
 class HasConcreteAddresses b where
@@ -171,25 +171,14 @@ symbolicBlockSize :: (HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch))
                   -> SymbolicBlock arch
                   -> Word64
 symbolicBlockSize isa mem (SymbolicBlock origAddr _symAddr insns repr mSymSucc) =
-  fromIntegral (normalInstSizes + jumpSizes + fallthroughInstSizes)
+  fromIntegral (normalInstSizes + fallthroughInstSizes)
   where
     -- The symbolic block has tagged instructions, which have each modifiable
     -- control flow transfer instruction tagged with a 'RelocatableTarget',
     -- which must be fixed up with 'isaModifyJumpTarget'.  We start by
     -- partitioning into regular instructions that don't need to be fixed and
     -- those that do.
-    (normalInstructions, jumpInstructions) =
-      foldr partitionJumps ([], []) insns
-
-    -- We make a concrete sequence of instructions for the fallthrough code.
-    -- This is generated to be concrete, so we can just take its size trivially
-    -- without calling 'isaModifyJumpTarget', as it is already the correct
-    -- instruction sequence.  The actual target is not very relevant, as
-    -- 'isaModifyJumpTarget' must always produce the same size jump regardless
-    -- of the ultimate target.
-    normalInstSizes =
-      sum (fmap (fromIntegral . isaInstructionSize isa . projectInstruction) normalInstructions)
-    jumpSizes = sum (fmap (computeJumpSize isa mem origAddr) jumpInstructions)
+    normalInstSizes = sum (fmap (computeInstructionSize isa mem origAddr) insns)
 
     -- Determine what (if any) sequence of instructions we need to add to handle
     -- control flow fallthrough.
@@ -201,49 +190,32 @@ symbolicBlockSize isa mem (SymbolicBlock origAddr _symAddr insns repr mSymSucc) 
     fallthroughInstSizes =
       sum (fmap (fromIntegral . isaInstructionSize isa) fallthroughInstrSeq)
 
-partitionJumps :: TaggedInstruction arch tp (InstructionAnnotation arch)
-               -> ([TaggedInstruction arch tp (InstructionAnnotation arch)]
-                  ,[( TaggedInstruction arch tp (InstructionAnnotation arch)
-                    , RelocatableTarget arch SymbolicAddress HasSomeTarget
-                    )
-                   ]
-                  )
-               -> ([TaggedInstruction arch tp (InstructionAnnotation arch)]
-                  ,[( TaggedInstruction arch tp (InstructionAnnotation arch)
-                    , RelocatableTarget arch SymbolicAddress HasSomeTarget
-                    )
-                   ]
-                  )
-partitionJumps i (normalInstructions, jumpInstructions) =
-  case symbolicTarget i of
-    Some NoTarget ->
-      (i : normalInstructions, jumpInstructions)
-    Some (rt@RelocatableTarget {}) ->
-      (normalInstructions, (i, rt) : jumpInstructions)
-
-computeJumpSize :: (MC.MemWidth (MC.ArchAddrWidth arch))
-                => ISA arch
-                -> MC.Memory (MC.ArchAddrWidth arch)
-                -> ConcreteAddress arch
-                -> ( TaggedInstruction arch tp (InstructionAnnotation arch)
-                   , RelocatableTarget arch SymbolicAddress HasSomeTarget
-                   )
-                -> Int
-computeJumpSize isa mem addr (taggedInstr, RelocatableTarget target) =
-  case isaModifyJumpTarget isa addr insn fakeTarget of
-    Nothing ->
-      RP.panic RP.BasicBlockSize "computeJumpSize" [ "Jump cannot be modified: "
-                                                   , "  Instruction: " ++ isaPrettyInstruction isa insn
-                                                   , "  Original Address: " ++ show addr
-                                                   , "  Symbolic Target: " ++ show target
-                                                   ]
-    Just jmpSeq -> sum (fmap (fromIntegral . isaInstructionSize isa) jmpSeq)
+-- | Figure out how large an instruction will be after we concretize it
+--
+-- Concretization includes turning symbolic addresses into concrete addresses
+-- and rewriting jumps.  Note that in this iteration of renovate, every
+-- instruction is passed to this function uniformly (there is no distinction
+-- between jumps and non-jumps).
+computeInstructionSize :: forall arch tp
+                        . (MC.MemWidth (MC.ArchAddrWidth arch))
+                       => ISA arch
+                       -> MC.Memory (MC.ArchAddrWidth arch)
+                       -> ConcreteAddress arch
+                       -- ^ The address allocated to the instruction; in this
+                       -- case, it is simply a fake address
+                       -> TaggedInstruction arch tp (InstructionAnnotation arch)
+                       -> Int
+computeInstructionSize isa mem insnAddr taggedInstr =
+  sum (fmap (fromIntegral . isaInstructionSize isa) concreteInsns)
   where
-    insn = isaConcretizeAddresses isa mem addr (projectInstruction taggedInstr)
-    -- We don't know the actual address of the target yet since we haven't done
-    -- layout, but we need something to pass in so we use a fake address.
-    fakeTarget = RelocatableTarget addr
-
+    withConcTarget :: forall a . (forall tk . RelocatableTarget arch ConcreteAddress tk -> a) -> a
+    withConcTarget k =
+      case symbolicTarget taggedInstr of
+        Some NoTarget -> k NoTarget
+        Some (RelocatableTarget _) ->
+          -- We don't have a real target yet, so we use a fake one
+          k (RelocatableTarget insnAddr)
+    concreteInsns = withConcTarget (isaConcretizeAddresses isa mem insnAddr (projectInstruction taggedInstr))
 
 -- | Return the 'JumpType' of the terminator instruction (if any)
 --

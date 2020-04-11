@@ -4,11 +4,14 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE UndecidableInstances #-}
 -- | Internal helpers for the x86_64 ISA implementation
 module Renovate.Arch.X86_64.Internal (
+  instructionRepr,
+  valueRepr,
   makeInstr,
   toFlexInst,
   fromFlexInst,
@@ -71,6 +74,9 @@ instance OrdF Value where
 toFlexValue :: Value tp -> D.Value
 toFlexValue (Value v) = v
 
+valueRepr :: Value tp -> X86Repr tp
+valueRepr (Value _) = X86Repr
+
 type instance R.RegisterType X86.X86_64 = Value
 
 -- | The target address of a jump.  This is used as the annotation
@@ -102,9 +108,20 @@ instance OrdF X86Repr where
 
 -- | A wrapper around a flexdis86 instruction with an arbitrary
 -- annotation on each operand of type @a@.
-newtype Instruction (tp :: R.InstructionArchReprKind X86.X86_64) a =
-  XI { unXI :: D.InstructionInstanceF (AnnotatedOperand a) }
-                         deriving (Functor, Eq, Show)
+data Instruction (tp :: R.InstructionArchReprKind X86.X86_64) a where
+  XI :: D.InstructionInstanceF (AnnotatedOperand a) -> Instruction OnlyEncoding a
+
+unXI :: Instruction tp a -> D.InstructionInstanceF (AnnotatedOperand a)
+unXI (XI ii) = ii
+
+instructionRepr :: Instruction tp a -> X86Repr tp
+instructionRepr i =
+  case i of
+    XI {} -> X86Repr
+
+deriving instance (Show a) => Show (Instruction tp a)
+deriving instance (Eq a) => Eq (Instruction tp a)
+deriving instance Functor (Instruction tp)
 
 type instance R.Instruction X86.X86_64 = Instruction
 type instance R.InstructionAnnotation X86.X86_64 = TargetAddress
@@ -189,18 +206,18 @@ toFlexInst = fmap aoOperand . unXI
 
 -- | Wrap a flexdis86 instruction with our wrapper that fixes some
 -- operand types and hides the flexdis type from the rest of the code.
-fromFlexInst :: D.InstructionInstance -> Instruction tp ()
-fromFlexInst = XI . fmap mkUnitAnnot
+fromFlexInst :: X86Repr tp -> D.InstructionInstance -> Instruction tp ()
+fromFlexInst X86Repr ii = XI (fmap mkUnitAnnot ii)
 
 -- | Make a new annotated operand with a trivial (unit) annotation
 mkUnitAnnot :: (D.Value, D.OperandType) -> AnnotatedOperand ()
 mkUnitAnnot o = AnnotatedOperand { aoOperand = o, aoAnnotation = () }
 
 -- | Helper function for making an x86 instruction.
-makeInstr :: String -> [D.Value] -> Instruction tp ()
-makeInstr mnemonic operands =
+makeInstr :: X86Repr tp -> String -> [D.Value] -> Instruction tp ()
+makeInstr X86Repr mnemonic operands =
   case D.mkInstruction mnemonic operands of
-    Just i -> fromFlexInst i
+    Just i -> fromFlexInst X86Repr i
     Nothing -> L.error ("Renovate.ISA.X64: Could not create an instruction for '" ++ mnemonic ++ " " ++ show operands ++ "'")
 
 annotateInstr :: Instruction tp () -> a -> Instruction tp a

@@ -159,7 +159,6 @@ isa =
         , R.isaMakeRelativeJumpTo = ppcMakeRelativeJumpTo
         , R.isaMaxRelativeJumpSize = const ppcMaxRelativeJumpSize
         , R.isaJumpType = ppcJumpType
-        , R.isaModifyJumpTarget = ppcModifyJumpTarget
         , R.isaMakeSymbolicJump = ppcMakeSymbolicJump
         , R.isaConcretizeAddresses = ppcConcretizeAddresses
         , R.isaSymbolizeAddresses = ppcSymbolizeAddresses
@@ -215,7 +214,7 @@ ppcMakeRelativeJumpTo srcAddr targetAddr _
 -- total of 25 bits in either direction. We subtract 4 instead of 1 also
 -- because of the two zero bits implicitly added to each jump offset.
 ppcMaxRelativeJumpSize :: Word64
-ppcMaxRelativeJumpSize = bit 25 - 4
+ppcMaxRelativeJumpSize = bit 24 - 4
 
 ppcMakeSymbolicJump :: (MM.MemWidth (MM.ArchAddrWidth arch), R.Instruction arch ~ Instruction)
                     => R.SymbolicAddress arch
@@ -230,16 +229,129 @@ ppcMakeSymbolicJump symAddr _ = [R.tagInstruction (Just symAddr) i]
     i = annotateInstr (fromInst jmp) NoAddress
 
 -- | This function converts symbolic address references in operands back to
--- concrete values.  As with 'ppcSymbolizeAddresses', it is a no-op on PowerPC.
-ppcConcretizeAddresses :: (MM.MemWidth (MM.ArchAddrWidth arch))
+-- concrete values.  As with 'ppcSymbolizeAddresses', it is a no-op on PowerPC
+-- for memory operands, but it does fix up relative jumps.
+--
+-- Given a jump instruction and a new target address, update the jump
+-- instruction to target the new address.
+--
+-- This function also takes the address of the instruction so that it can
+-- compute IP-relative jump offsets.
+--
+-- Note that we add two bits of available space when we compute the new jump
+-- offsets; this is because there are two zero bits implicitly concatenated to
+-- the right of the jump offset.  'newJumpOffset' checks the alignment
+-- requirement and the range.  When we construct the operand, we shift off the
+-- two zero bits.
+--
+-- See Note [Conditional Branch Restrictions]
+ppcConcretizeAddresses :: forall arch tp tk
+                        . (MM.MemWidth (MM.ArchAddrWidth arch), HasCallStack)
                        => MM.Memory (MM.ArchAddrWidth arch)
                        -> R.ConcreteAddress arch
                        -> Instruction tp (TargetAddress arch)
-                       -> Instruction tp ()
-ppcConcretizeAddresses _mem _addr i =
-  case unI i of
-    D.Instruction opc operands ->
-      I (D.Instruction (coerce opc) (FC.fmapFC (\(D.Annotated _ operand) -> D.Annotated () operand) operands))
+                       -> R.RelocatableTarget arch R.ConcreteAddress tk
+                       -- ^ The new target (if any) for a relative jump
+                       -> DLN.NonEmpty (Instruction tp ())
+ppcConcretizeAddresses _mem srcAddr i tgt =
+  case tgt of
+    R.NoTarget ->
+      case unI i of
+        D.Instruction opc operands ->
+          let i' = I (D.Instruction (coerce opc) (FC.fmapFC (\(D.Annotated _ operand) -> D.Annotated () operand) operands))
+          in i' DLN.:| []
+    R.RelocatableTarget targetAddr ->
+      case unI i of
+        D.Instruction opc operands ->
+          case operands of
+            D.Annotated _a (D.Calltarget (D.BT _offset)) D.:< D.Nil ->
+              let off = absoluteOff 0 targetAddr
+              in I (D.Instruction (coerce opc) (D.Annotated () (D.Calltarget off) D.:< D.Nil)) DLN.:| []
+            D.Annotated _a (D.Directbrtarget (D.BT _offset)) D.:< D.Nil ->
+              let off = absoluteOff 0 targetAddr
+              in I (D.Instruction (coerce opc) (D.Annotated () (D.Directbrtarget off) D.:< D.Nil)) DLN.:| []
+            D.Annotated _a (D.Condbrtarget (D.CBT _offset)) D.:< rest ->
+              -- We add 8 to the "source" address because, in the case we use this
+              -- computed address, the conditional branch actually comes after two
+              -- more instructions (noops).  Thus, we correct the srcAddr by two
+              -- instructions.
+              case newJumpOffset 16 (srcAddr `R.addressAddOffset` 8) targetAddr of
+                Right tgtOff4 -> do
+                  -- In this case, the jump target is within range of a 16 bit
+                  -- offset for a conditional branch. That means that we can simply
+                  -- update the target of the conditional branch directly.
+                  --
+                  -- NOTE: We have to add two no-ops here to keep the block size the
+                  -- same between both this good case and the pessimistic (Left)
+                  -- case.  The underlying problem is that we compute the maximum
+                  -- possible block size pre-layout by calling this function with a
+                  -- fake jump target (since we don't know where the real target
+                  -- will ultimately be yet).  If we did not add the no-ops here to
+                  -- preserve the size of the block, the layout code would be
+                  -- required to add padding instructions at the end of the block to
+                  -- keep the layout consistent.  This is a problem in block that
+                  -- have a fallthrough successor (e.g., this case), as it would
+                  -- insert traps between the conditional branch and the
+                  -- fallthrough, causing crashes.  Long story short, we add no-ops
+                  -- to preserve the integrity of the instruction address layout.
+                  let nop = I (D.Instruction D.ORI (    D.Annotated () (D.Gprc (D.GPR 0))
+                                                   D.:< D.Annotated () (D.U16imm 0)
+                                                   D.:< D.Annotated () (D.Gprc (D.GPR 0))
+                                                   D.:< D.Nil
+                                                   )
+                              )
+                      rest' = FC.fmapFC (\(D.Annotated _ operand) -> D.Annotated () operand) rest
+                    in (        nop
+                       DLN.:| [ nop
+                              , I (D.Instruction (coerce opc) (D.Annotated () (D.Condbrtarget (D.CBT (tgtOff4 `shiftR` 2))) D.:< rest'))
+                              ]
+                       )
+                Left _ ->
+                  -- Otherwise, the target is too far away for a conditional branch.
+                  -- Instead, we'll conditionally branch to an unconditional branch
+                  -- that takes us to the desired target.
+                  --
+                  -- > bc +4      ; Skip the next instruction to the long jump
+                  -- > b +4       ; Skip the next instruction (going to the natural fallthrough)
+                  -- > b <target> ; Long jump to the actual target
+                  --
+                  -- Note: the branch values for the first two instructions are 2 because:
+                  --
+                  -- 1. The jump offset encoded in the instruction has 0b00
+                  --    concatenated as the low bits in the CPU (equivalent to shift
+                  --    left by two)
+                  -- 2. The offset must also skip the instruction it is executing
+                  --    (i.e., br 0 is an infinite loop)
+                  --
+                  -- NOTE: The offset is computed at an offset of 2 from the first
+                  -- instruction we generate
+                  let off = absoluteOff 2 targetAddr
+                      rest' = FC.fmapFC (\(D.Annotated _ operand) -> D.Annotated () operand) rest
+                   in    (        I (D.Instruction (coerce opc) (D.Annotated () (D.Condbrtarget (D.CBT 2)) D.:< rest'))
+                         DLN.:| [ I (D.Instruction D.B (D.Annotated () (D.Directbrtarget (D.BT 2)) D.:< D.Nil))
+                                , I (D.Instruction D.B (D.Annotated () (D.Directbrtarget off) D.:< D.Nil))
+                                ]
+                         )
+            _ -> RP.panic RP.PPCISA "ppcConcretizeAddresses" [ "Unexpected branch type: " ++ show opc
+                                                             , "  allocated to address: " ++ show srcAddr
+                                                             , "  jumping to address:   " ++ show targetAddr
+                                                             ]
+  where
+    die :: (HasCallStack) => String -> a
+    die s = RP.panic RP.PPCISA "ppcConcretizeAddresses"
+      [ s
+      , "Address: " ++ show srcAddr
+      , "Instruction: " ++ ppcPrettyInstruction i
+      ]
+    -- This @n@ is the index of the generated instruction that the computed offset
+    -- will be used from.  For example, if the offset will be used in the first
+    -- instruction generated by 'ppcModifyJumpTarget', @n = 0@.  If it is to be
+    -- used in the third instruction, @n = 2@.
+    absoluteOff :: (HasCallStack) => MM.MemWord (MM.ArchAddrWidth arch) -> R.ConcreteAddress arch -> D.BranchTarget
+    absoluteOff n addr = case newJumpOffset 26 (R.addressAddOffset srcAddr (4*n)) addr of
+      Left err -> die err
+      Right off4 -> D.BT (off4 `shiftR` 2)
+
 
 -- | This function records the real addresses of IP-relative addressing operands.
 --
@@ -347,115 +459,6 @@ ppcJumpType i _mem insnAddr _ =
             D.GBCLR -> Some (R.Return R.Conditional)
             D.GBCLRL -> Some (R.Return R.Conditional)
             _ -> Some R.NoJump
-
--- | Given a jump instruction and a new target address, update the jump
--- instruction to target the new address.
---
--- This function also takes the address of the instruction so that it can
--- compute IP-relative jump offsets.
---
--- Note that we add two bits of available space when we compute the new jump
--- offsets; this is because there are two zero bits implicitly concatenated to
--- the right of the jump offset.  'newJumpOffset' checks the alignment
--- requirement and the range.  When we construct the operand, we shift off the
--- two zero bits.
---
--- See Note [Conditional Branch Restrictions]
-ppcModifyJumpTarget :: (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch), R.Instruction arch ~ Instruction)
-                    => R.ConcreteAddress arch
-                    -- ^ The address of the instruction
-                    -> R.Instruction arch tp ()
-                    -- ^ The instruction to modify, with new targets attached
-                    -> R.RelocatableTarget arch R.ConcreteAddress R.HasSomeTarget
-                    -> Maybe (DLN.NonEmpty (Instruction tp ()))
-ppcModifyJumpTarget srcAddr i (R.RelocatableTarget targetAddr) =
-  case unI i of
-    D.Instruction opc operands ->
-      case operands of
-        D.Annotated a (D.Calltarget (D.BT _offset)) D.:< D.Nil -> do
-          off <- absoluteOff 0 targetAddr
-          return (I (D.Instruction opc (D.Annotated a (D.Calltarget off) D.:< D.Nil)) DLN.:| [])
-        D.Annotated a (D.Directbrtarget (D.BT _offset)) D.:< D.Nil -> do
-          off <- absoluteOff 0 targetAddr
-          return (I (D.Instruction opc (D.Annotated a (D.Directbrtarget off) D.:< D.Nil)) DLN.:| [])
-        D.Annotated a (D.Condbrtarget (D.CBT _offset)) D.:< rest ->
-          -- We add 8 to the "source" address because, in the case we use this
-          -- computed address, the conditional branch actually comes after two
-          -- more instructions (noops).  Thus, we correct the srcAddr by two
-          -- instructions.
-          case newJumpOffset 16 (srcAddr `R.addressAddOffset` 8) targetAddr of
-            Right tgtOff4 -> do
-              -- In this case, the jump target is within range of a 16 bit
-              -- offset for a conditional branch. That means that we can simply
-              -- update the target of the conditional branch directly.
-              --
-              -- NOTE: We have to add two no-ops here to keep the block size the
-              -- same between both this good case and the pessimistic (Left)
-              -- case.  The underlying problem is that we compute the maximum
-              -- possible block size pre-layout by calling this function with a
-              -- fake jump target (since we don't know where the real target
-              -- will ultimately be yet).  If we did not add the no-ops here to
-              -- preserve the size of the block, the layout code would be
-              -- required to add padding instructions at the end of the block to
-              -- keep the layout consistent.  This is a problem in block that
-              -- have a fallthrough successor (e.g., this case), as it would
-              -- insert traps between the conditional branch and the
-              -- fallthrough, causing crashes.  Long story short, we add no-ops
-              -- to preserve the integrity of the instruction address layout.
-              let nop = I (D.Instruction D.ORI (    D.Annotated () (D.Gprc (D.GPR 0))
-                                               D.:< D.Annotated () (D.U16imm 0)
-                                               D.:< D.Annotated () (D.Gprc (D.GPR 0))
-                                               D.:< D.Nil
-                                               )
-                          )
-              return (         nop
-                      DLN.:| [ nop
-                             , I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT (tgtOff4 `shiftR` 2))) D.:< rest))
-                             ]
-                     )
-            Left _ -> do
-              -- Otherwise, the target is too far away for a conditional branch.
-              -- Instead, we'll conditionally branch to an unconditional branch
-              -- that takes us to the desired target.
-              --
-              -- > bc +4      ; Skip the next instruction to the long jump
-              -- > b +4       ; Skip the next instruction (going to the natural fallthrough)
-              -- > b <target> ; Long jump to the actual target
-              --
-              -- Note: the branch values for the first two instructions are 2 because:
-              --
-              -- 1. The jump offset encoded in the instruction has 0b00
-              --    concatenated as the low bits in the CPU (equivalent to shift
-              --    left by two)
-              -- 2. The offset must also skip the instruction it is executing
-              --    (i.e., br 0 is an infinite loop)
-              --
-              -- NOTE: The offset is computed at an offset of 2 from the first
-              -- instruction we generate
-              off <- absoluteOff 2 targetAddr
-              return (        I (D.Instruction opc (D.Annotated a (D.Condbrtarget (D.CBT 2)) D.:< rest))
-                     DLN.:| [ I (D.Instruction D.B (D.Annotated () (D.Directbrtarget (D.BT 2)) D.:< D.Nil))
-                            , I (D.Instruction D.B (D.Annotated () (D.Directbrtarget off) D.:< D.Nil))
-                            ]
-                     )
-        _ -> RP.panic RP.PPCISA "ppcModifyJumpTarget" [ "Unexpected branch type: " ++ show opc
-                                                      , "  allocated to address: " ++ show srcAddr
-                                                      , "  jumping to address:   " ++ show targetAddr
-                                                      ]
-  where
-  die :: String -> a
-  die s = RP.panic RP.PPCISA "ppcModifyJumpTarget"
-    [ s
-    , "Address: " ++ show srcAddr
-    , "Instruction: " ++ ppcPrettyInstruction i
-    ]
-  -- This @n@ is the index of the generated instruction that the computed offset
-  -- will be used from.  For example, if the offset will be used in the first
-  -- instruction generated by 'ppcModifyJumpTarget', @n = 0@.  If it is to be
-  -- used in the third instruction, @n = 2@.
-  absoluteOff n addr = case newJumpOffset 26 (R.addressAddOffset srcAddr (4*n)) addr of
-    Left err -> die err
-    Right off4 -> Just (D.BT (off4 `shiftR` 2))
 
 -- | Compute a new jump offset between the @srcAddr@ and @targetAddr@.
 --

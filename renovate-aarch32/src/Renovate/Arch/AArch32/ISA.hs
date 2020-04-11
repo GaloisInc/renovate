@@ -32,6 +32,7 @@ module Renovate.Arch.AArch32.ISA (
 import qualified Control.Monad.Catch as C
 import qualified Data.Bits as DB
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Coerce ( coerce )
 import qualified Data.Foldable as F
@@ -68,8 +69,14 @@ data TargetAddress = NoAddress
                    | AbsoluteAddress (R.ConcreteAddress MA.ARM)
   deriving (Eq, Ord, Show)
 
+-- | A wrapper around A32 and T32 instructions type indexed to ensure that ARM
+-- and Thumb instructions cannot be mixed in a single basic block
 data Instruction tp a where
+  -- | An A32 encoded instruction
   ARMInstruction :: DA.AnnotatedInstruction a -> Instruction A32 a
+  -- | Raw bytes in the A32 instruction stream
+  ARMBytes :: BS.ByteString -> Instruction A32 a
+  -- | A T32 instruction
   ThumbInstruction :: DT.AnnotatedInstruction a -> Instruction T32 a
 
 instance Show (Instruction tp a) where
@@ -108,11 +115,15 @@ instance Functor (Instruction tp) where
     case i of
       ARMInstruction (DA.Instruction opc operands) ->
         ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC (\(DA.Annotated a o) -> DA.Annotated (f a) o) operands))
+      ARMBytes bs -> ARMBytes bs
       ThumbInstruction (DT.Instruction opc operands) ->
         ThumbInstruction (DT.Instruction (coerce opc) (FC.fmapFC (\(DT.Annotated a o) -> DT.Annotated (f a) o) operands))
 
 instance Eq (Instruction tp ()) where
   ARMInstruction i1 == ARMInstruction i2 = i1 == i2
+  ARMBytes bs1 == ARMBytes bs2 = bs1 == bs2
+  ARMInstruction {} == ARMBytes {} = False
+  ARMBytes {} == ARMInstruction {} = False
   ThumbInstruction i1 == ThumbInstruction i2 = i1 == i2
 
 instance Eq (Operand tp) where
@@ -158,6 +169,7 @@ assemble :: (C.MonadThrow m) => Instruction tp () -> m BS.ByteString
 assemble i =
   case i of
     ARMInstruction ai -> return (LBS.toStrict (DA.assembleInstruction (armDropAnnotations ai)))
+    ARMBytes bs -> return bs
     ThumbInstruction ti -> return (LBS.toStrict (DT.assembleInstruction (thumbDropAnnotations ti)))
 
 -- | Disassemble a concrete block from a bytestring
@@ -178,7 +190,7 @@ disassemble :: forall m ids
             -> BS.ByteString
             -> m (R.ConcreteBlock MA.ARM)
 disassemble pb startAddr endAddr bs0 = do
-  let acon = ARMInstruction . toAnnotatedARM
+  let acon = toAnnotatedARM A32Repr
   let minsns0 = go A32Repr acon DA.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
   case DLN.nonEmpty =<< minsns0 of
     Just insns -> return (R.concreteBlock startAddr insns (A32Repr) pb)
@@ -216,6 +228,7 @@ armPrettyInstruction :: Instruction tp a -> String
 armPrettyInstruction i =
   case i of
     ARMInstruction ai -> show (DA.ppInstruction (armDropAnnotations ai))
+    ARMBytes bs -> ".word " ++ show bs
     ThumbInstruction ti -> show (DT.ppInstruction (thumbDropAnnotations ti))
 
 armDropAnnotations :: DA.AnnotatedInstruction a -> DA.Instruction
@@ -224,11 +237,11 @@ armDropAnnotations i =
     DA.Instruction opc annotatedOps ->
       DA.Instruction (coerce opc) (FC.fmapFC armUnannotateOpcode annotatedOps)
 
-toAnnotatedARM :: DA.Instruction -> DA.AnnotatedInstruction ()
-toAnnotatedARM i =
+toAnnotatedARM :: ARMRepr A32 -> DA.Instruction -> Instruction A32 ()
+toAnnotatedARM _ i =
   case i of
     DA.Instruction opc ops ->
-      DA.Instruction (coerce opc) (FC.fmapFC (DA.Annotated ()) ops)
+      ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC (DA.Annotated ()) ops))
 
 toAnnotatedThumb :: DT.Instruction -> DT.AnnotatedInstruction ()
 toAnnotatedThumb i =
@@ -256,6 +269,7 @@ armInstrSize :: Instruction tp a -> Word8
 armInstrSize i =
   case i of
     ARMInstruction {} -> 4
+    ARMBytes bs -> fromIntegral (BS.length bs)
     ThumbInstruction ti ->
       let bytes = DT.assembleInstruction (thumbDropAnnotations ti)
       in fromIntegral (LBS.length bytes)
@@ -265,7 +279,7 @@ armMakePadding nBytes repr =
   case repr of
     A32Repr
       | leftoverARM == 0 ->
-        fmap (ARMInstruction . toAnnotatedARM) (replicate (fromIntegral nARMInsns) aBrk)
+        fmap (toAnnotatedARM repr) (replicate (fromIntegral nARMInsns) aBrk)
       | otherwise ->
         RP.panic RP.ARMISA "armMakePadding" [ "Unexpected byte count (A32): " ++ show nBytes
                                             , "Only instruction-sized padding (4 bytes) is supported"
@@ -330,7 +344,7 @@ unconditional = 14
 armMaxRelativeJumpSize :: R.InstructionArchRepr MA.ARM tp -> Word64
 armMaxRelativeJumpSize repr =
   case repr of
-    A32Repr -> DB.bit 25 - 4
+    A32Repr -> DB.bit 14 - 4
     T32Repr -> DB.bit 10 - 4
 
 asInteger :: forall n . (KnownNat n, 1 PN.<= n) => W.W n -> Integer
@@ -479,66 +493,79 @@ markLast lst =
     [] -> []
     (lastItem, _) : rest -> reverse ((lastItem, True) : rest)
 
-
--- | FIXME: We may have to use the long jump strategy from PowerPC here
-armModifyJumpTarget :: R.ConcreteAddress MA.ARM
-                    -> Instruction tp ()
-                    -> R.RelocatableTarget MA.ARM R.ConcreteAddress R.HasSomeTarget
-                    -> Maybe (DLN.NonEmpty (Instruction tp ()))
-armModifyJumpTarget insnAddr i0 (R.RelocatableTarget newTarget) =
-  case i0 of
-    ARMInstruction i ->
-      case armDropAnnotations i of
-        DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
-          -- FIXME: Assert in range
-          let newOff = jumpOffset insnAddr newTarget
-          in Just $ singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
-        DA.Instruction DA.BL_i_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
-          let newOff = jumpOffset insnAddr newTarget
-          in Just $ singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
-        DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
-          let newOff = jumpOffset insnAddr newTarget
-          in Just $ singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
-        _ ->
-          RP.panic RP.ARMISA "armModifyJumpTarget" [ "Encountered unmodifiable instruction that should not have reached here"
-                                                   , "  " ++ armPrettyInstruction i0
-                                                   ]
-    ThumbInstruction {} ->
-      RP.panic RP.ARMISA "armModifyJumpTarget" [ "Thumb rewriting is not yet supported"
-                                               ]
-
-
-
 singleton :: DA.Instruction -> DLN.NonEmpty (Instruction A32 ())
-singleton = (DLN.:| []) . ARMInstruction . toAnnotatedARM
+singleton = (DLN.:| []) . toAnnotatedARM A32Repr
 
 armConcretizeAddresses :: MM.Memory 32
                        -> R.ConcreteAddress MA.ARM
                        -> Instruction tp TargetAddress
-                       -> Instruction tp ()
-armConcretizeAddresses _mem insnAddr i =
-  case i of
-    ARMInstruction (DA.Instruction opc operands) ->
+                       -> R.RelocatableTarget MA.ARM R.ConcreteAddress tk
+                       -> DLN.NonEmpty (Instruction tp ())
+armConcretizeAddresses _mem insnAddr i0 tgt =
+  case (tgt, i0) of
+    (_, ARMBytes {}) ->
+      RP.panic RP.ARMISA "armConcretizeAddresses" [ "Illegal raw bytes at: " ++ show insnAddr ]
+    (R.RelocatableTarget newTarget, ARMInstruction i) ->
+      case armDropAnnotations i of
+        DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
+          -- FIXME: Assert in range
+          let newOff = jumpOffset insnAddr newTarget
+          in singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+        DA.Instruction DA.BL_i_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
+          let newOff = jumpOffset insnAddr newTarget
+          in singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+        DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
+          let newOff = jumpOffset insnAddr newTarget
+          in singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+        _ ->
+          RP.panic RP.ARMISA "armConcretizeAddresses" [ "Encountered unmodifiable instruction that should not have reached here"
+                                                      , "  " ++ armPrettyInstruction i0
+                                                      ]
+    (R.RelocatableTarget {}, ThumbInstruction {}) ->
+      RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet supported"
+                                               ]
+    (R.NoTarget, ARMInstruction (DA.Instruction opc operands)) ->
       case opc of
         DA.LDR_l_A1 ->
           case operands of
-            p DA.:< rt DA.:< u DA.:< w DA.:< cond DA.:< DA.Annotated (AbsoluteAddress absAddr) _off12 DA.:< DA.Nil ->
-              let newOff14 = fromIntegral (absAddr `R.addressDiff` insnAddr)
-                  newOff12 = (newOff14 - 8) `DB.shiftR` 2
-                  off12 = W.wRep (PN.knownNat @12) newOff12
-                  operands' = (      p
-                               DA.:< rt
-                               DA.:< u
-                               DA.:< w
-                               DA.:< cond
-                               DA.:< DA.Annotated NoAddress (DA.Bv12 off12)
-                               DA.:< DA.Nil
-                              )
-                  i' = DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands')
-              in ARMInstruction i'
-            _ -> ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands))
-        _ -> ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands))
-    ThumbInstruction {} ->
+            -- PC-relative data references via LDR (most seem to be LDR related)
+            --
+            -- Problem: LDR only has 12 bits of offset, so only data within 12
+            -- bits (4kb) of the instruction address can be referenced.  This
+            -- isn't really enough to let us reference data from the original
+            -- text section from the new one.
+            --
+            -- We will fix that by translating into a three instruction sequence:
+            --
+            -- > ldr rt, [pc, #8]
+            -- > b +8
+            -- > .word <address that the data is really at>
+            --
+            -- That is: we put the real address of the original piece of data
+            -- inline as an absolute address that we can load locally.  We add a
+            -- fallthrough jump to make sure that we never execute the inline
+            -- data.
+            --
+            -- This is a bit awkward, as the address we are loading is actually
+            -- a pointer to a table that has the address of the real variable
+            -- are accessing in many cases.  However, it isn't guaranteed to be
+            -- that.
+            --
+            -- Note that the pseudo-code above is reflected oddly below.
+            --
+            -- * First, the computed address has to be offset by 8 to account
+            --   for the odd semantics of reading the PC.
+            -- * Second, the two jump offsets are 0 for the same reason (you
+            --   automatically get a +8 vs the PC, so we don't need any extra)
+            DA.Annotated _ p DA.:< DA.Annotated _ rt DA.:< DA.Annotated _ u DA.:< DA.Annotated _ w DA.:< DA.Annotated _ cond DA.:< DA.Annotated (AbsoluteAddress absAddr) _off12 DA.:< DA.Nil ->
+              let w32 = fromIntegral (R.absoluteAddress (absAddr `R.addressAddOffset` 8))
+                  i1 = ARMInstruction $ DA.Instruction DA.LDR_l_A1 (DA.Annotated () p DA.:< DA.Annotated () rt DA.:< DA.Annotated () u DA.:< DA.Annotated () w DA.:< DA.Annotated () cond DA.:< DA.Annotated () (DA.Bv12 0) DA.:< DA.Nil)
+                  i2 = toAnnotatedARM A32Repr $ DA.Instruction DA.B_A1 (DA.Bv4 unconditional DA.:< DA.Bv24 (0 `DB.shiftR` 2) DA.:< DA.Nil)
+                  i3 = ARMBytes (LBS.toStrict (BB.toLazyByteString (BB.word32LE w32)))
+              in i1 DLN.:| [ i2, i3 ]
+            _ -> ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands)) DLN.:| []
+        _ -> ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands)) DLN.:| []
+    (R.NoTarget, ThumbInstruction {}) ->
       RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet support" ]
   where
     toUnitAnnotation :: forall tp
@@ -563,11 +590,8 @@ armSymbolizeAddresses _mem insnAddr mSymbolicTarget i =
             --
             -- NOTE: So far, all PC-relative address computation in gcc-compiled
             -- binaries seems to be done using this instruction
-            --
-            -- FIXME: Do we need to do a PC correction here?
             p DA.:< rt DA.:< u DA.:< w DA.:< cond DA.:< op12@(DA.Bv12 (asInteger -> off12)) DA.:< DA.Nil ->
-              let off14 = off12 `DB.shiftL` 2
-                  target = insnAddr `R.addressAddOffset` fromIntegral off14
+              let target = insnAddr `R.addressAddOffset` fromIntegral off12
                   i' = DA.Instruction (coerce opc) (     noAddr p
                                                    DA.:< noAddr rt
                                                    DA.:< noAddr u
@@ -578,8 +602,10 @@ armSymbolizeAddresses _mem insnAddr mSymbolicTarget i =
                                                    )
                 in [R.tagInstruction mSymbolicTarget (ARMInstruction i')]
         _ -> toATagged opc operands
+    ARMBytes {} ->
+      RP.panic RP.ARMISA "armSymbolizeAddresses" [ "Raw bytes are not allowed in the instruction stream during symbolization at: " ++ show insnAddr ]
     ThumbInstruction {} ->
-      RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet support" ]
+      RP.panic RP.ARMISA "armSymbolizeAddresses" [ "Thumb rewriting is not yet support" ]
   where
     annotateNull :: forall tp . DA.Operand tp -> DA.Annotated TargetAddress DA.Operand tp
     annotateNull operand = DA.Annotated NoAddress operand
@@ -608,7 +634,6 @@ isa =
         , R.isaMakeRelativeJumpTo = armMakeRelativeJumpTo
         , R.isaMaxRelativeJumpSize = armMaxRelativeJumpSize
         , R.isaJumpType = armJumpType
-        , R.isaModifyJumpTarget = armModifyJumpTarget
         , R.isaConcretizeAddresses = armConcretizeAddresses
         , R.isaSymbolizeAddresses = armSymbolizeAddresses
         }

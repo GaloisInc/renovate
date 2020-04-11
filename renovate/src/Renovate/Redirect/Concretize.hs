@@ -2,6 +2,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
 {-# LANGUAGE TypeInType #-}
@@ -19,7 +20,6 @@ import qualified Data.Map as M
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Traversable as T
 import           Data.Typeable ( Typeable )
-import qualified Data.Macaw.CFG as MC
 import qualified Data.Map as Map
 import           Data.Maybe ( fromMaybe, maybeToList )
 import           Data.Monoid ( Sum(Sum) )
@@ -141,7 +141,7 @@ concretizeJumps :: (Monad m, InstructionConstraints arch)
 concretizeJumps concreteAddressMap wp
   | changed status = withSymbolicInstructions sb $ \repr symInsns -> do
     -- Concretize all of the instructions (including jumps)
-    let concretizeInstrs = T.traverse (mapJumpAddress concreteAddressMap) symInsns
+    let concretizeInstrs = T.traverse (concretizeAddresses concreteAddressMap) symInsns
     (concretizedInstrsWithSizes, nextAddr) <- S.runStateT concretizeInstrs firstInstrAddr
     let Sum baseBlockSize = foldMap snd concretizedInstrsWithSizes
     let baseBlockInstrs = foldMap (F.toList . fst) concretizedInstrsWithSizes
@@ -199,60 +199,27 @@ concretizeJumps concreteAddressMap wp
     maxSize = lbSize aab
     status = rewriteStatus wp
 
--- | We need the address of the instruction, so we need to pre-compute
--- all instruction addresses above.
---
--- To fix up jumps at the end of blocks, we need to keep the same jump
--- type, but change its target.  This may require changing the opcode,
--- as a longer jump may require a different instruction (e.g., 8 bit
--- to 32 bit offset).
-mapJumpAddress :: forall m arch tp
-                . (Monad m, InstructionConstraints arch)
-               => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
-               -> TaggedInstruction arch tp (InstructionAnnotation arch)
-               -> S.StateT (ConcreteAddress arch) (RewriterT arch m) (DLN.NonEmpty (Instruction arch tp ()), Sum Word64)
-mapJumpAddress concreteAddressMap taggedInstr = do
+concretizeAddresses :: forall m arch tp
+                     . (Monad m, InstructionConstraints arch)
+                    => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
+                    -> TaggedInstruction arch tp (InstructionAnnotation arch)
+                    -> S.StateT (ConcreteAddress arch) (RewriterT arch m) (DLN.NonEmpty (Instruction arch tp ()), Sum Word64)
+concretizeAddresses concreteAddressMap taggedInstr = do
   insnAddr <- S.get
   isa <- S.lift askISA
   mem <- S.lift askMem
-  case withModifiableJump isa mem taggedInstr insnAddr of
-    NotModifiable concreteInstr _ -> do
-      -- This is a single instruction that is not a jump, and thus doesn't have
-      -- to be passed through isaModifyJumpTarget to get fixed up
-      let instrSize = isaInstructionSize isa concreteInstr
-      S.put (insnAddr `addressAddOffset` fromIntegral instrSize)
-      return (concreteInstr DLN.:| [], fromIntegral instrSize)
-    ModifiableJump concreteInstr (RelocatableTarget symTarget) -> do
-      let concreteTarget = lookupConcreteTarget concreteAddressMap symTarget
-      case isaModifyJumpTarget isa insnAddr concreteInstr (RelocatableTarget concreteTarget) of
-        Nothing ->
-          RP.panic RP.Concretize "mapJumpAddress" [ "Failed to rewrite a jump target for " ++ isaPrettyInstruction isa concreteInstr
-                                                  ]
-        Just insns -> do
-          let totalSize = sum $ fmap (fromIntegral . isaInstructionSize isa) insns
-          S.put (insnAddr `addressAddOffset` fromInteger totalSize)
-          return (insns, fromInteger totalSize)
-
-data WithModifiableJump arch (tp :: InstructionArchReprKind arch) =
-  ModifiableJump (Instruction arch tp ()) (RelocatableTarget arch SymbolicAddress HasSomeTarget)
-  | NotModifiable (Instruction arch tp ()) (RelocatableTarget arch SymbolicAddress HasNoTarget)
-  -- ^ We keep the jump type in the NotModifiable case as evidence that we
-  -- didn't mis-classify anything
-
-withModifiableJump :: ISA arch
-                   -> MC.Memory (MC.ArchAddrWidth arch)
-                   -> TaggedInstruction arch tp (InstructionAnnotation arch)
-                   -> ConcreteAddress arch
-                   -- ^ The address of the instruction
-                   -> WithModifiableJump arch tp
-withModifiableJump isa mem taggedInstr addr =
-  case symbolicTarget taggedInstr of
-    Some NoTarget ->
-      NotModifiable (isaConcretizeAddresses isa mem addr instr) NoTarget
-    Some (rt@RelocatableTarget {}) ->
-      ModifiableJump (isaConcretizeAddresses isa mem addr instr) rt
+  let insns = withConcTarget (isaConcretizeAddresses isa mem insnAddr (projectInstruction taggedInstr))
+  let size = sum (fmap (toInteger . isaInstructionSize isa) insns)
+  S.put (insnAddr `addressAddOffset` fromIntegral size)
+  return (insns, fromIntegral size)
   where
-    instr = projectInstruction taggedInstr
+    withConcTarget :: forall a . (forall tk . RelocatableTarget arch ConcreteAddress tk -> a) -> a
+    withConcTarget k =
+      case symbolicTarget taggedInstr of
+        Some NoTarget -> k NoTarget
+        Some (RelocatableTarget symTarget) ->
+          let concreteTarget = lookupConcreteTarget concreteAddressMap symTarget
+          in k (RelocatableTarget concreteTarget)
 
 -- | Map from a symbolic address to a concrete one, failing if there is no entry
 -- in the mapping
