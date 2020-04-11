@@ -14,7 +14,6 @@ module Renovate.Arch.AArch32.Repr (
   ARMRepr(..)
   ) where
 
-import           Data.Kind ( Type )
 import           Data.Parameterized.Classes
 import qualified Renovate as R
 import qualified SemMC.Architecture.AArch32 as SA
