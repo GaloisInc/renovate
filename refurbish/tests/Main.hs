@@ -24,7 +24,7 @@ import           System.FilePath ( (</>), (<.>) )
 import           System.FilePath.Glob ( namesMatching )
 import qualified System.IO as IO
 import qualified System.IO.Temp as TMP
-import qualified System.Posix.Files as SPF
+import qualified System.PosixCompat.Files as SPF
 import qualified Test.Tasty as T
 import qualified Test.Tasty.HUnit as T
 import           Text.Read ( readMaybe )
