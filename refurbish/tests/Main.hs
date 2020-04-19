@@ -10,7 +10,6 @@ module Main ( main ) where
 
 import           Control.DeepSeq ( force )
 import qualified Control.Exception as X
-import           Data.Bits ( (.|.) )
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ElfEdit as E
@@ -24,7 +23,6 @@ import           System.FilePath ( (</>), (<.>) )
 import           System.FilePath.Glob ( namesMatching )
 import qualified System.IO as IO
 import qualified System.IO.Temp as TMP
-import qualified System.PosixCompat.Files as SPF
 import qualified Test.Tasty as T
 import qualified Test.Tasty.HUnit as T
 import           Text.Read ( readMaybe )
@@ -156,7 +154,8 @@ testRewriter mRunner hdlAlloc strat exePath assertions rc e loadedBinary = do
         LBS.hPut thdl bs
         -- We have to close the handle so that it can be executed inside of the container
         IO.hClose thdl
-        SPF.setFileMode texe (SPF.ownerModes .|. SPF.groupModes .|. SPF.otherModes)
+        p0 <- SD.getPermissions texe
+        SD.setPermissions texe (SD.setOwnerExecutable True p0)
         pwd <- SD.getCurrentDirectory
         argLists <- readTestArguments exePath
         -- The name of the executable mapped into the container
