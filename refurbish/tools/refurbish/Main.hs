@@ -13,6 +13,7 @@ import           Control.Applicative ( (<|>) )
 import qualified Control.Exception as X
 import           Control.Lens ( (^.) )
 import           Control.Monad ( when )
+import           Data.Bits ( (.|.) )
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ElfEdit as E
@@ -34,6 +35,7 @@ import qualified Options.Applicative as O
 import qualified System.Console.Haskeline as H
 import qualified System.Exit as IO
 import qualified System.IO as IO
+import qualified System.PosixCompat.Files as SPF
 import qualified System.Random.MWC as MWC
 import           Text.Read ( readMaybe )
 
@@ -196,6 +198,7 @@ mainWithOptions o = do
         (e', _, ri, _env) <- R.rewriteElf rc' hdlAlloc e loadedBinary layout
         printInfo o ri
         LBS.writeFile (oOutput o) (E.renderElf e')
+        SPF.setFileMode (oOutput o) (SPF.ownerModes .|. SPF.groupModes .|. SPF.otherModes)
         when (oRunREPL o) (runREPL ri)
     E.Elf64Res errs e64 -> do
       case errs of
@@ -206,6 +209,7 @@ mainWithOptions o = do
         (e', _, ri, _env) <- R.rewriteElf rc' hdlAlloc e loadedBinary layout
         printInfo o ri
         LBS.writeFile (oOutput o) (E.renderElf e')
+        SPF.setFileMode (oOutput o) (SPF.ownerModes .|. SPF.groupModes .|. SPF.otherModes)
         when (oRunREPL o) (runREPL ri)
 
 data REPLInfo =

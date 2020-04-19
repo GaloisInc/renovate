@@ -58,6 +58,7 @@ executable refurbish
                        lens,
                        fmt >= 0.6 && < 0.7,
                        haskeline >= 0.7 && < 0.8,
+                       unix-compat >= 0.5 && < 0.6,
                        elf-edit,
                        parameterized-utils,
                        macaw-base,
