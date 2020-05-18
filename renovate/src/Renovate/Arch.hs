@@ -12,5 +12,5 @@ data Architecture = X86_64
                   | PPC64
                   | PPC32
                   | ARM
-                  | AArch64
+                  | AArch32
                   deriving (Eq, Ord, Show)
