@@ -7,6 +7,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
@@ -245,7 +246,7 @@ ppcMakeSymbolicJump symAddr _ = [R.tagInstruction (Just symAddr) i]
 -- two zero bits.
 --
 -- See Note [Conditional Branch Restrictions]
-ppcConcretizeAddresses :: forall arch tp tk
+ppcConcretizeAddresses :: forall arch (tp :: R.InstructionArchReprKind arch) tk
                         . (MM.MemWidth (MM.ArchAddrWidth arch), HasCallStack)
                        => MM.Memory (MM.ArchAddrWidth arch)
                        -> R.ConcreteAddress arch
