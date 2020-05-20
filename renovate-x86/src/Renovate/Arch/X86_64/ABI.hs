@@ -3,6 +3,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeInType #-}
 -- | An 'ABI' implementation for the x86_64 ABI
 --
 -- Currently, this is for Linux; Windows and OS X would require different ABIs
