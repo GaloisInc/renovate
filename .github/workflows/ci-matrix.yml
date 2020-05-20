@@ -1,0 +1,70 @@
+# This CI configuration is inspired by
+#
+# https://kodimensional.dev/github-actions
+#
+# It builds with a majority of the latest compiler releases from each major GHC
+# revision on Linux and builds macOS and Windows against the latest GHC.
+name: CI Matrix
+
+# Trigger the workflow on push or pull request, but only for the master branch
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        ghc: ['8.6.5', '8.8.3']
+        cabal: ['3.2.0.0']
+        os: [ubuntu-latest, macOS-latest, windows-latest]
+        exclude:
+          - os: macOS-latest
+            ghc: 8.6.5
+          - os: windows-latest
+            ghc: 8.8.3
+
+    name: GHC ${{ matrix.ghc }} on ${{ matrix.os }} renovate
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: 'true'
+
+    - uses: actions/setup-haskell@v1.1
+      id: setup-haskell-cabal
+      name: Setup Haskell
+      with:
+        ghc-version: ${{ matrix.ghc }}
+        cabal-version: ${{ matrix.cabal }}
+
+    - uses: actions/cache@v1
+      name: Cache cabal-store
+      with:
+        path: ${{ steps.setup-haskell-cabal.outputs.cabal-store }}
+        key: ${{ runner.os }}-${{ matrix.ghc }}-cabal
+
+    - uses: actions/cache@v1
+      name: Cache dist-newstyle
+      with:
+        path: dist-newstyle
+        key: ${{ runner.os }}-${{ matrix.ghc }}-dist-newstyle
+
+    - name: Build
+      run: |
+        cp cabal.project.dist cabal.project
+        cabal v2-configure pkg:refurbish --write-ghc-environment-files=always -j1 --enable-tests
+        cabal v2-build pkg:refurbish
+
+    - name: Setup Test Environment
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt install -y docker.io
+
+    - name: Test
+      if: runner.os == 'Linux'
+      run: |
+        cabal v2-test pkg:refurbish
+
