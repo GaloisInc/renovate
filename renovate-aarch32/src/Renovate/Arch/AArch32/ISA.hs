@@ -553,10 +553,10 @@ armConcretizeAddresses _mem insnAddr i0 tgt =
             --
             -- Note that the pseudo-code above is reflected oddly below.
             --
-            -- * First, the computed address has to be offset by 8 to account
-            --   for the odd semantics of reading the PC.
-            -- * Second, the two jump offsets are 0 for the same reason (you
-            --   automatically get a +8 vs the PC, so we don't need any extra)
+            --  * First, the computed address has to be offset by 8 to account
+            --    for the odd semantics of reading the PC.
+            --  * Second, the two jump offsets are 0 for the same reason (you
+            --    automatically get a +8 vs the PC, so we don't need any extra)
             DA.Annotated _ p DA.:< DA.Annotated _ rt DA.:< DA.Annotated _ u DA.:< DA.Annotated _ w DA.:< DA.Annotated _ cond DA.:< DA.Annotated (AbsoluteAddress absAddr) _off12 DA.:< DA.Nil ->
               let w32 = fromIntegral (R.absoluteAddress (absAddr `R.addressAddOffset` 8))
                   i1 = ARMInstruction $ DA.Instruction DA.LDR_l_A1 (DA.Annotated () p DA.:< DA.Annotated () rt DA.:< DA.Annotated () u DA.:< DA.Annotated () w DA.:< DA.Annotated () cond DA.:< DA.Annotated () (DA.Bv12 0) DA.:< DA.Nil)
