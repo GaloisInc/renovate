@@ -513,7 +513,7 @@ armConcretizeAddresses _mem insnAddr i0 tgt =
           in singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
         DA.Instruction DA.BL_i_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
           let newOff = jumpOffset insnAddr newTarget
-          in singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+          in singleton (DA.Instruction DA.BL_i_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
         DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
           let newOff = jumpOffset insnAddr newTarget
           in singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
