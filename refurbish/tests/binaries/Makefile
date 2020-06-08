@@ -3,15 +3,18 @@
 x86exe = $(patsubst %.c,%.nostdlib.x86_64.exe,$(wildcard *.c)) $(patsubst %.c,%.musl.x86_64.exe,$(wildcard *.c)) $(patsubst %.c,%.glibc.x86_64.exe,$(wildcard *.c))
 # ppc32exe = $(patsubst %.c,%.nostdlib.ppc32.exe,$(wildcard *.c)) $(patsubst %.c,%.stdlib.ppc32.exe,$(wildcard *.c))
 ppc64exe = $(patsubst %.c,%.nostdlib.ppc64.exe,$(wildcard *.c)) $(patsubst %.c,%.stdlib.ppc64.exe,$(wildcard *.c))
+aarch32exe = $(patsubst %.c,%.noopt.nostdlib.aarch32.exe,$(wildcard *.c)) $(patsubst %.c,%.noopt.stdlib.aarch32.exe,$(wildcard *.c)) $(patsubst %.c,%.opt.nostdlib.aarch32.exe,$(wildcard *.c))  $(patsubst %.c,%.opt.stdlib.aarch32.exe,$(wildcard *.c))
 
-all: $(x86exe) $(ppc64exe)
+all: $(x86exe) $(ppc64exe) $(aarch32exe)
 
 x86muslcc = musl-gcc
 x86cc = gcc
 ppc32cc = powerpc-linux-gnu-gcc
 ppc64cc = powerpc64-linux-gnu-gcc
+aarch32cc = arm-linux-gnueabi-gcc
 
 CFLAGS = -static -fno-stack-protector
+aarch32_cflags = -fno-pie -fno-pic
 
 %.nostdlib.x86_64.exe: %.c
 	$(x86cc) -DNOSTDLIB -nostdlib $(CFLAGS) $< -o $@
@@ -30,6 +33,12 @@ CFLAGS = -static -fno-stack-protector
 
 %.stdlib.ppc64.exe: %.c
 	$(ppc64cc) $(CFLAGS) $< -o $@
+
+%.noopt.nostdlib.aarch32.exe: %.c util.h
+	$(aarch32cc) $(aarch32_cflags) -DNOSTDLIB -nostdlib $(CFLAGS) $< -o $@
+
+%.noopt.stdlib.aarch32.exe: %.c util.h
+	$(aarch32cc) $(aarch32_cflags) $(CFLAGS) $< -o $@
 
 clean:
 	rm -f *.exe
