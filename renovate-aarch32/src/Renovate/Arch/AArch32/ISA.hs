@@ -538,6 +538,7 @@ armConcretizeAddresses _mem insnAddr i0 tgt =
             -- We will fix that by translating into a three instruction sequence:
             --
             -- > ldr rt, [pc, #8]
+            -- > ldr [rt], [rt, #0]
             -- > b +8
             -- > .word <address that the data is really at>
             --
@@ -562,7 +563,17 @@ armConcretizeAddresses _mem insnAddr i0 tgt =
                   i1 = ARMInstruction $ DA.Instruction DA.LDR_l_A1 (DA.Annotated () p DA.:< DA.Annotated () rt DA.:< DA.Annotated () u DA.:< DA.Annotated () w DA.:< DA.Annotated () cond DA.:< DA.Annotated () (DA.Bv12 0) DA.:< DA.Nil)
                   i2 = toAnnotatedARM A32Repr $ DA.Instruction DA.B_A1 (DA.Bv4 unconditional DA.:< DA.Bv24 (0 `DB.shiftR` 2) DA.:< DA.Nil)
                   i3 = ARMBytes (LBS.toStrict (BB.toLazyByteString (BB.word32LE w32)))
-              in i1 DLN.:| [ i2, i3 ]
+                  -- Operands marked with ??? were blindly chosen by disassembling a similar instruction.
+                  i4 = ARMInstruction $ DA.Instruction DA.LDR_i_A1_off $
+                         (DA.Annotated () (DA.Bv1 1) -- ???
+                          DA.:< DA.Annotated () rt -- target register?
+                          DA.:< DA.Annotated () rt -- source register?
+                          DA.:< DA.Annotated () (DA.Bv1 1) -- ???
+                          DA.:< DA.Annotated () (DA.Bv1 0) -- ???
+                          DA.:< DA.Annotated () (DA.Bv4 14) -- ???
+                          DA.:< DA.Annotated () (DA.Bv12 0) -- offset
+                          DA.:< DA.Nil)
+              in i1 DLN.:| [ i2, i3, i4 ]
             _ -> ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands)) DLN.:| []
         _ -> ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands)) DLN.:| []
     (R.NoTarget, ThumbInstruction {}) ->
