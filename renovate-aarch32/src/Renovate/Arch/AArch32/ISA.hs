@@ -341,10 +341,19 @@ jumpOffset source target =
 unconditional :: W.W 4
 unconditional = 14
 
+-- | The maximum range we can jump on 32 bit ARM
+--
+-- Note that the branching instructions have limited range: 14 bits on A32, 10
+-- on T32.  This is not enough for any reasonable code relocation.  However, we
+-- have worked around this with a code sequence that embeds the jump offset into
+-- the instruction stream, allowing us to load 4 byte offsets (at the cost of an
+-- extra dereference).  This gets us a full 32 bit range.
+--
+-- NOTE: We need to update the T32 range when we implement thumb support
 armMaxRelativeJumpSize :: R.InstructionArchRepr MA.ARM tp -> Word64
 armMaxRelativeJumpSize repr =
   case repr of
-    A32Repr -> DB.bit 14 - 4
+    A32Repr -> DB.bit 30 - 4
     T32Repr -> DB.bit 10 - 4
 
 asInteger :: forall n . (KnownNat n, 1 PN.<= n) => W.W n -> Integer
