@@ -470,6 +470,7 @@ buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow
            -> m (Either (MC.ArchSegmentOff arch) (ConcreteBlock arch))
 buildBlock disBlock asm1 mem blockStarts (funcAddr, (PU.Some pb))
   | MC.blockSize pb == 0 = return (Left funcAddr)
+  | isIncompleteBlock pb = return (Left funcAddr)
   | Just concAddr <- concreteFromSegmentOff mem segAddr = do
       case MC.addrContentsAfter mem (MC.segoffAddr segAddr) of
         Left err -> C.throwM (MemoryError err)
