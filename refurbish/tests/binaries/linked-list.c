@@ -16,6 +16,8 @@ static void* fake_malloc(unsigned sz);
 # define FREE free
 #endif
 
+int x = 5;
+
 typedef struct link {
     int n;
     char* name;
