@@ -450,7 +450,38 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- Now overwrite the original code (in the .text segment) with the
   -- content computed by our transformation.
   modifyCurrentELF (overwriteTextSection overwrittenBytes)
-  let newSegment = phdrSegment phdrSegmentAddress
+
+  -- Add a PHDR segment which will hold the modified program header table.
+  --
+  -- We usually want this to be the first segment (have a segment index of 0)
+  -- (see comment on "phdrSegment"), except that on ARM, if an EXIDX segment is
+  -- present, it must come first.
+  let findUniqueSegmentOfType ty = E.traverseElfSegments $ \seg -> do
+        S.get >>=
+          \case
+            Nothing -> do
+              when (E.elfSegmentType seg == ty) $
+                S.put $ Just (E.elfSegmentIndex seg)
+            Just idx -> do
+              fail $
+                unlines
+                  [ "Found segment of type " ++ show ty ++ " at two indices:"
+                  , show idx
+                  , show (E.elfSegmentIndex seg)
+                  ]
+        pure seg
+
+  indexOfEXIDX <- withCurrentELF $
+    flip S.execStateT Nothing . findUniqueSegmentOfType E.PT_ARM_EXIDX
+
+  newSegmentIdx <-
+    case indexOfEXIDX of
+      Nothing -> pure 0
+      Just idx | idx == 0 -> pure 1
+      Just idx -> fail $
+        "Expected EXIDX segment to have index 0, but it had index " ++ show idx
+
+  let newSegment = phdrSegment newSegmentIdx phdrSegmentAddress
       newSegmentCount = E.elfSegmentIndex newSegment + 1
   -- Increment all of the segment indexes so that we can reserve the first
   -- segment index (0) for our fresh PHDR segment that we want at the beginning
@@ -519,13 +550,17 @@ appendSegment seg e = do
 
 -- | Create a fresh segment containing only the PHDR table
 --
--- We choose 0 as the segment index, so ensure that we've already made space in
--- the segment index space for it (by e.g., incrementing all of the other
--- segment indexes).
+-- Requires that we've already made space in the segment index space (by e.g.,
+-- incrementing all of the other segment indexes past @idx@).
+--
+-- The spec says that if there's a PHDR segment, it must be before any loadable
+-- segment in the table, so loadable segments should all have indices greater
+-- than @idx@.
 phdrSegment :: (E.ElfWidthConstraints w)
-            => E.ElfWordType w
+            => Word16
+            -> E.ElfWordType w
             -> E.ElfSegment w
-phdrSegment addr =
+phdrSegment idx addr =
   let alignedAddr = alignValue addr (fromIntegral pageAlignment)
       containerSegment = E.ElfSegment
         -- Why not E.PT_NULL here? Answer: glibc really, *really* wants the program
@@ -535,7 +570,7 @@ phdrSegment addr =
         , E.elfSegmentFlags = E.pf_r
         -- Our caller expects the index of the container to be the
         -- largest index of any segment defined here.
-        , E.elfSegmentIndex = 1
+        , E.elfSegmentIndex = idx + 1
         , E.elfSegmentVirtAddr = alignedAddr
         , E.elfSegmentPhysAddr = alignedAddr
         , E.elfSegmentAlign = fromIntegral pageAlignment
@@ -544,8 +579,7 @@ phdrSegment addr =
         }
       containedSegment = containerSegment
         { E.elfSegmentType = E.PT_PHDR
-        -- The spec says that if there's a PHDR segment, it must be the first one.
-        , E.elfSegmentIndex = 0
+        , E.elfSegmentIndex = idx
         , E.elfSegmentData = Seq.singleton E.ElfDataSegmentHeaders
         }
   in containerSegment
