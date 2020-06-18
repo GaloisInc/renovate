@@ -463,12 +463,13 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
               when (E.elfSegmentType seg == ty) $
                 S.put $ Just (E.elfSegmentIndex seg)
             Just idx -> do
-              fail $
-                unlines
-                  [ "Found segment of type " ++ show ty ++ " at two indices:"
-                  , show idx
-                  , show (E.elfSegmentIndex seg)
-                  ]
+              when (E.elfSegmentType seg == ty) $
+                fail $
+                  unlines
+                    [ "Found segment of type " ++ show ty ++ " at two indices:"
+                    , show idx
+                    , show (E.elfSegmentIndex seg)
+                    ]
         pure seg
 
   indexOfEXIDX <- withCurrentELF $
