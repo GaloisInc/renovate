@@ -455,28 +455,17 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   --
   -- We usually want this to be the first segment (have a segment index of 0)
   -- (see comment on "phdrSegment"), except that on ARM, if an EXIDX segment is
-  -- present, it must come first.
-  let findUniqueSegmentOfType ty = E.traverseElfSegments $ \seg -> do
-        S.get >>=
-          \case
-            Nothing -> do
-              when (E.elfSegmentType seg == ty) $
-                S.put $ Just (E.elfSegmentIndex seg)
-            Just idx -> do
-              when (E.elfSegmentType seg == ty) $
-                fail $
-                  unlines
-                    [ "Found segment of type " ++ show ty ++ " at two indices:"
-                    , show idx
-                    , show (E.elfSegmentIndex seg)
-                    ]
-        pure seg
+  -- present, that must come first.
 
-  indexOfEXIDX <- withCurrentELF $
-    flip S.execStateT Nothing . findUniqueSegmentOfType E.PT_ARM_EXIDX
-
+  let isEXIDX seg = E.elfSegmentType seg == E.PT_ARM_EXIDX
+  exidxs <- withCurrentELF (filterSegments isEXIDX)
+  when (length exidxs > 1) $
+    fail $ unwords $
+      [ "Found several ARM_EXIDX segments, at the following indices:"
+      , show (map E.elfSegmentIndex exidxs)
+      ]
   newSegmentIdx <-
-    case indexOfEXIDX of
+    case E.elfSegmentIndex <$> listToMaybe exidxs of
       Nothing -> pure 0
       Just idx | idx == 0 -> pure 1
       Just idx -> fail $
@@ -484,10 +473,10 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
 
   let newSegment = phdrSegment newSegmentIdx phdrSegmentAddress
       newSegmentCount = E.elfSegmentIndex newSegment + 1
-  -- Increment all of the segment indexes so that we can reserve the first
-  -- segment index (0) for our fresh PHDR segment that we want at the beginning
-  -- of the PHDR table (but not at the first offset)
-  modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments (incrementSegmentNumber newSegmentCount) e)
+  -- Increment all of the segment indexes (other than EXIDX) so that we can
+  -- reserve the appropriate segment index for our fresh PHDR segment that we
+  -- want at the beginning of the PHDR table (but not at the first offset)
+  modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments (incrementSegmentNumber (not . isEXIDX) newSegmentCount) e)
   -- Note: We have to update the GNU Stack and GnuRelroRegion segment numbers
   -- independently, as they are handled specially in elf-edit.
   modifyCurrentELF (\e -> ((),) <$> fixOtherSegmentNumbers newSegmentCount e)
@@ -498,6 +487,13 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments nullifyPhdr e)
   modifyCurrentELF (appendSegment newSegment)
   return analysisResult
+
+filterSegments :: Monad f => (E.ElfSegment w -> Bool) -> E.Elf w -> f [E.ElfSegment w]
+filterSegments predicate elf =
+  flip S.execStateT [] $ flip E.traverseElfSegments elf $ \seg -> do
+    when (predicate seg) $
+      S.modify (seg:)
+    pure seg
 
 nullifyPhdr :: Applicative f => E.ElfSegment w -> f (E.ElfSegment w)
 nullifyPhdr s = pure $ case E.elfSegmentType s of
@@ -585,8 +581,17 @@ phdrSegment idx addr =
         }
   in containerSegment
 
-incrementSegmentNumber :: (Monad m) => E.SegmentIndex -> E.ElfSegment w -> m (E.ElfSegment w)
-incrementSegmentNumber n seg = return seg { E.elfSegmentIndex = E.elfSegmentIndex seg + n }
+incrementSegmentNumber ::
+  (Monad m) =>
+  (E.ElfSegment w -> Bool) ->
+  E.SegmentIndex ->
+  E.ElfSegment w ->
+  m (E.ElfSegment w)
+incrementSegmentNumber predicate n seg =
+  return $
+    if predicate seg
+    then seg { E.elfSegmentIndex = E.elfSegmentIndex seg + n }
+    else seg
 
 buildSymbolMap :: (w ~ MM.ArchAddrWidth arch, Integral (E.ElfWordType w), MM.MemWidth w)
                => E.Elf w
