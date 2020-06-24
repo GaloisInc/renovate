@@ -43,6 +43,7 @@ import qualified Data.Map as M
 import           Data.Maybe ( catMaybes, fromMaybe, isJust, mapMaybe )
 import           Data.Proxy ( Proxy(..) )
 import qualified Data.Set as S
+import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Encoding.Error as T
 import qualified Data.Traversable as T
@@ -114,7 +115,7 @@ data BlockInfo arch = BlockInfo
   -- is incomplete (because attempting to reason about or rewrite
   -- these blocks could be dangerous because the incomplete blocks
   -- might jump back into the middle known blocks, therefore the known
-  -- blocks cannot be considered to be complete either.
+  -- blocks cannot be considered to be complete either).
   , biCFG              :: M.Map (ConcreteAddress arch) (SymbolicCFG arch)
   -- ^ The Crucible CFG for each function (if possible to
   -- construct). Crucible CFGs are only constructed for functions that
@@ -126,6 +127,10 @@ data BlockInfo arch = BlockInfo
   , biOverlap          :: BlockRegions arch
   -- ^ A structure that lets us determine which blocks in the program overlap
   -- other blocks in the program (so that we can avoid ever trying to rewrite them)
+  , biTranslationError :: [(ConcreteAddress arch, T.Text)]
+  -- ^ Translation errors reported by macaw
+  , biClassifyFailure :: [ConcreteAddress arch]
+  -- ^ The addresses of blocks for which macaw was unable to determine the terminator type
   }
 
 isIncompleteBlockAddress :: BlockInfo arch -> ConcreteAddress arch -> Bool
@@ -214,7 +219,8 @@ addrInRange (textStart, textEnd) addr = fromMaybe False $ do
   let soEnd = absoluteAddress textEnd
   return (absAddr >= soStart && absAddr < soEnd)
 
-blockInfo :: (MS.SymArchConstraints arch)
+blockInfo :: forall arch
+           . (MS.SymArchConstraints arch)
           => Recovery arch
           -> MC.Memory (MC.RegAddrWidth (MC.ArchReg arch))
           -> (ConcreteAddress arch, ConcreteAddress arch)
@@ -267,6 +273,9 @@ blockInfo recovery mem textAddrRange di = do
 
   let cfgPairs = M.fromList (catMaybes mcfgs)
 
+  let (transErrs, classifyFailures) =
+        F.foldl' collectDiscoveryFailures ([], []) (M.elems (di L.^. MC.funInfo))
+
   return BlockInfo { biBlocks = blocks
                    , biFunctionEntries = mapMaybe (concreteFromSegmentOff mem) funcEntries
                    , biFunctions = funcBlocks
@@ -274,6 +283,8 @@ blockInfo recovery mem textAddrRange di = do
                    , biCFG = M.map fst cfgPairs
                    , biRegCFG = M.map snd cfgPairs
                    , biOverlap = blockRegions mem di
+                   , biTranslationError = transErrs
+                   , biClassifyFailure = classifyFailures
                    }
   where
     validFuncs = M.elems (di L.^. MC.funInfo)
@@ -284,6 +295,18 @@ blockInfo recovery mem textAddrRange di = do
                        | (segOff, val) <- M.toList (di L.^. MC.funInfo)
                        , Just concAddr <- return (concreteFromSegmentOff mem segOff)
                        ]
+    collectDiscoveryFailures acc (PU.Some dfi) =
+      F.foldl' collectBlockDiscoveryFailures acc (M.toList (dfi L.^. MC.parsedBlocks))
+    collectBlockDiscoveryFailures :: forall ids
+                                   . ([(ConcreteAddress arch, T.Text)], [ConcreteAddress arch])
+                                  -> (MC.ArchSegmentOff arch, MC.ParsedBlock arch ids)
+                                  -> ([(ConcreteAddress arch, T.Text)], [ConcreteAddress arch])
+    collectBlockDiscoveryFailures acc@(te, ce) (bSegOff, pb) =
+      let Just baddr = concreteFromSegmentOff mem bSegOff
+      in case MC.pblockTermStmt pb of
+           MC.ClassifyFailure {} -> (te, baddr : ce)
+           MC.ParsedTranslateError msg -> ((baddr, msg) : te, ce)
+           _ -> acc
 
 data Recovery arch =
   Recovery { recoveryISA :: ISA arch

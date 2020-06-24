@@ -161,6 +161,8 @@ module Renovate
   E.riRewritePairs,
   E.riFunctionBlocks,
   E.riSections,
+  E.riTranslationErrors,
+  E.riClassifyFailures,
   D.Diagnostic(..),
   D.Diagnostics(..),
   LB.RewritePair(..),

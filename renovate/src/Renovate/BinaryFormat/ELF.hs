@@ -56,6 +56,8 @@ module Renovate.BinaryFormat.ELF (
   riRewritePairs,
   riFunctionBlocks,
   riSections,
+  riTranslationErrors,
+  riClassifyFailures,
   ) where
 
 import           Control.Applicative
@@ -961,6 +963,8 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
         riOutputBlocks L..= Just (SomeConcretizedBlocks isa allBlocks)
         riIncompleteFunctions L..= RM.incompleteFunctions mem blockInfo
         riTransitivelyIncompleteBlocks L..= RM.transitivelyIncompleteBlocks blockInfo
+        riTranslationErrors L..= R.biTranslationError blockInfo
+        riClassifyFailures L..= R.biClassifyFailure blockInfo
         case cfg of
           RenovateConfig { rcAssembler = asm } -> do
             (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks injected
