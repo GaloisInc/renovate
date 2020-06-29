@@ -471,6 +471,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
       Just idx -> fail $
         "Expected EXIDX segment to have index 0, but it had index " ++ show idx
 
+  phdrSegmentAddress <- withCurrentELF (pure . choosePHDRSegmentAddress)
   let newSegment = phdrSegment newSegmentIdx phdrSegmentAddress
       newSegmentCount = E.elfSegmentIndex newSegment + 1
   -- Increment all of the segment indexes (other than EXIDX) so that we can
@@ -486,6 +487,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- they're uninteresting.
   modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments nullifyPhdr e)
   modifyCurrentELF (appendSegment newSegment)
+
   return analysisResult
 
 filterSegments :: Monad f => (E.ElfSegment w -> Bool) -> E.Elf w -> f [E.ElfSegment w]
@@ -502,10 +504,72 @@ nullifyPhdr s = pure $ case E.elfSegmentType s of
 
 -- | The (base) virtual address to lay out the PHDR table at
 --
+-- When loading an ELF binary, the Linux kernel performs a calculation of the
+-- virtual address of the program header table (@AT_PHDR@), and places the
+-- result in the aux vector. This value is used by e.g. glibc's thread-local
+-- storage initialization code. The address it calculates is
+--
+-- @AT_PHDR = (elf_ppnt->p_vaddr - elf_ppnt->p_offset) + exec->e_phoff@
+--
+-- where elf_ppnt is the first LOAD segment appearing in the program header
+-- table (see linux/fs/binfmt_elf.c). QEMU's user-mode emulation also
+-- calculates a value for @AT_PHDR@, but it does so differently. It uses
+--
+-- @AT_PHDR = min_i(phdr[i].p_vaddr - phdr[i].p_offset) + exec->e_phoff@
+--
+-- where @min_i@ is the minimum over indices @i@ of LOAD segments. We must
+-- make these values coincide, so we have to ensure that the virtual address
+-- of the new PHDR segment minus its offset must be the minimal difference
+-- between any LOAD segment's address and offset.
+--
+-- See the relevant QEMU bug report for additional details:
+-- https://bugs.launchpad.net/qemu/+bug/1885332
+--
 -- NOTE: We probably want to think more carefully about the alignment of this
 -- address.  Currently, we page align it.
-phdrSegmentAddress :: Num a => a
-phdrSegmentAddress = 0x900000
+--
+-- This function assumes:
+--
+-- 1. There are no segments whose images overlap in the virtual address space
+-- 2. There is at least one segment
+-- 3. The size and file offset of the program header segment don't depend on
+--    the virtual address chosen
+choosePHDRSegmentAddress :: E.Elf w -> ElfRewriter lm arch (E.ElfWordType w)
+choosePHDRSegmentAddress elf = do
+  let phdrs = sortBy (comparing E.phdrSegmentVirtAddr)
+                     (E.allPhdrs (E.elfLayout elf))
+  assertM (length phdrs > 0)
+  let minGap = minimum $
+        map (\phdr -> E.phdrSegmentVirtAddr phdr - E.phdrFileStart phdr) phdrs
+
+  -- To figure out where to put this new segment, we'll need to know how big
+  -- it is, so we first append it at an arbitrary address and calculate its
+  -- size, then find a suitable address for it.
+  let fakePhdrSegment = phdrSegment (nextSegmentIndex e) 0x900000
+  fakePhdrs <- E.allPhdrs . E.elfLayout <$> appendSegment fakePhdrSegment elf
+  fakePhdrSegment <-
+    case filter ((== E.PT_PHDR) . E.elfSegmentType) fakePhdrs of
+      [seg] -> pure seg
+      phdrs ->
+        fail "Internal error: Wrong number of PT_PHDR segments: " ++ show phdrs
+  let requiredSize = E.phdrMemSize fakePhdrSegment
+  let E.FileOffset projectedOffset = E.phdrFileStart fakePhdrSegment
+
+  -- Now, find any addresses that are between existing segments, have enough
+  -- space for the new segment, and are aligned properly.
+  let ranges = [ ( E.phdrSegmentVirtAddr loSeg + E.phdrMemSize loSeg
+                 , E.phdrSegmentVirtAddr hiSeg
+                 )
+               | (loSeg, hiSeg) <- zip phdrs (drop 1 phdrs)
+               , requiredSize <
+                   (E.phdrSegmentVirtAddr hiSeg -
+                      E.phdrSegmentVirtAddr loSeg + E.phdrMemSize loSeg)
+               ]
+
+  -- The optimal virtual address is the offset of the program header segment in
+  -- the resulting file.
+
+  _
 
 -- | Count the number of program headers (i.e., entries in the PHDR table)
 --
