@@ -81,6 +81,7 @@ import qualified Data.Map as Map
 import           Data.Maybe ( fromMaybe, maybeToList, listToMaybe, isJust )
 import           Data.Monoid
 import qualified Data.Ord as O
+import           Data.Proxy (Proxy(Proxy))
 import qualified Data.Sequence as Seq
 import           Data.Typeable ( Typeable )
 import qualified Data.Vector as V
@@ -471,7 +472,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
       Just idx -> fail $
         "Expected EXIDX segment to have index 0, but it had index " ++ show idx
 
-  phdrSegmentAddress <- withCurrentELF (pure . choosePHDRSegmentAddress)
+  phdrSegmentAddress <- withCurrentELF (choosePHDRSegmentAddress Proxy)
   let newSegment = phdrSegment newSegmentIdx phdrSegmentAddress
       newSegmentCount = E.elfSegmentIndex newSegment + 1
   -- Increment all of the segment indexes (other than EXIDX) so that we can
@@ -534,36 +535,41 @@ nullifyPhdr s = pure $ case E.elfSegmentType s of
 -- 2. There is at least one segment
 -- 3. The size and file offset of the program header segment don't depend on
 --    the virtual address chosen
-choosePHDRSegmentAddress :: E.Elf w -> ElfRewriter lm arch (E.ElfWordType w)
-choosePHDRSegmentAddress elf = do
-  let phdrs = sortBy (comparing E.phdrSegmentVirtAddr)
-                     (E.allPhdrs (E.elfLayout elf))
+choosePHDRSegmentAddress ::
+  (w ~ MM.ArchAddrWidth arch, E.ElfWidthConstraints w) =>
+  proxy arch ->
+  E.Elf w ->
+  ElfRewriter lm arch (E.ElfWordType w)
+choosePHDRSegmentAddress _proxy elf = do
+  let phdrs = L.sortBy (O.comparing E.phdrSegmentVirtAddr)
+                       (E.allPhdrs (E.elfLayout elf))
   assertM (length phdrs > 0)
   let minGap = minimum $
         map (\phdr -> E.phdrSegmentVirtAddr phdr - E.phdrFileStart phdr) phdrs
 
-  -- To figure out where to put this new segment, we'll need to know how big
-  -- it is, so we first append it at an arbitrary address and calculate its
-  -- size, then find a suitable address for it.
-  let fakePhdrSegment = phdrSegment (nextSegmentIndex e) 0x900000
-  fakePhdrs <- E.allPhdrs . E.elfLayout <$> appendSegment fakePhdrSegment elf
+  -- To figure out where to put this new segment, we'll need to know its offset
+  -- and how big it is, so we first append it at an arbitrary address and get
+  -- those values.
+  let fakePhdrSegment = phdrSegment (nextSegmentIndex elf) 0x900000
+  ((), fakeELF) <- appendSegment fakePhdrSegment elf
+  let fakePhdrs = E.allPhdrs (E.elfLayout fakeELF)
   fakePhdrSegment <-
-    case filter ((== E.PT_PHDR) . E.elfSegmentType) fakePhdrs of
+    case filter ((== E.PT_PHDR) . E.phdrSegmentType) fakePhdrs of
       [seg] -> pure seg
       phdrs ->
-        fail "Internal error: Wrong number of PT_PHDR segments: " ++ show phdrs
+        fail $ "Internal error: Wrong number of PT_PHDR segments: " ++ show phdrs
   let requiredSize = E.phdrMemSize fakePhdrSegment
-  let E.FileOffset projectedOffset = E.phdrFileStart fakePhdrSegment
 
   -- Now, find any addresses that are between existing segments, have enough
   -- space for the new segment, and are aligned properly.
-  let ranges = [ ( E.phdrSegmentVirtAddr loSeg + E.phdrMemSize loSeg
-                 , E.phdrSegmentVirtAddr hiSeg
-                 )
+  let ranges = [ (loAddr, hiAddr)
                | (loSeg, hiSeg) <- zip phdrs (drop 1 phdrs)
-               , requiredSize <
-                   (E.phdrSegmentVirtAddr hiSeg -
-                      E.phdrSegmentVirtAddr loSeg + E.phdrMemSize loSeg)
+               , let hiAddr = E.phdrSegmentVirtAddr hiSeg
+               , let loAddr =
+                       alignValue
+                         (E.phdrSegmentVirtAddr loSeg + E.phdrMemSize loSeg)
+                         pageAlignment
+               , requiredSize < (hiAddr - loAddr)
                ]
 
   case ranges of -- TODO(lb)
@@ -576,9 +582,10 @@ choosePHDRSegmentAddress elf = do
   -- NB: We could do this in linear time since this list is ordered by start
   -- address, but that seems like a pain and there probably aren't many segments
   -- at all.
-  let deltaFromOptimal addr = abs (addr - projectedOffset)
+  let E.FileOffset projectedOffset = E.phdrFileStart fakePhdrSegment
+  let deltaFromOptimal addr = abs (addr - fromIntegral projectedOffset)
   let closest =
-        minimumBy (comparing (\(lo, hi) -> min (deltaFromOptimal lo) (deltaFromOptimal hi)))
+        L.minimumBy (O.comparing (\(lo, hi) -> min (deltaFromOptimal lo) (deltaFromOptimal hi))) ranges
 
   -- TODO(lb): What about addresses before the first segment? After the last?
   -- TODO(lb): How to make sure PHDR doesn't collide with the heap?
