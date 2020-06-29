@@ -566,9 +566,22 @@ choosePHDRSegmentAddress elf = do
                       E.phdrSegmentVirtAddr loSeg + E.phdrMemSize loSeg)
                ]
 
-  -- The optimal virtual address is the offset of the program header segment in
-  -- the resulting file.
+  case ranges of -- TODO(lb)
+    [] -> fail "oops"
+    _ -> pure ()
 
+  -- Look for the range that's closest to the optimal virtual address, i.e. the
+  -- file offset of the fake PHDR segment.
+  --
+  -- NB: We could do this in linear time since this list is ordered by start
+  -- address, but that seems like a pain and there probably aren't many segments
+  -- at all.
+  let deltaFromOptimal addr = abs (addr - projectedOffset)
+  let closest =
+        minimumBy (comparing (\(lo, hi) -> min (deltaFromOptimal lo) (deltaFromOptimal hi)))
+
+  -- TODO(lb): What about addresses before the first segment? After the last?
+  -- TODO(lb): How to make sure PHDR doesn't collide with the heap?
   _
 
 -- | Count the number of program headers (i.e., entries in the PHDR table)
