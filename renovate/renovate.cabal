@@ -107,7 +107,9 @@ test-suite renovate-tests
   hs-source-dirs: tests
   main-is: Main.hs
   build-depends: base,
+                 elf-edit,
                  tasty,
+                 tasty-hunit,
                  tasty-quickcheck,
                  QuickCheck,
                  renovate

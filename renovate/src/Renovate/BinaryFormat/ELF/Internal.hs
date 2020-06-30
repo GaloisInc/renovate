@@ -1,4 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Renovate.BinaryFormat.ELF.Internal
   ( findSpaceForPHDRs
@@ -24,16 +26,20 @@ data LoadSegmentInfo w =
     , pMemSz :: E.ElfWordType w
     }
 
+deriving instance Eq (E.ElfWordType w) => Eq (LoadSegmentInfo w)
+deriving instance Ord (E.ElfWordType w) => Ord (LoadSegmentInfo w)
+deriving instance Show (E.ElfWordType w) => Show (LoadSegmentInfo w)
+
 makeLoadSegmentInfo :: E.Phdr w -> Maybe (LoadSegmentInfo w)
 makeLoadSegmentInfo phdr =
-  case E.phdrSegmentType phdr of
-    E.PT_PHDR -> Just $ LoadSegmentInfo { pOffset =
-                                            let E.FileOffset off = E.phdrFileStart phdr
-                                            in off
-                                        , pVAddr = E.phdrSegmentVirtAddr phdr
-                                        , pMemSz = E.phdrMemSize phdr
-                                        }
-    _ -> Nothing
+  if E.phdrSegmentType phdr /= E.PT_LOAD
+  then Nothing
+  else Just $ LoadSegmentInfo { pOffset =
+                                  let E.FileOffset off = E.phdrFileStart phdr
+                                  in off
+                              , pVAddr = E.phdrSegmentVirtAddr phdr
+                              , pMemSz = E.phdrMemSize phdr
+                              }
 
 -- | Find a spot in the program's virtual address space for the new PHDR segment
 --

@@ -539,8 +539,6 @@ choosePHDRSegmentAddress ::
   E.Elf w ->
   ElfRewriter lm arch (E.ElfWordType w)
 choosePHDRSegmentAddress _proxy elf = do
-  -- let phdrs = L.sortBy (O.comparing E.phdrSegmentVirtAddr)
-  --                      (E.allPhdrs (E.elfLayout elf))
   let phdrs = E.allPhdrs (E.elfLayout elf)
 
   -- To figure out where to put this new segment, we'll need to know its offset
@@ -557,11 +555,13 @@ choosePHDRSegmentAddress _proxy elf = do
   let requiredSize = E.phdrMemSize fakePhdrSegment
   let E.FileOffset projectedOffset = E.phdrFileStart fakePhdrSegment
 
-  case NEL.nonEmpty (mapMaybe makeLoadSegmentInfo phdrs) of
-    Nothing -> fail "TODO(lb)"
+  let segInfos = mapMaybe makeLoadSegmentInfo phdrs
+  case NEL.nonEmpty segInfos of
+    Nothing -> fail (unlines ("Internal error: No LOAD segments?" : map show phdrs))
     Just segmentInfos ->
       case findSpaceForPHDRs segmentInfos projectedOffset requiredSize of
-        Nothing -> fail "TODO(lb)"
+        Nothing -> fail $ unlines $
+          "Internal error: Unable to find space for PHDRs" : map show phdrs
         Just addr -> pure addr
 
 -- | Count the number of program headers (i.e., entries in the PHDR table)
