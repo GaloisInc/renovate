@@ -16,6 +16,7 @@ module Renovate.BinaryFormat.ELF.Common
   , findTextSections
   , findTextSection
   , TextSectionIssue
+  , pageAlignment
   , newTextAlign
   ) where
 
@@ -76,10 +77,14 @@ findTextSection e = do
     [] -> C.throwM NoTextSectionFound
     sections -> C.throwM (MultipleTextSectionsFound (length sections))
 
+-- | The system page alignment (assuming 4k pages)
+pageAlignment :: Word64
+pageAlignment = 0x1000
+
 -- | The alignment of the new text segment
 --
 -- We could just copy the alignment from the old one, but the alignment on x86
 -- is very high, which would waste a lot of space.  It seems like setting it
 -- lower is safe...
 newTextAlign :: Word64
-newTextAlign = 0x1000
+newTextAlign = pageAlignment

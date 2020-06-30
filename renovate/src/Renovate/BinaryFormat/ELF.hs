@@ -118,11 +118,6 @@ import qualified Renovate.Redirect.LayoutBlocks.Types as RT
 import qualified Renovate.Redirect.Symbolize as RS
 import qualified Renovate.Rewrite as RW
 
--- | The system page alignment (assuming 4k pages)
-pageAlignment :: Word32
-pageAlignment = 0x1000
-
-
 -- | For a given 'E.Elf' file, select the provided configuration that applies to it
 --
 -- This function examines the metadata of the given 'E.Elf' to determine which
@@ -506,7 +501,7 @@ nullifyPhdr s = pure $ case E.elfSegmentType s of
   E.PT_PHDR -> s { E.elfSegmentType = E.PT_NULL }
   _ -> s
 
--- | The (base) virtual address to lay out the PHDR table at
+-- | Choose the (base) virtual address to lay out the PHDR table at
 --
 -- When loading an ELF binary, the Linux kernel performs a calculation of the
 -- virtual address of the program header table (@AT_PHDR@), and places the
@@ -535,7 +530,7 @@ nullifyPhdr s = pure $ case E.elfSegmentType s of
 -- This function assumes:
 --
 -- 1. There are no segments whose images overlap in the virtual address space
--- 2. There is at least one segment
+-- 2. There is at least one LOAD segment
 -- 3. The size and file offset of the program header segment don't depend on
 --    the virtual address chosen
 choosePHDRSegmentAddress ::
@@ -544,9 +539,9 @@ choosePHDRSegmentAddress ::
   E.Elf w ->
   ElfRewriter lm arch (E.ElfWordType w)
 choosePHDRSegmentAddress _proxy elf = do
-  let phdrs = L.sortBy (O.comparing E.phdrSegmentVirtAddr)
-                       (E.allPhdrs (E.elfLayout elf))
-  assertM (length phdrs > 0)
+  -- let phdrs = L.sortBy (O.comparing E.phdrSegmentVirtAddr)
+  --                      (E.allPhdrs (E.elfLayout elf))
+  let phdrs = E.allPhdrs (E.elfLayout elf)
 
   -- To figure out where to put this new segment, we'll need to know its offset
   -- and how big it is, so we first append it at an arbitrary address and get
@@ -563,7 +558,7 @@ choosePHDRSegmentAddress _proxy elf = do
   let E.FileOffset projectedOffset = E.phdrFileStart fakePhdrSegment
 
   case NEL.nonEmpty (mapMaybe makeLoadSegmentInfo phdrs) of
-    Nothing -> fail "Impossible: No LOAD segments?"
+    Nothing -> fail "TODO(lb)"
     Just segmentInfos ->
       case findSpaceForPHDRs segmentInfos projectedOffset requiredSize of
         Left () -> fail "TODO(lb)"
