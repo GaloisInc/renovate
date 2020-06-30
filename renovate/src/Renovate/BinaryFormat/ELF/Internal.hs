@@ -40,12 +40,12 @@ makeLoadSegmentInfo phdr =
 -- This is an implementation of the core of 'choosePHDRSegmentAddress', see the
 -- comment there for more detail.
 --
--- The address of the PHDR table must be >= its offset in the file (the kernel
--- doesn't check and does an invalid subtraction otherwise).
---
 -- This function assumes:
 --
--- 1. There are no segments whose images overlap in the virtual address space
+-- * There are no segments whose images overlap in the virtual address space
+--
+-- It guarantees that the address it returns is greater than or equal to the
+-- given offset (see commentary in "Renovate.BinaryFormat.ELF").
 findSpaceForPHDRs ::
   (Num (E.ElfWordType w), Ord (E.ElfWordType w), Integral (E.ElfWordType w)) =>
   NEL.NonEmpty (LoadSegmentInfo w) {-^ Info about other LOAD segments -} ->
@@ -91,21 +91,9 @@ findSpaceForPHDRs segInfos phdrOffset phdrSize =
   in
      if length validCandidates == 0
      then Nothing
-     else 
+     else
        let best = L.minimumBy (O.comparing (\addr -> abs (addr - phdrOffset))) validCandidates
        in if minimum (fmap (\segInfo -> abs (pVAddr segInfo - pOffset segInfo)) segInfos) <
                best - phdrOffset
           then Nothing
           else Just best
-
-  -- Now, find any addresses that are between existing segments, have enough
-  -- space for the new segment, and are aligned properly.
-  -- let ranges = [ (loAddr, hiAddr)
-  --              | (loSeg, hiSeg) <- zip phdrs (drop 1 phdrs)
-  --              , let hiAddr = E.phdrSegmentVirtAddr hiSeg
-  --              , let loAddr =
-  --                      alignValue
-  --                        (E.phdrSegmentVirtAddr loSeg + E.phdrMemSize loSeg)
-  --                        (fromIntegral pageAlignment)
-  --              , requiredSize < (hiAddr - loAddr)
-  --              ]
