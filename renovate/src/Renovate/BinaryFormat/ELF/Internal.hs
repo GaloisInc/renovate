@@ -1,3 +1,12 @@
+{-
+Module           : Renovate.BinaryFormat.ELF.Internal
+Description      : Internal modules, exposed for testing only. Do not import!
+Copyright        : (c) Galois, Inc 2020
+License          : BSD3
+Maintainer       : Langston Barrett <langston@galois.com>
+Stability        : provisional
+-}
+
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
