@@ -17,6 +17,7 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Renovate
+                       Renovate.BinaryFormat.ELF.Common.Internal
   other-modules:
                        Renovate.Arch
                        Renovate.BasicBlock.Assemble
@@ -97,3 +98,15 @@ executable run-discovery
                        macaw-x86,
                        parameterized-utils,
                        semmc-ppc
+
+test-suite renovate-tests
+  default-language: Haskell2010
+  type: exitcode-stdio-1.0
+  ghc-options: -Wall -rtsopts -threaded
+  hs-source-dirs: tests
+  main-is: Main.hs
+  build-depends: base,
+                 tasty,
+                 tasty-quickcheck,
+                 QuickCheck,
+                 renovate

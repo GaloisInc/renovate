@@ -10,7 +10,7 @@ Stability        : provisional
 {-# LANGUAGE FlexibleContexts #-}
 
 module Renovate.BinaryFormat.ELF.Common
-  ( alignValue
+  ( module Renovate.BinaryFormat.ELF.Common.Internal
   , allocatedVAddrs
   , allocatedVAddrsM
   , findTextSections
@@ -29,15 +29,7 @@ import           Data.Word (Word64)
 
 import qualified Data.ElfEdit as E
 
--- | Align a value
---
--- @alignValue v alignment@ returns the value @v'@ greater than or equal to @v@
--- such that @v' % align == 0@.
---
--- For an alignment of zero or one, return @v@.
-alignValue :: (Integral w) => w -> w -> w
-alignValue v 0 = v
-alignValue v alignment = v + ((alignment - (v `mod` alignment)) `mod` alignment)
+import           Renovate.BinaryFormat.ELF.Common.Internal
 
 -- | Extract all the segments' virtual addresses (keys) and their sizes
 -- (values). If we don't know the size of a segment yet because it is going to
