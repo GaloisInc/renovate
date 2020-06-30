@@ -17,6 +17,7 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Renovate
+                       Renovate.BinaryFormat.ELF.Internal
                        Renovate.BinaryFormat.ELF.Common.Internal
   other-modules:
                        Renovate.Arch

@@ -78,7 +78,7 @@ import qualified Data.Foldable as F
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
-import           Data.Maybe ( fromMaybe, maybeToList, listToMaybe, isJust )
+import           Data.Maybe ( fromMaybe, maybeToList, listToMaybe, mapMaybe, isJust )
 import           Data.Monoid
 import qualified Data.Ord as O
 import           Data.Proxy (Proxy(Proxy))
@@ -107,6 +107,7 @@ import qualified Renovate.BasicBlock as B
 import qualified Renovate.BasicBlock.Assemble as BA
 import           Renovate.BinaryFormat.ELF.BSS ( expandBSS )
 import           Renovate.BinaryFormat.ELF.Common
+import           Renovate.BinaryFormat.ELF.Internal
 import           Renovate.BinaryFormat.ELF.Rewriter as Rewriter
 import           Renovate.Config
 import qualified Renovate.Diagnostic as RD
@@ -323,6 +324,8 @@ sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
 -- 4) Append a fresh PHDRs table at the very end *but* with segment index 0 (with the other segment
 --    indexes suitably modified), which makes it the first loadable segment.  We assign a very high
 --    address to the PHDRs segment so that it will always be greater than the file offset.
+--
+-- TODO(lb): Update the above comment
 --
 -- TODO:
 --  * Handle binaries that already contain a separate PHDR segment (do we need
@@ -544,52 +547,27 @@ choosePHDRSegmentAddress _proxy elf = do
   let phdrs = L.sortBy (O.comparing E.phdrSegmentVirtAddr)
                        (E.allPhdrs (E.elfLayout elf))
   assertM (length phdrs > 0)
-  let minGap = minimum $
-        map (\phdr -> E.phdrSegmentVirtAddr phdr - E.phdrFileStart phdr) phdrs
 
   -- To figure out where to put this new segment, we'll need to know its offset
   -- and how big it is, so we first append it at an arbitrary address and get
   -- those values.
-  let fakePhdrSegment = phdrSegment (nextSegmentIndex elf) 0x900000
-  ((), fakeELF) <- appendSegment fakePhdrSegment elf
+  let fakePhdrSeg = phdrSegment (nextSegmentIndex elf) 0x900000
+  ((), fakeELF) <- appendSegment fakePhdrSeg elf
   let fakePhdrs = E.allPhdrs (E.elfLayout fakeELF)
   fakePhdrSegment <-
     case filter ((== E.PT_PHDR) . E.phdrSegmentType) fakePhdrs of
       [seg] -> pure seg
-      phdrs ->
-        fail $ "Internal error: Wrong number of PT_PHDR segments: " ++ show phdrs
+      phdrs' ->
+        fail $ "Internal error: Wrong number of PT_PHDR segments: " ++ show phdrs'
   let requiredSize = E.phdrMemSize fakePhdrSegment
-
-  -- Now, find any addresses that are between existing segments, have enough
-  -- space for the new segment, and are aligned properly.
-  let ranges = [ (loAddr, hiAddr)
-               | (loSeg, hiSeg) <- zip phdrs (drop 1 phdrs)
-               , let hiAddr = E.phdrSegmentVirtAddr hiSeg
-               , let loAddr =
-                       alignValue
-                         (E.phdrSegmentVirtAddr loSeg + E.phdrMemSize loSeg)
-                         pageAlignment
-               , requiredSize < (hiAddr - loAddr)
-               ]
-
-  case ranges of -- TODO(lb)
-    [] -> fail "oops"
-    _ -> pure ()
-
-  -- Look for the range that's closest to the optimal virtual address, i.e. the
-  -- file offset of the fake PHDR segment.
-  --
-  -- NB: We could do this in linear time since this list is ordered by start
-  -- address, but that seems like a pain and there probably aren't many segments
-  -- at all.
   let E.FileOffset projectedOffset = E.phdrFileStart fakePhdrSegment
-  let deltaFromOptimal addr = abs (addr - fromIntegral projectedOffset)
-  let closest =
-        L.minimumBy (O.comparing (\(lo, hi) -> min (deltaFromOptimal lo) (deltaFromOptimal hi))) ranges
 
-  -- TODO(lb): What about addresses before the first segment? After the last?
-  -- TODO(lb): How to make sure PHDR doesn't collide with the heap?
-  _
+  case NEL.nonEmpty (mapMaybe makeLoadSegmentInfo phdrs) of
+    Nothing -> fail "Impossible: No LOAD segments?"
+    Just segmentInfos ->
+      case findSpaceForPHDRs segmentInfos projectedOffset requiredSize of
+        Left () -> fail "TODO(lb)"
+        Right addr -> pure addr
 
 -- | Count the number of program headers (i.e., entries in the PHDR table)
 --
