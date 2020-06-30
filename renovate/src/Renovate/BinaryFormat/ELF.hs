@@ -85,7 +85,7 @@ import           Data.Proxy (Proxy(Proxy))
 import qualified Data.Sequence as Seq
 import           Data.Typeable ( Typeable )
 import qualified Data.Vector as V
-import           Data.Word ( Word16, Word32 )
+import           Data.Word ( Word16 )
 import           GHC.TypeLits
 import           Text.Printf ( printf )
 
@@ -561,8 +561,8 @@ choosePHDRSegmentAddress _proxy elf = do
     Nothing -> fail "TODO(lb)"
     Just segmentInfos ->
       case findSpaceForPHDRs segmentInfos projectedOffset requiredSize of
-        Left () -> fail "TODO(lb)"
-        Right addr -> pure addr
+        Nothing -> fail "TODO(lb)"
+        Just addr -> pure addr
 
 -- | Count the number of program headers (i.e., entries in the PHDR table)
 --
