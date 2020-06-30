@@ -76,12 +76,20 @@ findSpaceForPHDRs segInfos phdrOffset phdrSize =
       --
       -- 1. before the first segment,
       -- 2. after the last segment, or
-      -- 3. between two segments
+      -- 3. between two segments,
       beforeFirst =
         if pVAddr firstSegment > phdrSize + pgAlign
         then Just $ alignValueDown (pVAddr firstSegment - phdrSize - 1) pgAlign
         else Nothing
-      afterLast = alignValue (pVAddr lastSegment + pMemSz lastSegment + 1) pgAlign
+      afterLast = Maybe.catMaybes
+        [ -- Immediately after
+          Just $ alignValue (pVAddr lastSegment + pMemSz lastSegment + 1) pgAlign
+        , -- Possibly much further after, if the provided PHDR segment offset is
+          -- higher than the range covered by the last segment.
+          if phdrOffset > pVAddr lastSegment + pMemSz lastSegment
+          then Just $ alignValue phdrOffset pgAlign
+          else Nothing
+        ]
       -- We don't have to check every address between two segments, just the
       -- maximal and minimal ones.
       between =
@@ -101,8 +109,8 @@ findSpaceForPHDRs segInfos phdrOffset phdrSize =
                     ]
                   ]
 
-      rawCandidates = afterLast : (Maybe.maybeToList beforeFirst ++ between)
-      validCandidates = filter (> phdrOffset) rawCandidates
+      rawCandidates = Maybe.maybeToList beforeFirst ++ between ++ afterLast
+      validCandidates = filter (>= phdrOffset) rawCandidates
   in
      if length validCandidates == 0
      then Nothing

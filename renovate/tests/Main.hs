@@ -73,5 +73,27 @@ findSpaceForPHDRsTests =
                         , ELF.pMemSz = someELFWord
                         }
           in ELF.findSpaceForPHDRs (info1 NEL.:| [info2]) someELFWord someELFWord
+    -- Values in the following test case are taken from a real binary
+    , T.testCase "After all other segments (high offset)" $
+        -- Type           Offset   VirtAddr   PhysAddr   FileSiz MemSiz  Flg Align
+        -- LOAD           0x000000 0x00010000 0x00010000 0x65de8 0x65de8 R E 0x10000
+        -- LOAD           0x066b7c 0x00086b7c 0x00086b7c 0x01364 0x02374 RW  0x10000
+        let offset = 0xA3000
+        in
+          Just offset T.@=?
+            let info1 :: ELF.LoadSegmentInfo 64
+                info1 = ELF.LoadSegmentInfo
+                          { ELF.pOffset = 0x0
+                          , ELF.pVAddr = 0x10000
+                          , ELF.pMemSz = 0x65de8
+                          }
+                info2 :: ELF.LoadSegmentInfo 64
+                info2 = ELF.LoadSegmentInfo
+                          { ELF.pOffset = 0x66b7c
+                          , ELF.pVAddr = 0x86b7c
+                          , ELF.pMemSz = 0x02374
+                          }
+            in ELF.findSpaceForPHDRs (info1 NEL.:| [info2]) offset 0x160
     ]
   where someELFWord = 0x100000
+

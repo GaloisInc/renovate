@@ -561,7 +561,10 @@ choosePHDRSegmentAddress _proxy elf = do
     Just segmentInfos ->
       case findSpaceForPHDRs segmentInfos projectedOffset requiredSize of
         Nothing -> fail $ unlines $
-          "Internal error: Unable to find space for PHDRs" : map show phdrs
+          [ "Internal error: Unable to find space for PHDR segment"
+          , "Offset of PHDR segment: " ++ show projectedOffset
+          , "Size of PHDR segment: " ++ show requiredSize
+          ] ++ map show phdrs
         Just addr -> pure addr
 
 -- | Count the number of program headers (i.e., entries in the PHDR table)
