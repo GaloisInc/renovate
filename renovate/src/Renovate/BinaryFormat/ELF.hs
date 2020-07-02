@@ -487,6 +487,41 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments nullifyPhdr e)
   modifyCurrentELF (appendSegment newSegment)
 
+  -- Linux calculates the program break based on the virtual address and size of
+  -- the LOAD segment with the highest virtual address, whereas QEMU calculates
+  -- it based on the virtual address and size of the *writable* LOAD segment with
+  -- the highest virtual address. Since our PHDR segment might have a high
+  -- virtual address, we have to add a writable load segment after it, so our
+  -- programs don't segfault inside QEMU.
+  --
+  -- https://bugs.launchpad.net/qemu/+bug/1886097
+
+  -- TODO(lb): Deduplicate!
+  phdrActualSize <-
+    withCurrentELF $ \elf ->
+      E.phdrMemSize <$>
+        case filter ((== E.PT_PHDR) . E.phdrSegmentType) (E.allPhdrs (E.elfLayout elf)) of
+          [seg] -> pure seg
+          phdrs' ->
+            fail $ "Internal error: Wrong number of PT_PHDR segments: " ++ show phdrs'
+
+  nextIdx <- withCurrentELF (pure . nextSegmentIndex)
+  modifyCurrentELF $ appendSegment $
+    let alignedAddr =
+          alignValue
+            (E.elfSegmentVirtAddr newSegment + phdrActualSize)
+            (fromIntegral pageAlignment)
+    in E.ElfSegment
+         { E.elfSegmentType = E.PT_LOAD
+         , E.elfSegmentFlags = E.pf_w
+         , E.elfSegmentIndex = nextIdx
+         , E.elfSegmentVirtAddr = alignedAddr
+         , E.elfSegmentPhysAddr = alignedAddr
+         , E.elfSegmentAlign = fromIntegral pageAlignment
+         , E.elfSegmentMemSize = E.ElfRelativeSize 0
+         , E.elfSegmentData = Seq.singleton (E.ElfDataRaw "")
+         }
+
   return analysisResult
 
 filterSegments :: Monad f => (E.ElfSegment w -> Bool) -> E.Elf w -> f [E.ElfSegment w]
