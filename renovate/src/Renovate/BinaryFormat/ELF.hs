@@ -576,10 +576,13 @@ choosePHDRSegmentAddress ::
 choosePHDRSegmentAddress _proxy elf = do
   let phdrs = E.allPhdrs (E.elfLayout elf)
 
+  -- A high (hopefully unused), page-aligned address
+  let defaultAddress = 0x900000
+
   -- To figure out where to put this new segment, we'll need to know its offset
   -- and how big it is, so we first append it at an arbitrary address and get
   -- those values.
-  let fakePhdrSeg = phdrSegment (nextSegmentIndex elf) 0x900000
+  let fakePhdrSeg = phdrSegment (nextSegmentIndex elf) defaultAddress
   ((), fakeELF) <- appendSegment fakePhdrSeg elf
   let fakePhdrs = E.allPhdrs (E.elfLayout fakeELF)
   fakePhdrSegment <-
@@ -595,11 +598,15 @@ choosePHDRSegmentAddress _proxy elf = do
     Nothing -> fail (unlines ("Internal error: No LOAD segments?" : map show phdrs))
     Just segmentInfos ->
       case findSpaceForPHDRs segmentInfos projectedOffset requiredSize of
-        Nothing -> fail $ unlines $
-          [ "Internal error: Unable to find space for PHDR segment"
-          , "Offset of PHDR segment: " ++ show projectedOffset
-          , "Size of PHDR segment: " ++ show requiredSize
-          ] ++ map show phdrs
+        Nothing ->
+          -- This is fine in practice if there's no thread-local storage.
+          if null $ filter ((== E.PT_TLS) . E.phdrSegmentType) phdrs
+          then pure defaultAddress
+          else fail $ unlines $
+                 [ "Internal error: Unable to find space for PHDR segment"
+                 , "Offset of PHDR segment: " ++ show projectedOffset
+                 , "Size of PHDR segment: " ++ show requiredSize
+                 ] ++ map show phdrs
         Just addr -> pure addr
 
 -- | Count the number of program headers (i.e., entries in the PHDR table)

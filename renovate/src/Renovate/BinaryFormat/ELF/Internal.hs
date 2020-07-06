@@ -116,7 +116,7 @@ findSpaceForPHDRs segInfos phdrOffset phdrSize =
      then Nothing
      else
        let best = L.minimumBy (O.comparing (\addr -> abs (addr - phdrOffset))) validCandidates
-       in if minimum (fmap (\segInfo -> abs (pVAddr segInfo - pOffset segInfo)) segInfos) <
-               best - phdrOffset
+       in if let m = minimum (fmap (\segInfo -> abs (pVAddr segInfo - pOffset segInfo)) segInfos)
+             in m < abs (best - phdrOffset)
           then Nothing
           else Just best
