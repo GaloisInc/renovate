@@ -505,7 +505,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
           phdrs' ->
             fail $ "Internal error: Wrong number of PT_PHDR segments: " ++ show phdrs'
 
-  nextIdx <- withCurrentELF (pure . nextSegmentIndex)
+  nextIdx <- withCurrentELF (pure . (+1) . nextSegmentIndex)
   modifyCurrentELF $ appendSegment $
     let alignedAddr =
           alignValue
