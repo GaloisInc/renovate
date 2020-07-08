@@ -517,7 +517,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
          , E.elfSegmentIndex = nextIdx
          , E.elfSegmentVirtAddr = alignedAddr
          , E.elfSegmentPhysAddr = alignedAddr
-         , E.elfSegmentAlign = fromIntegral pageAlignment
+         , E.elfSegmentAlign = 1
          , E.elfSegmentMemSize = E.ElfRelativeSize 0
          , E.elfSegmentData = Seq.singleton (E.ElfDataRaw "")
          }
