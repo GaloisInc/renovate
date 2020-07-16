@@ -60,7 +60,7 @@ makeLoadSegmentInfo phdr =
 -- * There are no segments whose images overlap in the virtual address space
 --
 -- It guarantees that the address it returns is greater than or equal to the
--- given offset (see commentary in "Renovate.BinaryFormat.ELF").
+-- given offset (see commentary on 'doRewrite' in "Renovate.BinaryFormat.ELF").
 findSpaceForPHDRs ::
   (Num (E.ElfWordType w), Ord (E.ElfWordType w), Integral (E.ElfWordType w)) =>
   NEL.NonEmpty (LoadSegmentInfo w) {-^ Info about other LOAD segments -} ->

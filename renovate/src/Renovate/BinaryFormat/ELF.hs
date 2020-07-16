@@ -312,15 +312,18 @@ sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
 -- * The address of the PHDR table must be >= its offset in the file (the kernel
 --   doesn't check and does an invalid subtraction otherwise)
 --
+-- In addition to the above, a QEMU bug adds some finicky additional constraints
+-- on the virtual address of the PHDR segment (documented in the commend on
+-- 'choosePHDRSegmentAddress'). A separate QEMU bug requires that the last
+-- segment in the program's virtual address space is writable.
+--
 -- The strategy we choose is to:
 -- 1) Wipe out the original PHDRs table (along with all of the other dynamically-sized data)
 -- 2) Append the new text segment (with the .extratext section) after all of the existing segments
 -- 3) Append new copies of all of the dynamically-sized sections (including a new symbol table)
 -- 4) Append a fresh PHDRs table at the very end *but* with segment index 0 (with the other segment
---    indexes suitably modified), which makes it the first loadable segment.  We assign a very high
---    address to the PHDRs segment so that it will always be greater than the file offset.
---
--- TODO(lb): Update the above comment
+--    indexes suitably modified), which makes it the first loadable segment.
+-- 5) Append an empty, writable, loadable segment at an address just after the new PHDRs.
 --
 -- TODO:
 --  * Handle binaries that already contain a separate PHDR segment (do we need
@@ -457,18 +460,23 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- present, that must come first.
 
   let isEXIDX seg = E.elfSegmentType seg == E.PT_ARM_EXIDX
-  exidxs <- withCurrentELF (filterSegments isEXIDX)
+  exidxs <- withCurrentELF (pure . filter isEXIDX . E.elfSegments)
   when (length exidxs > 1) $
     fail $ unwords $
-      [ "Found several ARM_EXIDX segments, at the following indices:"
+      [ "Malformed input:"
+      , "Found several ARM_EXIDX segments, at the following indices:"
       , show (map E.elfSegmentIndex exidxs)
       ]
   newSegmentIdx <-
     case E.elfSegmentIndex <$> listToMaybe exidxs of
       Nothing -> pure 0
       Just idx | idx == 0 -> pure 1
-      Just idx -> fail $
-        "Expected EXIDX segment to have index 0, but it had index " ++ show idx
+      Just idx ->
+        fail $ unwords $
+          [ "Malformed input: "
+          , "Expected EXIDX segment to have index 0, but it had index"
+          , show idx
+          ]
 
   phdrSegmentAddress <- withCurrentELF (choosePHDRSegmentAddress Proxy)
   let newSegment = phdrSegment newSegmentIdx phdrSegmentAddress
@@ -496,14 +504,17 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   --
   -- https://bugs.launchpad.net/qemu/+bug/1886097
 
-  -- TODO(lb): Deduplicate!
   phdrActualSize <-
     withCurrentELF $ \elf ->
       E.phdrMemSize <$>
         case filter ((== E.PT_PHDR) . E.phdrSegmentType) (E.allPhdrs (E.elfLayout elf)) of
           [seg] -> pure seg
           phdrs' ->
-            fail $ "Internal error: Wrong number of PT_PHDR segments: " ++ show phdrs'
+            fail $ unwords $
+              [ "Internal error:"
+              , "Wrong number of PT_PHDR segments:"
+              , show phdrs'
+              ]
 
   nextIdx <- withCurrentELF (pure . (+1) . nextSegmentIndex)
   modifyCurrentELF $ appendSegment $
@@ -523,13 +534,6 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
          }
 
   return analysisResult
-
-filterSegments :: Monad f => (E.ElfSegment w -> Bool) -> E.Elf w -> f [E.ElfSegment w]
-filterSegments predicate elf =
-  flip S.execStateT [] $ flip E.traverseElfSegments elf $ \seg -> do
-    when (predicate seg) $
-      S.modify (seg:)
-    pure seg
 
 nullifyPhdr :: Applicative f => E.ElfSegment w -> f (E.ElfSegment w)
 nullifyPhdr s = pure $ case E.elfSegmentType s of
@@ -593,6 +597,8 @@ choosePHDRSegmentAddress _proxy elf = do
   let requiredSize = E.phdrMemSize fakePhdrSegment
   let E.FileOffset projectedOffset = E.phdrFileStart fakePhdrSegment
 
+  -- Call out to 'findSpaceForPhdrs' to find a good address, fail if one can't
+  -- be found.
   let segInfos = mapMaybe makeLoadSegmentInfo phdrs
   case NEL.nonEmpty segInfos of
     Nothing -> fail (unlines ("Internal error: No LOAD segments?" : map show phdrs))

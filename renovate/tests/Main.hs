@@ -98,24 +98,41 @@ findSpaceForPHDRsTests =
     -- linked-list.noopt.nostdlib.aarch32.exe. Unfortunately, it is
     -- unsatisfiable because the .bss section has a HUGE buffer in it, which
     -- overlaps with where we want to put the new PHDRs.
-    , T.testCase "linked-list" $
+    , T.testCase "linked-list.noopt.nostdlib.aarch32.exe" $
         -- Type           Offset   VirtAddr   PhysAddr   FileSiz MemSiz   Flg Align
         -- LOAD           0x000000 0x00010000 0x00010000 0x0031c 0x0031c  R E 0x10000
         -- LOAD           0x00031c 0x0002031c 0x0002031c 0x00004 0x400008 RW  0x10000
-          Nothing T.@=?
-            let info1 :: ELF.LoadSegmentInfo 64
-                info1 = ELF.LoadSegmentInfo
-                          { ELF.pOffset = 0x0
-                          , ELF.pVAddr = 0x10000
-                          , ELF.pMemSz = 0x0031c
-                          }
-                info2 :: ELF.LoadSegmentInfo 64
-                info2 = ELF.LoadSegmentInfo
-                          { ELF.pOffset = 0x0031c
-                          , ELF.pVAddr = 0x2031c
-                          , ELF.pMemSz = 0x400008
-                          }
-            in ELF.findSpaceForPHDRs (info1 NEL.:| [info2]) 0x404000 0x100
+        Nothing T.@=?
+          let info1 :: ELF.LoadSegmentInfo 64
+              info1 = ELF.LoadSegmentInfo
+                        { ELF.pOffset = 0x0
+                        , ELF.pVAddr = 0x10000
+                        , ELF.pMemSz = 0x0031c
+                        }
+              info2 :: ELF.LoadSegmentInfo 64
+              info2 = ELF.LoadSegmentInfo
+                        { ELF.pOffset = 0x0031c
+                        , ELF.pVAddr = 0x2031c
+                        , ELF.pMemSz = 0x400008
+                        }
+          in ELF.findSpaceForPHDRs (info1 NEL.:| [info2]) 0x404000 0x100
+    , T.testCase "test-just-exit.nostdlib.ppc64.exe" $
+        -- LOAD 0x000000000 0x010000000 0x010000000 0x0000b2a11 0x0000b2a11  R E    0x10000
+        -- LOAD 0x0000b9c80 0x0100c9c80 0x0100c9c80 0x000008448 0x000009aa8  RW     0x10000
+        Just 0xffff000 T.@=?
+          let info1 :: ELF.LoadSegmentInfo 64
+              info1 = ELF.LoadSegmentInfo
+                        { ELF.pOffset = 0x0
+                        , ELF.pVAddr = 0x010000000
+                        , ELF.pMemSz = 0x0000b2a11
+                        }
+              info2 :: ELF.LoadSegmentInfo 64
+              info2 = ELF.LoadSegmentInfo
+                        { ELF.pOffset = 0x0000b9c80
+                        , ELF.pVAddr = 0x0100c9c80
+                        , ELF.pMemSz = 0x000009aa8
+                        }
+          in ELF.findSpaceForPHDRs (info1 NEL.:| [info2]) 0x09aa8 0x230
     ]
   where someELFWord = 0x100000
 
