@@ -42,6 +42,7 @@ library
                        Renovate.BinaryFormat.ELF
                        Renovate.BinaryFormat.ELF.Common
                        Renovate.BinaryFormat.ELF.BSS
+                       Renovate.BinaryFormat.ELF.Exceptions
                        Renovate.BinaryFormat.ELF.Rewriter
                        Renovate.BinaryFormat.ELF.Rewriter.Env
                        Renovate.ISA

@@ -31,6 +31,8 @@ module Renovate.BinaryFormat.ELF (
   RE.SectionInfo(..),
   reSegmentMaximumSize,
   reSegmentVirtualAddress,
+  ElfRewritingException(..),
+  printELFRewritingException,
   -- * Lenses
   riInitialBytes,
   riSmallBlockCount,
@@ -81,7 +83,6 @@ import qualified Data.Map as Map
 import           Data.Maybe ( fromMaybe, maybeToList, listToMaybe, mapMaybe, isJust )
 import           Data.Monoid
 import qualified Data.Ord as O
-import           Data.Proxy (Proxy(Proxy))
 import qualified Data.Sequence as Seq
 import           Data.Typeable ( Typeable )
 import qualified Data.Vector as V
@@ -107,6 +108,7 @@ import qualified Renovate.BasicBlock as B
 import qualified Renovate.BasicBlock.Assemble as BA
 import           Renovate.BinaryFormat.ELF.BSS ( expandBSS )
 import           Renovate.BinaryFormat.ELF.Common
+import           Renovate.BinaryFormat.ELF.Exceptions
 import           Renovate.BinaryFormat.ELF.Internal
 import           Renovate.BinaryFormat.ELF.Rewriter as Rewriter
 import           Renovate.Config
@@ -323,7 +325,8 @@ sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
 -- 3) Append new copies of all of the dynamically-sized sections (including a new symbol table)
 -- 4) Append a fresh PHDRs table at the very end *but* with segment index 0 (with the other segment
 --    indexes suitably modified), which makes it the first loadable segment.
--- 5) Append an empty, writable, loadable segment at an address just after the new PHDRs.
+-- 5) Append an empty, writable, loadable segment at an address just after the new PHDRs to work
+--    around a QEMU bug.
 --
 -- TODO:
 --  * Handle binaries that already contain a separate PHDR segment (do we need
@@ -462,24 +465,15 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   let isEXIDX seg = E.elfSegmentType seg == E.PT_ARM_EXIDX
   exidxs <- withCurrentELF (pure . filter isEXIDX . E.elfSegments)
   when (length exidxs > 1) $
-    fail $ unwords $
-      [ "Malformed input:"
-      , "Found several ARM_EXIDX segments, at the following indices:"
-      , show (map E.elfSegmentIndex exidxs)
-      ]
-  newSegmentIdx <-
+    P.throwM (TooManyEXIDXs (map E.elfSegmentIndex exidxs))
+  phdrSegmentIdx <-
     case E.elfSegmentIndex <$> listToMaybe exidxs of
       Nothing -> pure 0
       Just idx | idx == 0 -> pure 1
-      Just idx ->
-        fail $ unwords $
-          [ "Malformed input: "
-          , "Expected EXIDX segment to have index 0, but it had index"
-          , show idx
-          ]
+      Just idx -> P.throwM (WrongEXIDXIndex idx)
 
-  phdrSegmentAddress <- withCurrentELF (choosePHDRSegmentAddress Proxy)
-  let newSegment = phdrSegment newSegmentIdx phdrSegmentAddress
+  phdrSegmentAddress <- withCurrentELF choosePHDRSegmentAddress
+  let newSegment = phdrSegment phdrSegmentIdx phdrSegmentAddress
       newSegmentCount = E.elfSegmentIndex newSegment + 1
   -- Increment all of the segment indexes (other than EXIDX) so that we can
   -- reserve the appropriate segment index for our fresh PHDR segment that we
@@ -504,28 +498,20 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   --
   -- https://bugs.launchpad.net/qemu/+bug/1886097
 
-  phdrActualSize <-
-    withCurrentELF $ \elf ->
-      E.phdrMemSize <$>
-        case filter ((== E.PT_PHDR) . E.phdrSegmentType) (E.allPhdrs (E.elfLayout elf)) of
-          [seg] -> pure seg
-          phdrs' ->
-            fail $ unwords $
-              [ "Internal error:"
-              , "Wrong number of PT_PHDR segments:"
-              , show phdrs'
-              ]
+  phdrActualSize <- E.phdrMemSize <$> withCurrentELF getPHDR
 
-  nextIdx <- withCurrentELF (pure . (+1) . nextSegmentIndex)
+  lastWritableSegmentIdx <- withCurrentELF (pure . (+1) . nextSegmentIndex)
   modifyCurrentELF $ appendSegment $
     let alignedAddr =
           alignValue
+            -- Put this new segment immediately after the PHDRs in the virtual
+            -- address space
             (E.elfSegmentVirtAddr newSegment + phdrActualSize)
             (fromIntegral pageAlignment)
     in E.ElfSegment
          { E.elfSegmentType = E.PT_LOAD
          , E.elfSegmentFlags = E.pf_w
-         , E.elfSegmentIndex = nextIdx
+         , E.elfSegmentIndex = lastWritableSegmentIdx
          , E.elfSegmentVirtAddr = alignedAddr
          , E.elfSegmentPhysAddr = alignedAddr
          , E.elfSegmentAlign = 1
@@ -574,10 +560,9 @@ nullifyPhdr s = pure $ case E.elfSegmentType s of
 --    the virtual address chosen
 choosePHDRSegmentAddress ::
   (w ~ MM.ArchAddrWidth arch, E.ElfWidthConstraints w) =>
-  proxy arch ->
   E.Elf w ->
   ElfRewriter lm arch (E.ElfWordType w)
-choosePHDRSegmentAddress _proxy elf = do
+choosePHDRSegmentAddress elf = do
   let phdrs = E.allPhdrs (E.elfLayout elf)
 
   -- A high (hopefully unused), page-aligned address
@@ -587,13 +572,7 @@ choosePHDRSegmentAddress _proxy elf = do
   -- and how big it is, so we first append it at an arbitrary address and get
   -- those values.
   let fakePhdrSeg = phdrSegment (nextSegmentIndex elf) defaultAddress
-  ((), fakeELF) <- appendSegment fakePhdrSeg elf
-  let fakePhdrs = E.allPhdrs (E.elfLayout fakeELF)
-  fakePhdrSegment <-
-    case filter ((== E.PT_PHDR) . E.phdrSegmentType) fakePhdrs of
-      [seg] -> pure seg
-      phdrs' ->
-        fail $ "Internal error: Wrong number of PT_PHDR segments: " ++ show phdrs'
+  fakePhdrSegment <- segmentToPhdr elf fakePhdrSeg
   let requiredSize = E.phdrMemSize fakePhdrSegment
   let E.FileOffset projectedOffset = E.phdrFileStart fakePhdrSegment
 
@@ -605,15 +584,38 @@ choosePHDRSegmentAddress _proxy elf = do
     Just segmentInfos ->
       case findSpaceForPHDRs segmentInfos projectedOffset requiredSize of
         Nothing ->
-          -- This is fine in practice if there's no thread-local storage.
+          -- This is fine in practice if there's no thread-local storage,
+          -- because libc won't need to walk the program headers to initialize
+          -- thread-local storage.
           if null $ filter ((== E.PT_TLS) . E.phdrSegmentType) phdrs
           then pure defaultAddress
-          else fail $ unlines $
-                 [ "Internal error: Unable to find space for PHDR segment"
-                 , "Offset of PHDR segment: " ++ show projectedOffset
-                 , "Size of PHDR segment: " ++ show requiredSize
-                 ] ++ map show phdrs
+          else P.throwM $ NoSpaceForPHDRs
+                            (fromIntegral projectedOffset)
+                            (fromIntegral requiredSize)
         Just addr -> pure addr
+
+-- | Find the unique entry in the program header table with type @PT_PHDR@
+--
+-- If it's not unique, throw an exception
+getPHDR :: P.MonadThrow m => E.Elf w -> m (E.Phdr w)
+getPHDR elf =
+  case filter ((== E.PT_PHDR) . E.phdrSegmentType) (E.allPhdrs (E.elfLayout elf)) of
+    [seg] -> pure seg
+    phdrs' -> P.throwM (WrongNumberOfPHDRs (map E.phdrSegmentIndex phdrs'))
+
+-- | Append a segment to this ELF, perform the layout, and extract the resulting
+-- entry from the PHDR table, which includes the actual file offset and size.
+segmentToPhdr ::
+  (w ~ MM.ArchAddrWidth arch, E.ElfWidthConstraints w) =>
+  E.Elf w ->
+  E.ElfSegment w ->
+  ElfRewriter lm arch (E.Phdr w)
+segmentToPhdr elf seg = do
+  let idx = E.elfSegmentIndex seg
+  ((), elf') <- appendSegment seg elf
+  case filter ((== idx) . E.phdrSegmentIndex) (E.allPhdrs (E.elfLayout elf')) of
+    [phdr] -> pure phdr
+    phdrs' -> P.throwM (WrongNumberOfSegmentsWithIndex (length phdrs') idx)
 
 -- | Count the number of program headers (i.e., entries in the PHDR table)
 --
@@ -695,9 +697,9 @@ incrementSegmentNumber ::
   E.SegmentIndex ->
   E.ElfSegment w ->
   m (E.ElfSegment w)
-incrementSegmentNumber predicate n seg =
+incrementSegmentNumber incrementIf n seg =
   return $
-    if predicate seg
+    if incrementIf seg
     then seg { E.elfSegmentIndex = E.elfSegmentIndex seg + n }
     else seg
 

@@ -112,7 +112,7 @@ findSpaceForPHDRs segInfos phdrOffset phdrSize =
       rawCandidates = Maybe.maybeToList beforeFirst ++ between ++ afterLast
       validCandidates = filter (>= phdrOffset) rawCandidates
   in
-     if length validCandidates == 0
+     if null validCandidates
      then Nothing
      else
        let best = L.minimumBy (O.comparing (\addr -> abs (addr - phdrOffset))) validCandidates
