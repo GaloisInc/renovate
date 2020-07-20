@@ -47,12 +47,14 @@ The architecture-specific backends each expose *configurations*  that can be pas
 Status
 ======
 
-This codebase is a work in progress.  PowerPC (both 32 bit and 64 bit) and x86_64 support is reasonably robust.  Support for ARM (AArch32) is coming soon.
+This codebase is a work in progress.  PowerPC (both 32 bit and 64 bit) and x86_64 support is reasonably robust.  Support for ARM (AArch32) is experimental.
 
 Limitations
 -----------
 
 This library cannot guarantee that it can find all of the code in a program.  It will currently not allow basic blocks to be rewritten if they are part of a function that has not been completely discovered.  Common causes of missed code include unresolved indirect jumps within functions.
+
+This library produces binaries that trigger buggy code paths in older versions of QEMU user-mode emulation. The test suite uses QEMU 4.2, so anything more recent than that is probably a good choice.
 
 License
 =======
