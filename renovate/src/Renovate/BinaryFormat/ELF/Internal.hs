@@ -92,6 +92,18 @@ findSpaceForPHDRs segInfos phdrOffset phdrSize =
         ]
       -- We don't have to check every address between two segments, just the
       -- maximal and minimal ones.
+      --
+      -- In detail: For every pair (loSeg, hiSeg) of segments that are adjacent
+      -- in the virtual address space,
+      -- * Find the lowest aligned address after the end of loSeg. If this
+      --   address plus the size of the PHDRs is less than the address of hiSeg,
+      --   add it to the set of candidate addresses.
+      -- * Find the highest aligned address before the start of hiSeg minus the
+      --   size of the PHDRs. If this address is higher than the end of loSeg,
+      --   add it to the set of candidate addresses.
+      --
+      -- In a later step, we winnow down these candidates to find the optimal
+      -- address.
       between =
         let zipped = zip (NEL.toList sortedSegInfos)
                          (drop 1 (NEL.toList sortedSegInfos))
