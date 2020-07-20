@@ -313,7 +313,7 @@ sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
 --   doesn't check and does an invalid subtraction otherwise)
 --
 -- In addition to the above, a QEMU bug adds some finicky additional constraints
--- on the virtual address of the PHDR segment (documented in the commend on
+-- on the virtual address of the PHDR segment (documented in the comment on
 -- 'choosePHDRSegmentAddress'). A separate QEMU bug requires that the last
 -- segment in the program's virtual address space is writable.
 --
