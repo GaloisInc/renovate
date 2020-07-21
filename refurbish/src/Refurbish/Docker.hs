@@ -13,7 +13,7 @@ qemuRunnerName = "refurbish-qemu-runner"
 
 dockerFile :: String
 dockerFile =
-  unlines [ "FROM ubuntu:18.04"
+  unlines [ "FROM ubuntu:20.04"
           , "RUN apt update"
           , "RUN apt install -y qemu-user"
           , "WORKDIR /tmp"

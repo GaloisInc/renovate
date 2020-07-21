@@ -19,10 +19,7 @@ jobs:
       matrix:
         ghc: ['8.6.5', '8.8.3']
         cabal: ['3.2.0.0']
-        os: [ubuntu-latest, macOS-latest]
-        exclude:
-          - os: macOS-latest
-            ghc: 8.6.5
+        os: [ubuntu-latest]
 
     name: GHC ${{ matrix.ghc }} on ${{ matrix.os }} renovate
 

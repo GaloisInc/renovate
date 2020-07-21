@@ -31,6 +31,8 @@ module Renovate.BinaryFormat.ELF (
   RE.SectionInfo(..),
   reSegmentMaximumSize,
   reSegmentVirtualAddress,
+  ElfRewritingException(..),
+  printELFRewritingException,
   -- * Lenses
   riInitialBytes,
   riSmallBlockCount,
@@ -78,13 +80,13 @@ import qualified Data.Foldable as F
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Map as Map
-import           Data.Maybe ( fromMaybe, maybeToList, listToMaybe, isJust )
+import           Data.Maybe ( fromMaybe, maybeToList, listToMaybe, mapMaybe, isJust )
 import           Data.Monoid
 import qualified Data.Ord as O
 import qualified Data.Sequence as Seq
 import           Data.Typeable ( Typeable )
 import qualified Data.Vector as V
-import           Data.Word ( Word16, Word32 )
+import           Data.Word ( Word16 )
 import           GHC.TypeLits
 import           Text.Printf ( printf )
 
@@ -106,6 +108,8 @@ import qualified Renovate.BasicBlock as B
 import qualified Renovate.BasicBlock.Assemble as BA
 import           Renovate.BinaryFormat.ELF.BSS ( expandBSS )
 import           Renovate.BinaryFormat.ELF.Common
+import           Renovate.BinaryFormat.ELF.Exceptions
+import           Renovate.BinaryFormat.ELF.Internal
 import           Renovate.BinaryFormat.ELF.Rewriter as Rewriter
 import           Renovate.Config
 import qualified Renovate.Diagnostic as RD
@@ -115,11 +119,6 @@ import qualified Renovate.Redirect as RE
 import qualified Renovate.Redirect.LayoutBlocks.Types as RT
 import qualified Renovate.Redirect.Symbolize as RS
 import qualified Renovate.Rewrite as RW
-
--- | The system page alignment (assuming 4k pages)
-pageAlignment :: Word32
-pageAlignment = 0x1000
-
 
 -- | For a given 'E.Elf' file, select the provided configuration that applies to it
 --
@@ -315,13 +314,19 @@ sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
 -- * The address of the PHDR table must be >= its offset in the file (the kernel
 --   doesn't check and does an invalid subtraction otherwise)
 --
+-- In addition to the above, a QEMU bug adds some finicky additional constraints
+-- on the virtual address of the PHDR segment (documented in the comment on
+-- 'choosePHDRSegmentAddress'). A separate QEMU bug requires that the last
+-- segment in the program's virtual address space is writable.
+--
 -- The strategy we choose is to:
 -- 1) Wipe out the original PHDRs table (along with all of the other dynamically-sized data)
 -- 2) Append the new text segment (with the .extratext section) after all of the existing segments
 -- 3) Append new copies of all of the dynamically-sized sections (including a new symbol table)
 -- 4) Append a fresh PHDRs table at the very end *but* with segment index 0 (with the other segment
---    indexes suitably modified), which makes it the first loadable segment.  We assign a very high
---    address to the PHDRs segment so that it will always be greater than the file offset.
+--    indexes suitably modified), which makes it the first loadable segment.
+-- 5) Append an empty, writable, loadable segment at an address just after the new PHDRs to work
+--    around a QEMU bug.
 --
 -- TODO:
 --  * Handle binaries that already contain a separate PHDR segment (do we need
@@ -450,12 +455,30 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- Now overwrite the original code (in the .text segment) with the
   -- content computed by our transformation.
   modifyCurrentELF (overwriteTextSection overwrittenBytes)
-  let newSegment = phdrSegment phdrSegmentAddress
+
+  -- Add a PHDR segment which will hold the modified program header table.
+  --
+  -- We usually want this to be the first segment (have a segment index of 0)
+  -- (see comment on "phdrSegment"), except that on ARM, if an EXIDX segment is
+  -- present, that must come first.
+
+  let isEXIDX seg = E.elfSegmentType seg == E.PT_ARM_EXIDX
+  exidxs <- withCurrentELF (pure . filter isEXIDX . E.elfSegments)
+  when (length exidxs > 1) $
+    P.throwM (TooManyEXIDXs (map E.elfSegmentIndex exidxs))
+  phdrSegmentIdx <-
+    case E.elfSegmentIndex <$> listToMaybe exidxs of
+      Nothing -> pure 0
+      Just idx | idx == 0 -> pure 1
+      Just idx -> P.throwM (WrongEXIDXIndex idx)
+
+  phdrSegmentAddress <- withCurrentELF choosePHDRSegmentAddress
+  let newSegment = phdrSegment phdrSegmentIdx phdrSegmentAddress
       newSegmentCount = E.elfSegmentIndex newSegment + 1
-  -- Increment all of the segment indexes so that we can reserve the first
-  -- segment index (0) for our fresh PHDR segment that we want at the beginning
-  -- of the PHDR table (but not at the first offset)
-  modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments (incrementSegmentNumber newSegmentCount) e)
+  -- Increment all of the segment indexes (other than EXIDX) so that we can
+  -- reserve the appropriate segment index for our fresh PHDR segment that we
+  -- want at the beginning of the PHDR table (but not at the first offset)
+  modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments (incrementSegmentNumber (not . isEXIDX) newSegmentCount) e)
   -- Note: We have to update the GNU Stack and GnuRelroRegion segment numbers
   -- independently, as they are handled specially in elf-edit.
   modifyCurrentELF (\e -> ((),) <$> fixOtherSegmentNumbers newSegmentCount e)
@@ -465,6 +488,37 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- they're uninteresting.
   modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments nullifyPhdr e)
   modifyCurrentELF (appendSegment newSegment)
+
+  -- Linux calculates the program break based on the virtual address and size of
+  -- the LOAD segment with the highest virtual address, whereas QEMU calculates
+  -- it based on the virtual address and size of the *writable* LOAD segment with
+  -- the highest virtual address. Since our PHDR segment might have a high
+  -- virtual address, we have to add a writable load segment after it, so our
+  -- programs don't segfault inside QEMU.
+  --
+  -- https://bugs.launchpad.net/qemu/+bug/1886097
+
+  phdrActualSize <- E.phdrMemSize <$> withCurrentELF getPHDR
+
+  lastWritableSegmentIdx <- withCurrentELF (pure . (+1) . nextSegmentIndex)
+  modifyCurrentELF $ appendSegment $
+    let alignedAddr =
+          alignValue
+            -- Put this new segment immediately after the PHDRs in the virtual
+            -- address space
+            (E.elfSegmentVirtAddr newSegment + phdrActualSize)
+            (fromIntegral pageAlignment)
+    in E.ElfSegment
+         { E.elfSegmentType = E.PT_LOAD
+         , E.elfSegmentFlags = E.pf_w
+         , E.elfSegmentIndex = lastWritableSegmentIdx
+         , E.elfSegmentVirtAddr = alignedAddr
+         , E.elfSegmentPhysAddr = alignedAddr
+         , E.elfSegmentAlign = 1
+         , E.elfSegmentMemSize = E.ElfRelativeSize 0
+         , E.elfSegmentData = Seq.singleton (E.ElfDataRaw "")
+         }
+
   return analysisResult
 
 nullifyPhdr :: Applicative f => E.ElfSegment w -> f (E.ElfSegment w)
@@ -472,12 +526,96 @@ nullifyPhdr s = pure $ case E.elfSegmentType s of
   E.PT_PHDR -> s { E.elfSegmentType = E.PT_NULL }
   _ -> s
 
--- | The (base) virtual address to lay out the PHDR table at
+-- | Choose the (base) virtual address to lay out the PHDR table at
+--
+-- When loading an ELF binary, the Linux kernel performs a calculation of the
+-- virtual address of the program header table (@AT_PHDR@), and places the
+-- result in the aux vector. This value is used by e.g. glibc's thread-local
+-- storage initialization code. The address it calculates is
+--
+-- @AT_PHDR = (elf_ppnt->p_vaddr - elf_ppnt->p_offset) + exec->e_phoff@
+--
+-- where elf_ppnt is the first LOAD segment appearing in the program header
+-- table (see linux/fs/binfmt_elf.c). QEMU's user-mode emulation also
+-- calculates a value for @AT_PHDR@, but it does so differently. It uses
+--
+-- @AT_PHDR = min_i(phdr[i].p_vaddr - phdr[i].p_offset) + exec->e_phoff@
+--
+-- where @min_i@ is the minimum over indices @i@ of LOAD segments. We must
+-- make these values coincide, so we have to ensure that the virtual address
+-- of the new PHDR segment minus its offset must be the minimal difference
+-- between any LOAD segment's address and offset.
+--
+-- See the relevant QEMU bug report for additional details:
+-- https://bugs.launchpad.net/qemu/+bug/1885332
 --
 -- NOTE: We probably want to think more carefully about the alignment of this
 -- address.  Currently, we page align it.
-phdrSegmentAddress :: Num a => a
-phdrSegmentAddress = 0x900000
+--
+-- This function assumes:
+--
+-- 1. There are no segments whose images overlap in the virtual address space
+-- 2. There is at least one LOAD segment
+-- 3. The size and file offset of the program header segment don't depend on
+--    the virtual address chosen
+choosePHDRSegmentAddress ::
+  (w ~ MM.ArchAddrWidth arch, E.ElfWidthConstraints w) =>
+  E.Elf w ->
+  ElfRewriter lm arch (E.ElfWordType w)
+choosePHDRSegmentAddress elf = do
+  let phdrs = E.allPhdrs (E.elfLayout elf)
+
+  -- A high (hopefully unused), page-aligned address
+  let defaultAddress = 0x900000
+
+  -- To figure out where to put this new segment, we'll need to know its offset
+  -- and how big it is, so we first append it at an arbitrary address and get
+  -- those values.
+  let fakePhdrSeg = phdrSegment (nextSegmentIndex elf) defaultAddress
+  fakePhdrSegment <- segmentToPhdr elf fakePhdrSeg
+  let requiredSize = E.phdrMemSize fakePhdrSegment
+  let E.FileOffset projectedOffset = E.phdrFileStart fakePhdrSegment
+
+  -- Call out to 'findSpaceForPhdrs' to find a good address, fail if one can't
+  -- be found.
+  let segInfos = mapMaybe makeLoadSegmentInfo phdrs
+  case NEL.nonEmpty segInfos of
+    Nothing -> fail (unlines ("Internal error: No LOAD segments?" : map show phdrs))
+    Just segmentInfos ->
+      case findSpaceForPHDRs segmentInfos projectedOffset requiredSize of
+        Nothing ->
+          -- This is fine in practice if there's no thread-local storage,
+          -- because libc won't need to walk the program headers to initialize
+          -- thread-local storage.
+          if null $ filter ((== E.PT_TLS) . E.phdrSegmentType) phdrs
+          then pure defaultAddress
+          else P.throwM $ NoSpaceForPHDRs
+                            (fromIntegral projectedOffset)
+                            (fromIntegral requiredSize)
+        Just addr -> pure addr
+
+-- | Find the unique entry in the program header table with type @PT_PHDR@
+--
+-- If it's not unique, throw an exception
+getPHDR :: P.MonadThrow m => E.Elf w -> m (E.Phdr w)
+getPHDR elf =
+  case filter ((== E.PT_PHDR) . E.phdrSegmentType) (E.allPhdrs (E.elfLayout elf)) of
+    [seg] -> pure seg
+    phdrs' -> P.throwM (WrongNumberOfPHDRs (map E.phdrSegmentIndex phdrs'))
+
+-- | Append a segment to this ELF, perform the layout, and extract the resulting
+-- entry from the PHDR table, which includes the actual file offset and size.
+segmentToPhdr ::
+  (w ~ MM.ArchAddrWidth arch, E.ElfWidthConstraints w) =>
+  E.Elf w ->
+  E.ElfSegment w ->
+  ElfRewriter lm arch (E.Phdr w)
+segmentToPhdr elf seg = do
+  let idx = E.elfSegmentIndex seg
+  ((), elf') <- appendSegment seg elf
+  case filter ((== idx) . E.phdrSegmentIndex) (E.allPhdrs (E.elfLayout elf')) of
+    [phdr] -> pure phdr
+    phdrs' -> P.throwM (WrongNumberOfSegmentsWithIndex (length phdrs') idx)
 
 -- | Count the number of program headers (i.e., entries in the PHDR table)
 --
@@ -519,13 +657,17 @@ appendSegment seg e = do
 
 -- | Create a fresh segment containing only the PHDR table
 --
--- We choose 0 as the segment index, so ensure that we've already made space in
--- the segment index space for it (by e.g., incrementing all of the other
--- segment indexes).
+-- Requires that we've already made space in the segment index space (by e.g.,
+-- incrementing all of the other segment indexes past @idx@).
+--
+-- The spec says that if there's a PHDR segment, it must be before any loadable
+-- segment in the table, so loadable segments should all have indices greater
+-- than @idx@.
 phdrSegment :: (E.ElfWidthConstraints w)
-            => E.ElfWordType w
+            => Word16
+            -> E.ElfWordType w
             -> E.ElfSegment w
-phdrSegment addr =
+phdrSegment idx addr =
   let alignedAddr = alignValue addr (fromIntegral pageAlignment)
       containerSegment = E.ElfSegment
         -- Why not E.PT_NULL here? Answer: glibc really, *really* wants the program
@@ -535,7 +677,7 @@ phdrSegment addr =
         , E.elfSegmentFlags = E.pf_r
         -- Our caller expects the index of the container to be the
         -- largest index of any segment defined here.
-        , E.elfSegmentIndex = 1
+        , E.elfSegmentIndex = idx + 1
         , E.elfSegmentVirtAddr = alignedAddr
         , E.elfSegmentPhysAddr = alignedAddr
         , E.elfSegmentAlign = fromIntegral pageAlignment
@@ -544,14 +686,22 @@ phdrSegment addr =
         }
       containedSegment = containerSegment
         { E.elfSegmentType = E.PT_PHDR
-        -- The spec says that if there's a PHDR segment, it must be the first one.
-        , E.elfSegmentIndex = 0
+        , E.elfSegmentIndex = idx
         , E.elfSegmentData = Seq.singleton E.ElfDataSegmentHeaders
         }
   in containerSegment
 
-incrementSegmentNumber :: (Monad m) => E.SegmentIndex -> E.ElfSegment w -> m (E.ElfSegment w)
-incrementSegmentNumber n seg = return seg { E.elfSegmentIndex = E.elfSegmentIndex seg + n }
+incrementSegmentNumber ::
+  (Monad m) =>
+  (E.ElfSegment w -> Bool) ->
+  E.SegmentIndex ->
+  E.ElfSegment w ->
+  m (E.ElfSegment w)
+incrementSegmentNumber incrementIf n seg =
+  return $
+    if incrementIf seg
+    then seg { E.elfSegmentIndex = E.elfSegmentIndex seg + n }
+    else seg
 
 buildSymbolMap :: (w ~ MM.ArchAddrWidth arch, Integral (E.ElfWordType w), MM.MemWidth w)
                => E.Elf w

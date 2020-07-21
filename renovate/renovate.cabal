@@ -17,6 +17,7 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Renovate
+                       Renovate.BinaryFormat.ELF.Internal
                        Renovate.BinaryFormat.ELF.Common.Internal
   other-modules:
                        Renovate.Arch
@@ -41,6 +42,7 @@ library
                        Renovate.BinaryFormat.ELF
                        Renovate.BinaryFormat.ELF.Common
                        Renovate.BinaryFormat.ELF.BSS
+                       Renovate.BinaryFormat.ELF.Exceptions
                        Renovate.BinaryFormat.ELF.Rewriter
                        Renovate.BinaryFormat.ELF.Rewriter.Env
                        Renovate.ISA
@@ -106,7 +108,9 @@ test-suite renovate-tests
   hs-source-dirs: tests
   main-is: Main.hs
   build-depends: base,
+                 elf-edit,
                  tasty,
+                 tasty-hunit,
                  tasty-quickcheck,
                  QuickCheck,
                  renovate
