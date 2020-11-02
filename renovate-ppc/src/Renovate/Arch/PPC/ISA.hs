@@ -6,6 +6,7 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
 {-# LANGUAGE TypeSynonymInstances #-}
@@ -56,8 +57,14 @@ data TargetAddress arch = NoAddress
 
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (TargetAddress arch)
 
-newtype Instruction tp a = I { unI :: D.AnnotatedInstruction a }
-  deriving (Eq, Show)
+data Instruction (tp :: R.InstructionArchReprKind (MP.AnyPPC v)) a where
+  I :: D.AnnotatedInstruction a -> Instruction OnlyEncoding a
+
+deriving instance (Eq a) => Eq (Instruction tp a)
+deriving instance (Show a) => Show (Instruction tp a)
+
+unI :: Instruction tp a -> D.AnnotatedInstruction a
+unI (I i) = i
 
 data EncodingKind = OnlyEncoding
   deriving (Typeable)
@@ -132,9 +139,9 @@ disassemble pb start end b0 = do
           let nextAddr = insnAddr `R.addressAddOffset` fromIntegral bytesRead
           in if | nextAddr > end -> C.throwM (OverlappingBlocks b)
                 | nextAddr == end ->
-                  return (reverse (fromInst i : insns))
+                  return (reverse (fromInst PPCRepr i : insns))
                 | otherwise ->
-                  go (totalRead + bytesRead) nextAddr (B.drop bytesRead b) (fromInst i : insns)
+                  go (totalRead + bytesRead) nextAddr (B.drop bytesRead b) (fromInst PPCRepr i : insns)
 
 data InstructionDisassemblyFailure =
   InstructionDisassemblyFailure B.ByteString Int
@@ -149,13 +156,13 @@ instance C.Exception InstructionDisassemblyFailure
 -- For now, the same description works for both PowerPC 32 and PowerPC 64.
 isa :: ( arch ~ MP.AnyPPC v
        , MM.MemWidth (MM.ArchAddrWidth arch)
-       , R.Instruction arch ~ Instruction
        , R.InstructionAnnotation arch ~ TargetAddress arch)
     => R.ISA arch
 isa =
   R.ISA { R.isaInstructionSize = ppcInstrSize
         , R.isaPrettyInstruction = ppcPrettyInstruction
         , R.isaMakePadding = ppcMakePadding
+        , R.isaInstructionRepr = ppcInstructionRepr
         , R.isaInstructionArchReprs = R.SomeInstructionArchRepr PPCRepr DLN.:| []
         , R.isaMakeRelativeJumpTo = ppcMakeRelativeJumpTo
         , R.isaMaxRelativeJumpSize = const ppcMaxRelativeJumpSize
@@ -164,6 +171,12 @@ isa =
         , R.isaConcretizeAddresses = ppcConcretizeAddresses
         , R.isaSymbolizeAddresses = ppcSymbolizeAddresses
         }
+
+ppcInstructionRepr :: forall arch (tp :: R.InstructionArchReprKind arch) a v
+                    . (arch ~ MP.AnyPPC v)
+                   => R.Instruction arch tp a
+                   -> R.InstructionArchRepr arch tp
+ppcInstructionRepr (I _) = PPCRepr
 
 ppcPrettyInstruction :: Instruction tp a -> String
 ppcPrettyInstruction = show . D.ppInstruction . toInst
@@ -175,12 +188,12 @@ ppcInstrSize _ = 4
 -- | Make the requested number of bytes of padding instructions (as TRAP
 -- instructions).  We can only support numbers of bytes that are multiples of
 -- four, as that is the only instruction size on PowerPC.
-ppcMakePadding :: (HasCallStack)
+ppcMakePadding :: (arch ~ MP.AnyPPC v, HasCallStack)
                => Word64
-               -> R.InstructionArchRepr (MP.AnyPPC v) tp
-               -> [Instruction tp ()]
-ppcMakePadding nBytes _
-  | leftover == 0 = replicate nInsns (fromInst nopInsn)
+               -> R.InstructionArchRepr arch tp
+               -> [R.Instruction arch tp ()]
+ppcMakePadding nBytes PPCRepr
+  | leftover == 0 = replicate nInsns (fromInst PPCRepr nopInsn)
   | otherwise = error (printf "Unexpected byte count (%d); PowerPC only supports instruction-sized padding" nBytes)
   where
     (nInsns, leftover) = fromIntegral nBytes `divMod` 4
@@ -188,17 +201,17 @@ ppcMakePadding nBytes _
 
 -- | Make an unconditional relative jump from the given @srcAddr@ to the
 -- @targetAddr@.
-ppcMakeRelativeJumpTo :: (MM.MemWidth (MM.ArchAddrWidth arch))
+ppcMakeRelativeJumpTo :: (MM.MemWidth (MM.ArchAddrWidth arch), arch ~ MP.AnyPPC v)
                       => R.ConcreteAddress arch
                       -> R.ConcreteAddress arch
                       -> R.InstructionArchRepr arch tp
-                      -> DLN.NonEmpty (Instruction tp ())
-ppcMakeRelativeJumpTo srcAddr targetAddr _
+                      -> DLN.NonEmpty (R.Instruction arch tp ())
+ppcMakeRelativeJumpTo srcAddr targetAddr PPCRepr
   | offset `mod` 4 /= 0 =
     error (printf "Unaligned jump with source=%s and target=%s" (show srcAddr) (show targetAddr))
   | offset > fromIntegral ppcMaxRelativeJumpSize =
     error (printf "Jump target is too far away with source=%s and target=%s" (show srcAddr) (show targetAddr))
-  | otherwise = fromInst jumpInstr DLN.:| []
+  | otherwise = fromInst PPCRepr jumpInstr DLN.:| []
   where
     -- We are limited to 24 + 2 bits of offset, where the low two bits must be zero.
     offset :: Integer
@@ -217,17 +230,17 @@ ppcMakeRelativeJumpTo srcAddr targetAddr _
 ppcMaxRelativeJumpSize :: Word64
 ppcMaxRelativeJumpSize = bit 24 - 4
 
-ppcMakeSymbolicJump :: (MM.MemWidth (MM.ArchAddrWidth arch), R.Instruction arch ~ Instruction)
+ppcMakeSymbolicJump :: (MM.MemWidth (MM.ArchAddrWidth arch), arch ~ MP.AnyPPC v)
                     => R.SymbolicAddress arch
                     -> R.InstructionArchRepr arch tp
                     -> [R.TaggedInstruction arch tp (TargetAddress arch)]
-ppcMakeSymbolicJump symAddr _ = [R.tagInstruction (Just symAddr) i]
+ppcMakeSymbolicJump symAddr PPCRepr = [R.tagInstruction (Just symAddr) i]
   where
     -- The jump has an invalid destination because it is just a stand-in; it
     -- will be rewritten with a real jump target when we concretize the
     -- instruction.
     jmp = D.Instruction D.B (D.Directbrtarget (D.BT 0) D.:< D.Nil)
-    i = annotateInstr (fromInst jmp) NoAddress
+    i = annotateInstr (fromInst PPCRepr jmp) NoAddress
 
 -- | This function converts symbolic address references in operands back to
 -- concrete values.  As with 'ppcSymbolizeAddresses', it is a no-op on PowerPC
@@ -246,23 +259,23 @@ ppcMakeSymbolicJump symAddr _ = [R.tagInstruction (Just symAddr) i]
 -- two zero bits.
 --
 -- See Note [Conditional Branch Restrictions]
-ppcConcretizeAddresses :: forall arch (tp :: R.InstructionArchReprKind arch) tk
-                        . (MM.MemWidth (MM.ArchAddrWidth arch), HasCallStack)
+ppcConcretizeAddresses :: forall arch (tp :: R.InstructionArchReprKind arch) tk v
+                        . (MM.MemWidth (MM.ArchAddrWidth arch), HasCallStack, arch ~ MP.AnyPPC v)
                        => MM.Memory (MM.ArchAddrWidth arch)
                        -> R.ConcreteAddress arch
-                       -> Instruction tp (TargetAddress arch)
+                       -> R.Instruction arch tp (TargetAddress arch)
                        -> R.RelocatableTarget arch R.ConcreteAddress tk
                        -- ^ The new target (if any) for a relative jump
-                       -> DLN.NonEmpty (Instruction tp ())
-ppcConcretizeAddresses _mem srcAddr i tgt =
+                       -> DLN.NonEmpty (R.Instruction arch tp ())
+ppcConcretizeAddresses _mem srcAddr (I i) tgt =
   case tgt of
     R.NoTarget ->
-      case unI i of
+      case i of
         D.Instruction opc operands ->
           let i' = I (D.Instruction (coerce opc) (FC.fmapFC (\(D.Annotated _ operand) -> D.Annotated () operand) operands))
           in i' DLN.:| []
     R.RelocatableTarget targetAddr ->
-      case unI i of
+      case i of
         D.Instruction opc operands ->
           case operands of
             D.Annotated _a (D.Calltarget (D.BT _offset)) D.:< D.Nil ->
@@ -342,7 +355,7 @@ ppcConcretizeAddresses _mem srcAddr i tgt =
     die s = RP.panic RP.PPCISA "ppcConcretizeAddresses"
       [ s
       , "Address: " ++ show srcAddr
-      , "Instruction: " ++ ppcPrettyInstruction i
+      , "Instruction: " ++ ppcPrettyInstruction (I i)
       ]
     -- This @n@ is the index of the generated instruction that the computed offset
     -- will be used from.  For example, if the offset will be used in the first
@@ -369,13 +382,14 @@ ppcConcretizeAddresses _mem srcAddr i tgt =
 --
 -- Note that the long unconditional jump we add has a dummy target, as the real
 -- target is specified through the symbolic target.
-ppcSymbolizeAddresses :: (MM.MemWidth (MM.ArchAddrWidth arch), R.Instruction arch ~ Instruction)
+ppcSymbolizeAddresses :: forall arch tp v
+                       . (MM.MemWidth (MM.ArchAddrWidth arch), arch ~ MP.AnyPPC v)
                       => MM.Memory (MM.ArchAddrWidth arch)
                       -> R.ConcreteAddress arch
                       -> Maybe (R.SymbolicAddress arch)
-                      -> Instruction tp ()
+                      -> R.Instruction arch tp ()
                       -> [R.TaggedInstruction arch tp (TargetAddress arch)]
-ppcSymbolizeAddresses _mem _insnAddr mSymbolicTarget i = case unI i of
+ppcSymbolizeAddresses _mem _insnAddr mSymbolicTarget (I i) = case i of
   D.Instruction opc operands ->
     let newInsn = D.Instruction (coerce opc) (FC.fmapFC annotateNull operands)
     in [R.tagInstruction mSymbolicTarget (I newInsn)]
@@ -498,8 +512,8 @@ toInst i =
 -- | Convert the base instruction type to the wrapped 'Instruction' with a unit
 -- annotation. This operation is depricated in favor of
 -- 'R.fromGenericInstruction'.
-fromInst :: D.Instruction -> Instruction tp ()
-fromInst i =
+fromInst :: (arch ~ MP.AnyPPC v) => R.InstructionArchRepr arch tp -> D.Instruction -> R.Instruction arch tp ()
+fromInst PPCRepr i =
   case i of
     D.Instruction opc unannotatedOps ->
       I (D.Instruction (coerce opc) (FC.fmapFC (D.Annotated ()) unannotatedOps))

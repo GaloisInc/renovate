@@ -95,6 +95,7 @@ isa = R.ISA
   { R.isaInstructionSize = x64Size
   , R.isaJumpType = x64JumpType
   , R.isaInstructionArchReprs = R.SomeInstructionArchRepr X86Repr DLN.:| []
+  , R.isaInstructionRepr = \(XI _) -> X86Repr
   , R.isaMakeRelativeJumpTo = x64MakeRelativeJumpTo
   , R.isaMaxRelativeJumpSize = const (bit 31 - 1)
   , R.isaMakePadding = x64MakePadding
