@@ -16,6 +16,7 @@ jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         ghc: ['8.6', '8.8', '8.10']
         cabal: ['3.2.0.0']
