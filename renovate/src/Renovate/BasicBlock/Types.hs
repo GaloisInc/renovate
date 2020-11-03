@@ -116,7 +116,7 @@ type family RegisterType arch :: InstructionArchReprKind arch -> Type
 class ToGenericInstruction arch
   where
     toGenericInstruction   :: forall (tp :: InstructionArchReprKind arch) a . Instruction arch tp a -> SA.Instruction arch
-    fromGenericInstruction :: forall (tp :: InstructionArchReprKind arch) . SA.Instruction arch -> Instruction arch tp ()
+    fromGenericInstruction :: forall (tp :: InstructionArchReprKind arch) . InstructionArchRepr arch tp -> SA.Instruction arch -> Instruction arch tp ()
 
 -- | Constraints common to all instructions.
 --

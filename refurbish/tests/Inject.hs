@@ -65,7 +65,7 @@ ppc64Inject env _ (InjectedAddr addr) sb = do
       Nothing -> error "Unexpected impossible repr"
       Just Refl -> do
         let callI = DP.Instruction DP.BL (DP.Calltarget (DP.BT 0) PL.:< PL.Nil)
-        let genI = R.fromGenericInstruction @RP.PPC64 callI
+        let genI = R.fromGenericInstruction @RP.PPC64 RP.PPCRepr callI
         let newCall = R.isaSymbolizeAddresses isa mem (R.concreteFromAbsolute 0) (Just addr) genI
         return (Just (R.ModifiedInstructions repr (prepend newCall insns)))
   where

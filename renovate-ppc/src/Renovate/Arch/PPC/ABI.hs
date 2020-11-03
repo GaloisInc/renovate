@@ -84,14 +84,14 @@ ppcCallerSaveRegisters32 repr =
 --
 -- XOR r r r
 ppcClearRegister :: forall arch v (tp :: R.InstructionArchReprKind arch)
-                  . (arch ~ PPC.AnyPPC v, R.Instruction arch ~ Instruction)
+                  . (arch ~ PPC.AnyPPC v)
                  => R.InstructionArchRepr arch tp
                  -> R.RegisterType arch tp
                  -> R.Instruction arch tp (R.InstructionAnnotation arch)
-ppcClearRegister _ r = fmap (const NoAddress) i1
+ppcClearRegister PPCRepr r = fmap (const NoAddress) i1
   where
     i1 :: R.Instruction arch tp ()
-    i1 = fromInst i0
+    i1 = fromInst PPCRepr i0
     i0 = D.Instruction D.XOR (coerceOperand r D.:< coerceOperand r D.:< coerceOperand r D.:< D.Nil)
 
 coerceOperand :: Operand tp -> D.Operand "Gprc"

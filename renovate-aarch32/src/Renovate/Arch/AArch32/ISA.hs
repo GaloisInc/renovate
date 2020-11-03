@@ -38,7 +38,7 @@ import           Data.Coerce ( coerce )
 import qualified Data.Foldable as F
 import qualified Data.List.NonEmpty as DLN
 import           Data.Maybe ( isJust )
-import           Data.Parameterized.Classes
+import qualified Data.Parameterized.Classes as PC
 import qualified Data.Parameterized.List as PL
 import qualified Data.Parameterized.NatRepr as PN
 import           Data.Parameterized.Some ( Some(..) )
@@ -81,6 +81,13 @@ data Instruction tp a where
 
 instance Show (Instruction tp a) where
   show i = show (PP.pretty i)
+
+armInstructionRepr :: Instruction tp a -> ARMRepr tp
+armInstructionRepr i =
+  case i of
+    ARMInstruction {} -> A32Repr
+    ARMBytes {} -> A32Repr
+    ThumbInstruction {} -> T32Repr
 
 pattern AI :: forall (tp :: ARMKind) a
             . ()
@@ -127,35 +134,35 @@ instance Eq (Instruction tp ()) where
   ThumbInstruction i1 == ThumbInstruction i2 = i1 == i2
 
 instance Eq (Operand tp) where
-  ARMOperand o1 == ARMOperand o2 = isJust (testEquality o1 o2)
-  ThumbOperand o1 == ThumbOperand o2 = isJust (testEquality o1 o2)
+  ARMOperand o1 == ARMOperand o2 = isJust (PC.testEquality o1 o2)
+  ThumbOperand o1 == ThumbOperand o2 = isJust (PC.testEquality o1 o2)
 
 instance Ord (Operand tp) where
-  compare (ARMOperand o1) (ARMOperand o2) = toOrdering (compareF o1 o2)
-  compare (ThumbOperand o1) (ThumbOperand o2) = toOrdering (compareF o1 o2)
+  compare (ARMOperand o1) (ARMOperand o2) = PC.toOrdering (PC.compareF o1 o2)
+  compare (ThumbOperand o1) (ThumbOperand o2) = PC.toOrdering (PC.compareF o1 o2)
 
-instance TestEquality Operand where
+instance PC.TestEquality Operand where
   testEquality (ARMOperand o1) (ARMOperand o2) = do
-    Refl <- testEquality o1 o2
-    return Refl
+    PC.Refl <- PC.testEquality o1 o2
+    return PC.Refl
   testEquality (ThumbOperand o1) (ThumbOperand o2) = do
-    Refl <- testEquality o1 o2
-    return Refl
+    PC.Refl <- PC.testEquality o1 o2
+    return PC.Refl
   testEquality _ _ = Nothing
 
-instance OrdF Operand where
+instance PC.OrdF Operand where
   compareF (ARMOperand o1) (ARMOperand o2) =
-    case compareF o1 o2 of
-      EQF -> EQF
-      LTF -> LTF
-      GTF -> GTF
+    case PC.compareF o1 o2 of
+      PC.EQF -> PC.EQF
+      PC.LTF -> PC.LTF
+      PC.GTF -> PC.GTF
   compareF (ThumbOperand o1) (ThumbOperand o2) =
-    case compareF o1 o2 of
-      EQF -> EQF
-      LTF -> LTF
-      GTF -> GTF
-  compareF (ARMOperand _) _ = GTF
-  compareF (ThumbOperand _) _ = LTF
+    case PC.compareF o1 o2 of
+      PC.EQF -> PC.EQF
+      PC.LTF -> PC.LTF
+      PC.GTF -> PC.GTF
+  compareF (ARMOperand _) _ = PC.GTF
+  compareF (ThumbOperand _) _ = PC.LTF
 
 data InstructionDisassemblyFailure =
   InstructionDisassemblyFailure LBS.ByteString Int
@@ -648,6 +655,7 @@ isa =
   R.ISA { R.isaInstructionSize = armInstrSize
         , R.isaPrettyInstruction = armPrettyInstruction
         , R.isaMakePadding = armMakePadding
+        , R.isaInstructionRepr = armInstructionRepr
         , R.isaInstructionArchReprs =
           R.SomeInstructionArchRepr A32Repr DLN.:|
           [R.SomeInstructionArchRepr T32Repr]
