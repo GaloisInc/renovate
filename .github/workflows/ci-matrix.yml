@@ -55,13 +55,11 @@ jobs:
         cabal v2-configure pkg:refurbish --write-ghc-environment-files=always -j1 --enable-tests
         cabal v2-build pkg:refurbish
 
-    - name: Setup Test Environment
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt install -y docker.io
-
     - name: Test
       if: runner.os == 'Linux'
+      # NOTE: Locally, we use a docker runner to isolate test cases in case the
+      # rewriter breaks them in a dangerous way. Docker-in-docker isn't so great
+      # (and doesn't really work here), so we just disable the runner in CI
       run: |
-        cabal v2-test pkg:refurbish
+        cabal v2-test pkg:refurbish -- --test-arguments='--use-docker-runner=False'
 

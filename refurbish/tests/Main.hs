@@ -15,6 +15,7 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ElfEdit as E
 import qualified Data.Foldable as F
 import           Data.Functor.Const ( Const(..) )
+import           Data.Proxy ( Proxy(..) )
 import           Data.Typeable ( Typeable )
 import           GHC.TypeLits
 import qualified System.Directory as SD
@@ -23,8 +24,10 @@ import           System.FilePath ( (</>), (<.>) )
 import           System.FilePath.Glob ( namesMatching )
 import qualified System.IO as IO
 import qualified System.IO.Temp as TMP
+import qualified System.Process as SP
 import qualified Test.Tasty as T
 import qualified Test.Tasty.HUnit as T
+import qualified Test.Tasty.Options as TO
 import           Text.Read ( readMaybe )
 
 import qualified Data.Macaw.CFG as MM
@@ -46,6 +49,15 @@ import qualified Refurbish.Docker as RD
 import qualified Identity as RTId
 import qualified Inject as RTIn
 
+data UseDockerRunner = UseDockerRunner Bool
+  deriving (Eq, Ord, Show)
+
+instance TO.IsOption UseDockerRunner where
+  defaultValue = UseDockerRunner True
+  parseValue = fmap UseDockerRunner . TO.safeReadBool
+  optionName = pure "use-docker-runner"
+  optionHelp = pure "Use the docker runner for each test binary"
+
 main :: IO ()
 main = do
   eqemu <- RD.initializeQemuRunner
@@ -59,68 +71,76 @@ main = do
   exes <- namesMatching "tests/binaries/*.exe"
   hdlAlloc <- C.newHandleAllocator
   let injection = [ ("tests/injection-base/injection-base.ppc64.exe", "tests/injection-base/ppc64-exit.bin")]
-  T.defaultMain $ T.testGroup "RefurbishTests" [
-    rewritingTests mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline) exes,
-    rewritingTests mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.WholeFunctionTrampoline) exes,
-    rewritingTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.AlwaysTrampoline) exes,
-    rewritingTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.LoopGrouping R.AlwaysTrampoline) exes,
-    rewritingTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.FunctionGrouping R.WholeFunctionTrampoline) exes,
-    codeInjectionTests mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline) injection,
-    codeInjectionTests mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.AlwaysTrampoline) injection
-    ]
+  T.defaultMainWithIngredients ingredients $ do
+    T.askOption $ \useDocker -> do
+      T.testGroup "RefurbishTests" [
+        rewritingTests useDocker mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline) exes,
+        rewritingTests useDocker mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.WholeFunctionTrampoline) exes,
+        rewritingTests useDocker mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.AlwaysTrampoline) exes,
+        rewritingTests useDocker mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.LoopGrouping R.AlwaysTrampoline) exes,
+        rewritingTests useDocker mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.FunctionGrouping R.WholeFunctionTrampoline) exes,
+        codeInjectionTests useDocker mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline) injection,
+        codeInjectionTests useDocker mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.AlwaysTrampoline) injection
+        ]
+  where
+    ingredients = T.includingOptions [ TO.Option (Proxy @UseDockerRunner) ] : T.defaultIngredients
 
 -- | Generate a set of tests for the code injection API
 --
 -- Right now, the one test is pretty simple: take a binary that just exits with
 -- a non-zero exit code and use the code injection API to insert a call to a
 -- function that instead makes it exit with 0.
-codeInjectionTests :: Maybe RD.Runner
+codeInjectionTests :: UseDockerRunner
+                   -> Maybe RD.Runner
                    -> C.HandleAllocator
                    -> R.LayoutStrategy
                    -> [(FilePath, FilePath)]
                    -> T.TestTree
-codeInjectionTests mRunner hdlAlloc strat exes =
-  T.testGroup ("Injecting " ++ show strat) (map (toCodeInjectionTest mRunner hdlAlloc strat) exes)
+codeInjectionTests useDocker mRunner hdlAlloc strat exes =
+  T.testGroup ("Injecting " ++ show strat) (map (toCodeInjectionTest useDocker mRunner hdlAlloc strat) exes)
 
-toCodeInjectionTest :: Maybe RD.Runner
+toCodeInjectionTest :: UseDockerRunner
+                    -> Maybe RD.Runner
                     -> C.HandleAllocator
                     -> R.LayoutStrategy
                     -> (FilePath, FilePath)
                     -> T.TestTree
-toCodeInjectionTest mRunner hdlAlloc strat (exePath, injectCodePath) = T.testCase exePath $ do
+toCodeInjectionTest useDocker mRunner hdlAlloc strat (exePath, injectCodePath) = T.testCase exePath $ do
   ic <- BS.readFile injectCodePath
   let injAnalysis = RP.config64 (RTIn.injectionAnalysis ic RTIn.ppc64Inject)
   let configs = [ (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr injAnalysis)
                 ]
-  withELF exePath configs (testRewriter mRunner hdlAlloc strat exePath RTIn.injectionEquality)
+  withELF exePath configs (testRewriter useDocker mRunner hdlAlloc strat exePath RTIn.injectionEquality)
 
 
 -- | Generate a set of rewriting tests
 --
 -- If the runner is not 'Nothing', each test will use the runner to validate
 -- that the executable still runs correctly
-rewritingTests :: Maybe RD.Runner
+rewritingTests :: UseDockerRunner
+               -> Maybe RD.Runner
                -> C.HandleAllocator
                -> R.LayoutStrategy
                -> [FilePath]
                -> T.TestTree
-rewritingTests mRunner hdlAlloc strat exes =
+rewritingTests useDocker mRunner hdlAlloc strat exes =
   T.testGroup ("Rewriting " ++ show strat)
-              (map (toRewritingTest mRunner hdlAlloc strat) exes)
+              (map (toRewritingTest useDocker mRunner hdlAlloc strat) exes)
 
-toRewritingTest :: Maybe RD.Runner
+toRewritingTest :: UseDockerRunner
+                -> Maybe RD.Runner
                 -> C.HandleAllocator
                 -> R.LayoutStrategy
                 -> FilePath
                 -> T.TestTree
-toRewritingTest mRunner hdlAlloc strat exePath = T.testCase exePath $ do
+toRewritingTest useDocker mRunner hdlAlloc strat exePath = T.testCase exePath $ do
   let configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 RTId.analysis))
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 RTId.analysis))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config RTId.analysis))
                 , (R.ARM, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RA.config RTId.analysis))
                 ]
 
-  withELF exePath configs (testRewriter mRunner hdlAlloc strat exePath RTId.allOutputEqual)
+  withELF exePath configs (testRewriter useDocker mRunner hdlAlloc strat exePath RTId.allOutputEqual)
 
 testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , E.ElfWidthConstraints w
@@ -130,7 +150,8 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , 16 <= w
                 , MBL.BinaryLoader arch (E.Elf w)
                 )
-             => Maybe RD.Runner
+             => UseDockerRunner
+             -> Maybe RD.Runner
              -> C.HandleAllocator
              -> R.LayoutStrategy
              -> FilePath
@@ -139,7 +160,7 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
              -> E.Elf w
              -> MBL.LoadedBinary arch (E.Elf w)
              -> IO ()
-testRewriter mRunner hdlAlloc strat exePath assertions rc e loadedBinary = do
+testRewriter (UseDockerRunner useDocker) mRunner hdlAlloc strat exePath assertions rc e loadedBinary = do
   (e', _, _, _) <- R.rewriteElf rc hdlAlloc e loadedBinary strat
   let !bs = force (E.renderElf e')
   T.assertBool "Invalid ELF length" (LBS.length bs > 0)
@@ -161,9 +182,15 @@ testRewriter mRunner hdlAlloc strat exePath assertions rc e loadedBinary = do
         -- The name of the executable mapped into the container
         let targetName = "/tmp/refurbish.exe"
         F.forM_ argLists $ \argList -> do
-          (origRC, origOut, origErr) <- RD.runInContainer runner [(pwd </> exePath, targetName)] (targetName : argList)
-          (modRC, modOut, modErr) <- RD.runInContainer runner [(texe, targetName)] (targetName : argList)
+          (origRC, origOut, origErr) <- executor runner [(pwd </> exePath, targetName)] (targetName : argList)
+          (modRC, modOut, modErr) <- executor runner [(texe, targetName)] (targetName : argList)
           assertions (origRC, modRC) (origOut, modOut) (origErr, modErr)
+  where
+    executor | useDocker = RD.runInContainer
+             | otherwise = runWithoutContainer
+    runWithoutContainer _ _ [] = error "Empty command line in the test runner"
+    runWithoutContainer _runner _mappings (cmd:args) =
+      SP.readProcessWithExitCode cmd args ""
 
 -- | Given a test executable, read the list of argument lists for a test executable
 --
