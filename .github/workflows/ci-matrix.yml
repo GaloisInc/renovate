@@ -58,5 +58,5 @@ jobs:
       # rewriter breaks them in a dangerous way. Docker-in-docker isn't so great
       # (and doesn't really work here), so we just disable the runner in CI
       run: |
-        cabal v2-test pkg:refurbish -- --test-arguments='--use-docker-runner=False'
+        cabal v2-test pkg:refurbish -- --test-options='--use-docker-runner=False'
 
