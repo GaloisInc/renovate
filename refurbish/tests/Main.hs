@@ -179,11 +179,11 @@ testRewriter (UseDockerRunner useDocker) mRunner hdlAlloc strat exePath assertio
         SD.setPermissions texe (SD.setOwnerExecutable True p0)
         pwd <- SD.getCurrentDirectory
         argLists <- readTestArguments exePath
-        -- The name of the executable mapped into the container
-        let targetName = "/tmp/refurbish.exe"
         F.forM_ argLists $ \argList -> do
-          (origRC, origOut, origErr) <- executor runner [(pwd </> exePath, targetName)] (targetName : argList)
-          (modRC, modOut, modErr) <- executor runner [(texe, targetName)] (targetName : argList)
+          let origTarget = pwd </> exePath
+          (origRC, origOut, origErr) <- executor runner [(origTarget, origTarget)] (origTarget : argList)
+          let newTarget = texe
+          (modRC, modOut, modErr) <- executor runner [(newTarget, newTarget)] (newTarget : argList)
           assertions (origRC, modRC) (origOut, modOut) (origErr, modErr)
   where
     executor | useDocker = RD.runInContainer
