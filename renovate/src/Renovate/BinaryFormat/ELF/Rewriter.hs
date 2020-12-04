@@ -181,6 +181,8 @@ emptyRewriterInfo e = RewriterInfo { _riOverwrittenRegions       = []
                                    , _riOutputBlocks             = Nothing
                                    , _riStats                    = RM.emptyRewriterStats
                                    , _riRewritePairs             = []
+                                   , _riTranslationErrors        = []
+                                   , _riClassifyFailures         = []
                                    }
 riOriginalTextSize :: L.Simple L.Lens (RewriterInfo lm arch) Int
 riOriginalTextSize = GL.field @"_riOriginalTextSize"
