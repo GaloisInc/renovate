@@ -27,6 +27,7 @@ module Renovate.Config (
 import qualified Control.Monad.Catch as C
 import           Control.Monad.ST ( ST, RealWorld )
 import qualified Data.ByteString as B
+import           Data.Kind ( Type )
 import qualified Data.List.NonEmpty as DLN
 import           Data.Map.Strict ( Map )
 import           Data.Typeable ( Typeable )
@@ -63,7 +64,7 @@ import qualified Renovate.Rewrite as RW
 --   way that there can be a list of 'SomeConfig' while still containing
 --   architecture-parameterized data (where the architecture is hidden by the
 --   existential).
-data SomeConfig callbacks (b :: * -> *) = forall arch binFmt
+data SomeConfig callbacks (b :: Type -> Type) = forall arch binFmt
                   . (B.InstructionConstraints arch,
                      MS.SymArchConstraints arch,
                      Typeable arch,
@@ -197,7 +198,7 @@ data AnalyzeAndRewrite lm arch binFmt b =
 -- * @binFmt@ is the format of the binary loaded (e.g., ELF, Mach-O)
 -- * @callbacks@ is the type of the callback in the configuration (the analysis only frontend and the analysis+rewriter frontend have different callback types)
 -- * @b@ (which is applied to @arch@) the type of analysis results produced by the analysis and passed to the rewriter
-data RenovateConfig arch binFmt callbacks (b :: * -> *) = RenovateConfig
+data RenovateConfig arch binFmt callbacks (b :: Type -> Type) = RenovateConfig
   { rcISA           :: ISA.ISA arch
   , rcABI           :: ABI.ABI arch
   , rcArchInfo      :: MBL.LoadedBinary arch binFmt -> MM.ArchitectureInfo arch
