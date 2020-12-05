@@ -20,7 +20,7 @@ jobs:
       matrix:
         ghc: ['8.6', '8.8', '8.10']
         cabal: ['3.2.0.0']
-        os: [ubuntu-latest]
+        os: [ubuntu-20.04]
 
     name: GHC ${{ matrix.ghc }} on ${{ matrix.os }} renovate
 
@@ -59,6 +59,6 @@ jobs:
       # (and doesn't really work here), so we just disable the runner in CI
       run: |
         sudo apt update
-        sudo apt install qemu-user-binfmt qemu-user
+        sudo apt install qemu-user-binfmt qemu-user binfmt_support
         cabal v2-test pkg:refurbish --test-options='--use-docker-runner=False'
 
