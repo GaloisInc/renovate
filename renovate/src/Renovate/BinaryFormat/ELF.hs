@@ -66,7 +66,7 @@ import           Control.Applicative
 import           Control.Arrow ( second )
 import qualified Control.Lens as L
 import           Control.Lens ( (^.) )
-import           Control.Monad ( guard, when )
+import           Control.Monad ( guard, when, unless )
 import qualified Control.Monad.Catch as C
 import qualified Control.Monad.Catch.Pure as P
 import qualified Control.Monad.IO.Class as IO
@@ -84,6 +84,7 @@ import           Data.Maybe ( fromMaybe, maybeToList, listToMaybe, mapMaybe, isJ
 import           Data.Monoid
 import qualified Data.Ord as O
 import qualified Data.Sequence as Seq
+import qualified Data.Set as Set
 import           Data.Typeable ( Typeable )
 import qualified Data.Vector as V
 import           Data.Word ( Word16 )
@@ -219,7 +220,8 @@ rewriteElf :: (B.InstructionConstraints arch,
            -> IO (E.Elf (MM.ArchAddrWidth arch), b arch, RewriterInfo lm arch, RewriterEnv arch)
 rewriteElf logAction cfg hdlAlloc ehi loadedBinary strat = do
     let (elfParseErrors, e) = E.getElf ehi
-    LJ.writeLog logAction (RD.ELFParseErrors elfParseErrors)
+    unless (null elfParseErrors) $ do
+      LJ.writeLog logAction (RD.ELFParseErrors elfParseErrors)
     (analysisResult, ri, env) <- runElfRewriter logAction cfg ehi e $ do
       -- FIXME: Use the symbol map from the loaded binary (which we still need to add)
       symmap <- withCurrentELF buildSymbolMap
@@ -247,7 +249,8 @@ analyzeElf :: (B.InstructionConstraints arch,
            -> IO (b arch, [RE.Diagnostic])
 analyzeElf logAction cfg hdlAlloc ehi loadedBinary = do
   let (elfParseErrors, e) = E.getElf ehi
-  LJ.writeLog logAction (RD.ELFParseErrors elfParseErrors)
+  unless (null elfParseErrors) $ do
+    LJ.writeLog logAction (RD.ELFParseErrors elfParseErrors)
   (b, ri, _env) <- runElfRewriter logAction cfg ehi e $ do
     symmap <- withCurrentELF buildSymbolMap
     textSection <- withCurrentELF findTextSection
@@ -440,9 +443,10 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   case mBaseSymtab of
     Just baseSymtab
       | rcUpdateSymbolTable cfg -> do
-          symtabIdx <- withCurrentELF (return . nextSectionIndex)
           newSymtab <- buildNewSymbolTable (E.elfSectionIndex textSection) newTextSecIdx layoutAddr newSyms addrMap baseSymtab
           let symbolTableAlignment = 8
+          symtabIdx <- withCurrentELF (return . nextSectionIndex)
+          logDiagnostic (RD.ELFMessage ("New symbol table index: " ++ show symtabIdx))
           modifyCurrentELF (appendDataRegion (E.ElfDataSymtab symtabIdx newSymtab) symbolTableAlignment)
       | otherwise -> return ()
     _ -> return ()
@@ -534,6 +538,34 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
 
   return analysisResult
 
+-- | Collect the currently-used section numbers in the 'E.Elf' file
+--
+-- This does not use the 'E.elfSections' combinator, as that skips a few types
+-- of section (e.g., symbol tables).
+--
+-- Note that the data region traversal handles recursion through segments
+sectionNumbers :: E.Elf w -> Set.Set Word16
+sectionNumbers e = S.execState (E.traverseElfDataRegions recordSectionNumber e) Set.empty
+  where
+    -- We return the original segment, but are ignoring the return value of the traversal
+    recordSectionNumber r = do
+      case r of
+        E.ElfDataElfHeader -> return ()
+        E.ElfDataSegmentHeaders -> return ()
+        E.ElfDataSectionHeaders -> return ()
+        E.ElfDataSegment {} -> return ()
+        E.ElfDataRaw {} -> return ()
+        E.ElfDataSection sec -> S.modify' (Set.insert (E.elfSectionIndex sec))
+        E.ElfDataSectionNameTable idx -> S.modify' (Set.insert idx)
+        E.ElfDataGOT got -> S.modify' (Set.insert (E.elfGotIndex got))
+        E.ElfDataStrtab idx -> S.modify' (Set.insert idx)
+        E.ElfDataSymtab idx _symtab -> S.modify' (Set.insert idx)
+      return r
+
+-- | Mark the segment as a NULL segment if it was a PHDR table
+--
+-- We need this because we are zeroing out the original PHDR table and building
+-- a new one (which will include our new segments)
 nullifyPhdr :: Applicative f => E.ElfSegment w -> f (E.ElfSegment w)
 nullifyPhdr s = pure $ case E.elfSegmentType s of
   E.PT_PHDR -> s { E.elfSegmentType = E.PT_NULL }
@@ -587,7 +619,7 @@ choosePHDRSegmentAddress elf = do
 
   -- Call out to 'findSpaceForPhdrs' to find a good (virtual) address, fail if
   -- one can't be found.
-  (tlssegment, segmentInfos) <- indexLoadableSegments elf
+  (tlssegment, segmentInfos) <- indexLoadableSegments elf fakePhdrSeg
   case findSpaceForPHDRs segmentInfos projectedOffset requiredSize of
     Nothing ->
       -- This is fine in practice if there's no thread-local storage,
@@ -602,19 +634,34 @@ choosePHDRSegmentAddress elf = do
 data TLSSegmentIndex = NoTLSSegment
                      | TLSSegmentIndex Word16
 
+-- | Compute the extents (offsets + sizes + alignment) of every loadable segment
+--
+-- NOTE that this works by rendering the current ELF file and examining the
+-- PHDRs, as this information is not available in an 'E.Elf'.  Because of this,
+-- the 'E.Elf' *must* have a PHDR table (i.e., the 'E.ElfDataSegmentHeaders'
+-- 'E.ElfDataRegion'), otherwise one will not be generated and the resulting
+-- rendered ELF will be garbage.
+--
+-- To accommodate this, because the 'E.Elf' does not have a PHDR table at this
+-- point, we append an interim table to the end (the second argument).
 indexLoadableSegments
-  :: (P.MonadThrow m)
+  :: (E.ElfWidthConstraints w, w ~ MM.ArchAddrWidth arch)
   => E.Elf w
-  -> m (TLSSegmentIndex, NEL.NonEmpty (LoadSegmentInfo w))
-indexLoadableSegments e = do
-  let bs = E.renderElf e
+  -> E.ElfSegment w
+  -- ^ The temporary PHDR segment
+  -> ElfRewriter lm arch (TLSSegmentIndex, NEL.NonEmpty (LoadSegmentInfo w))
+indexLoadableSegments e phdrSeg = do
+  -- NOTE: This segment append operation is in 'ElfRewriter', but does not
+  -- affect the state.
+  ((), e') <- appendSegment phdrSeg e
+  let bs = E.renderElf e'
   case E.decodeElfHeaderInfo (LBS.toStrict bs) of
     Left (errOff, msg) -> P.throwM (CouldNotDecodeElf "indexSegments" errOff msg)
     Right (E.SomeElf ehi)
       | Just PC.Refl <- PC.testEquality (E.elfClass e) (E.headerClass (E.header ehi)) -> do
         let segInfos = mapMaybe makeLoadSegmentInfo (E.headerPhdrs ehi)
         case NEL.nonEmpty segInfos of
-          Nothing -> P.throwM NoLoadableSegments
+          Nothing -> P.throwM (NoLoadableSegments (E.headerPhdrs ehi))
           Just segInfos' -> do
             let hastls = foldr findTLSSegment NoTLSSegment (E.headerPhdrs ehi)
             return (hastls, segInfos')
@@ -936,7 +983,8 @@ appendHeaders :: (w ~ MM.ArchAddrWidth arch, Show (E.ElfWordType w), Bits (E.Elf
 appendHeaders elf = do
   let shstrtabidx = nextSectionIndex elf
   let strtabidx = shstrtabidx + 1
---  traceM $ printf "shstrtabidx = %d" shstrtabidx
+  logDiagnostic (RD.ELFMessage ("Data Section Name Table section number is: " ++ show shstrtabidx))
+  logDiagnostic (RD.ELFMessage ("Data Strtab section number is: " ++ show strtabidx))
   let elfData = [ E.ElfDataSectionHeaders
                 , E.ElfDataSectionNameTable shstrtabidx
                 , E.ElfDataStrtab strtabidx
@@ -946,13 +994,15 @@ appendHeaders elf = do
 -- | Find the next available section index
 --
 -- This function does *not* assume that section indexes are allocated densely -
--- it will find the first available index (starting from 0).
+-- it will find the first available index (starting from 1).
+--
+-- NOTE: This used to be zero, but elf-edit now seems to start with index 1
 nextSectionIndex :: (Bits (E.ElfWordType s), Show (E.ElfWordType s), Integral (E.ElfWordType s))
                  => E.Elf s
                  -> Word16
-nextSectionIndex e = firstAvailable 0 indexes
+nextSectionIndex e = firstAvailable 1 indexes
   where
-    indexes  = fmap E.elfSectionIndex (L.toListOf E.elfSections e)
+    indexes  = F.toList (sectionNumbers e)
 
     firstAvailable ix [] = ix
     firstAvailable ix (next:rest)
@@ -1018,6 +1068,7 @@ newTextSection :: ( w ~ MM.ArchAddrWidth arch
                -> ElfRewriter lm arch (E.ElfSectionIndex, E.ElfSection (E.ElfWordType w))
 newTextSection startAddr bytes e = do
   let newTextIdx = nextSectionIndex e
+  logDiagnostic (RD.ELFMessage (".extratext section number is: " ++ show newTextIdx))
   let sec = E.ElfSection { E.elfSectionName = C8.pack ".extratext"
                          , E.elfSectionType = E.SHT_PROGBITS
                          , E.elfSectionFlags = E.shf_alloc .|. E.shf_execinstr
@@ -1039,6 +1090,7 @@ newDataSection :: (Integral (E.ElfWordType w), Show (E.ElfWordType w), Bits (E.E
                -> ElfRewriter lm arch (E.ElfSection (E.ElfWordType w))
 newDataSection baseDataAddr bytes e = do
   let newDataIdx = nextSectionIndex e
+  logDiagnostic (RD.ELFMessage (".extradata section number is: " ++ show newDataIdx))
   let sec = E.ElfSection { E.elfSectionName = C8.pack ".extradata"
                          , E.elfSectionType = E.SHT_PROGBITS
                          , E.elfSectionFlags = E.shf_alloc .|. E.shf_write

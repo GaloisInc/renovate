@@ -38,6 +38,7 @@ data Diagnostic = forall arch t tp . InstructionIsNotJump (ISA arch) (RB.Instruc
                 | forall w . MC.MemWidth w => NoByteRegionAtAddress (MC.MemAddr w)
                 | forall arch . (MC.MemWidth (MC.ArchAddrWidth arch)) => EmptyBlock (ConcreteAddress arch)
                 | ELFParseErrors [EE.ElfParseError]
+                | ELFMessage String
                 deriving (Typeable)
 
 instance Show Diagnostic where
@@ -89,6 +90,8 @@ instance PD.Pretty Diagnostic where
     PD.vsep ( PD.pretty "Error parsing ELF file:"
             : map PD.viaShow errs
             )
+  pretty (ELFMessage msg) =
+    PD.hsep [ PD.pretty "ELF Writer: ", PD.pretty msg ]
 
 -- | A set of diagnostic messages emitted during a recovery or redirect -- analysis.
 data Diagnostics = Diagnostics { diagnosticMessages :: !(Seq.Seq Diagnostic) }

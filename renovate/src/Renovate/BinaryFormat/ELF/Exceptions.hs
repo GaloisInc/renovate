@@ -1,3 +1,6 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-
 Module : Renovate.BinaryFormat.ELF.Exceptions
 Description : Exceptions that may arise during ELF rewriting
@@ -16,6 +19,7 @@ module Renovate.BinaryFormat.ELF.Exceptions
 
 import qualified Control.Monad.Catch.Pure as P
 import qualified Data.Binary.Get as DBG
+import qualified Data.ElfEdit as EE
 import           Data.Word (Word64)
 
 import qualified Data.ElfEdit as E
@@ -44,8 +48,9 @@ data ElfRewritingException =
   | WrongEXIDXIndex E.SegmentIndex
   | NoSpaceForPHDRs Word64 Word64
   | CouldNotDecodeElf String DBG.ByteOffset String
-  | NoLoadableSegments
-  deriving (Eq, Ord, Show)
+  | forall w . (Integral (EE.ElfWordType w)) => NoLoadableSegments [EE.Phdr w]
+
+deriving instance Show ElfRewritingException
 
 classifyException :: ElfRewritingException -> ExceptionClassification
 classifyException =
@@ -85,6 +90,6 @@ printELFRewritingException exception =
           , ":"
           , msg
           ]
-      NoLoadableSegments -> "No loadable segments"
+      NoLoadableSegments phdrs -> ("No loadable segments: " ++ show phdrs)
 
 instance P.Exception ElfRewritingException
