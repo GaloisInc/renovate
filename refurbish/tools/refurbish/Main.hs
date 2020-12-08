@@ -26,10 +26,10 @@ import           Data.Monoid ((<>))
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Set as S
 import qualified Data.Text.IO as T
-import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Word ( Word64 )
 import           Fmt ( (+|), (|+), (+||), (||+) )
 import qualified Fmt as Fmt
+import qualified Lumberjack as LJ
 import qualified Options.Applicative as O
 import qualified System.Console.Haskeline as H
 import qualified System.Directory as SD
@@ -37,6 +37,8 @@ import qualified System.Exit as IO
 import qualified System.IO as IO
 import qualified System.Random.MWC as MWC
 import           Text.Read ( readMaybe )
+import qualified Prettyprinter as PD
+import qualified Prettyprinter.Render.Text as PDT
 
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.BinaryLoader as MBL
@@ -184,34 +186,23 @@ mainWithOptions o = do
       layout = R.LayoutStrategy allocator (oGrouping o) trampolines
 
   hdlAlloc <- C.newHandleAllocator
-  case E.parseElf bytes of
-    E.ElfHeaderError _ err -> do
-      putStrLn err
+  case E.decodeElfHeaderInfo bytes of
+    Left (byteOff, msg) -> do
+      IO.hPutStrLn IO.stderr ("Error decoding ELF file at " ++ show byteOff ++ ": " ++ msg)
       IO.exitFailure
-    E.Elf32Res errs e32 -> do
-      case errs of
-        [] -> return ()
-        _ -> print errs
-      R.withElfConfig (E.Elf32 e32) configs $ \rc e loadedBinary -> do
+    Right someElfHeader -> do
+      R.withElfConfig someElfHeader configs $ \rc e loadedBinary -> do
         let rc' = rc { R.rcUpdateSymbolTable = True }
-        (e', _, ri, _env) <- R.rewriteElf rc' hdlAlloc e loadedBinary layout
+        (e', _, ri, _env) <- R.rewriteElf simpleConsoleLogger rc' hdlAlloc e loadedBinary layout
         printInfo o ri
         LBS.writeFile (oOutput o) (E.renderElf e')
         p0 <- SD.getPermissions (oOutput o)
         SD.setPermissions (oOutput o) (SD.setOwnerExecutable True p0)
         when (oRunREPL o) (runREPL ri)
-    E.Elf64Res errs e64 -> do
-      case errs of
-        [] -> return ()
-        _ -> print errs
-      R.withElfConfig (E.Elf64 e64) configs $ \rc e loadedBinary -> do
-        let rc' = rc { R.rcUpdateSymbolTable = True }
-        (e', _, ri, _env) <- R.rewriteElf rc' hdlAlloc e loadedBinary layout
-        printInfo o ri
-        LBS.writeFile (oOutput o) (E.renderElf e')
-        p0 <- SD.getPermissions (oOutput o)
-        SD.setPermissions (oOutput o) (SD.setOwnerExecutable True p0)
-        when (oRunREPL o) (runREPL ri)
+
+simpleConsoleLogger :: LJ.LogAction IO R.Diagnostic
+simpleConsoleLogger = LJ.LogAction $ \msg -> do
+  PDT.putDoc (PD.pretty msg)
 
 data REPLInfo =
   REPLInfo { rewriterInfo :: Some (R.RewriterInfo ())

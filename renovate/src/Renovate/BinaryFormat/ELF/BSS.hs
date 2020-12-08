@@ -152,10 +152,9 @@ fixPostBSSSectionIds nobitsSections e0
             let got' = got { E.elfGotIndex = E.elfGotIndex got - numBSS }
             return (E.ElfDataGOT got')
           | otherwise -> return r
-        E.ElfDataSymtab st
-          | E.elfSymbolTableIndex st > lastBSSSectionId -> do
-            let st' = st { E.elfSymbolTableIndex = E.elfSymbolTableIndex st - numBSS }
-            return (E.ElfDataSymtab st')
+        E.ElfDataSymtab symTabIdx st
+          | symTabIdx > lastBSSSectionId ->
+            return (E.ElfDataSymtab (symTabIdx - numBSS) st)
           | otherwise -> return r
         E.ElfDataSegmentHeaders {} -> return r
         E.ElfDataSegment {} -> return r

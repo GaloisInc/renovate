@@ -19,6 +19,7 @@ module Renovate.BinaryFormat.ELF.Rewriter.Env
   , makeRewriterEnv
   , reSegmentMaximumSize
   , reSegmentVirtualAddress
+  , reLogAction
   ) where
 
 import           GHC.Generics (Generic)
@@ -28,6 +29,7 @@ import qualified Control.Monad.Fail as Fail
 import qualified Data.List as L
 import qualified Data.Map as Map
 import qualified Data.Ord as O
+import qualified Lumberjack as LJ
 
 import qualified Data.ElfEdit as E
 import qualified Data.Macaw.CFG as MM
@@ -36,7 +38,8 @@ import qualified Renovate.BasicBlock as RB
 import           Renovate.Config
 import qualified Renovate.ISA as RI
 
-import Renovate.BinaryFormat.ELF.Common
+import qualified Renovate.Diagnostic as RD
+import           Renovate.BinaryFormat.ELF.Common
 
 -- | Read-only environment for ELF rewriting
 data RewriterEnv arch =
@@ -44,6 +47,7 @@ data RewriterEnv arch =
               -- ^ Address of the new text section
               , reSegmentMaximumSize :: E.ElfWordType (MM.ArchAddrWidth arch)
               -- ^ Maximum size of the new text section
+              , reLogAction :: LJ.LogAction IO RD.Diagnostic
               }
   deriving Generic
 
@@ -52,10 +56,11 @@ makeRewriterEnv ::
   , C.MonadThrow m
   , E.ElfWidthConstraints (MM.ArchAddrWidth arch)
   ) =>
+  LJ.LogAction IO RD.Diagnostic ->
   RenovateConfig arch binFmt callbacks b ->
   E.Elf (MM.ArchAddrWidth arch) ->
   m (RewriterEnv arch)
-makeRewriterEnv cfg e = do
+makeRewriterEnv logAction cfg e = do
   -- Compute the address to start laying out new code.
   --
   -- The new code's virtual address should satisfy a few constraints:
@@ -76,6 +81,7 @@ makeRewriterEnv cfg e = do
   (newTextAddr, newTextSize) <- layoutChoiceFunction (fromIntegral newTextAlign) e
   pure $ RewriterEnv { reSegmentVirtualAddress = fromIntegral newTextAddr
                      , reSegmentMaximumSize = fromIntegral newTextSize
+                     , reLogAction = logAction
                      }
 
 

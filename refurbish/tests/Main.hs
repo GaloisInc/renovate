@@ -18,6 +18,9 @@ import           Data.Functor.Const ( Const(..) )
 import           Data.Proxy ( Proxy(..) )
 import           Data.Typeable ( Typeable )
 import           GHC.TypeLits
+import qualified Lumberjack as LJ
+import qualified Prettyprinter as PD
+import qualified Prettyprinter.Render.Text as PDT
 import qualified System.Directory as SD
 import qualified System.Exit as E
 import           System.FilePath ( (</>), (<.>) )
@@ -142,13 +145,17 @@ toRewritingTest useDocker mRunner hdlAlloc strat exePath = T.testCase exePath $ 
 
   withELF exePath configs (testRewriter useDocker mRunner hdlAlloc strat exePath RTId.allOutputEqual)
 
+simpleConsoleLogger :: LJ.LogAction IO R.Diagnostic
+simpleConsoleLogger = LJ.LogAction $ \msg -> do
+  PDT.putDoc (PD.pretty msg)
+
 testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , E.ElfWidthConstraints w
                 , MS.SymArchConstraints arch
                 , R.InstructionConstraints arch
                 , Typeable arch
                 , 16 <= w
-                , MBL.BinaryLoader arch (E.Elf w)
+                , MBL.BinaryLoader arch (E.ElfHeaderInfo w)
                 )
              => UseDockerRunner
              -> Maybe RD.Runner
@@ -156,12 +163,12 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
              -> R.LayoutStrategy
              -> FilePath
              -> ((E.ExitCode, E.ExitCode) -> (String, String) -> (String, String) -> IO ())
-             -> R.RenovateConfig arch (E.Elf w) (R.AnalyzeAndRewrite lm) (Const ())
-             -> E.Elf w
-             -> MBL.LoadedBinary arch (E.Elf w)
+             -> R.RenovateConfig arch (E.ElfHeaderInfo w) (R.AnalyzeAndRewrite lm) (Const ())
+             -> E.ElfHeaderInfo w
+             -> MBL.LoadedBinary arch (E.ElfHeaderInfo w)
              -> IO ()
 testRewriter (UseDockerRunner useDocker) mRunner hdlAlloc strat exePath assertions rc e loadedBinary = do
-  (e', _, _, _) <- R.rewriteElf rc hdlAlloc e loadedBinary strat
+  (e', _, _, _) <- R.rewriteElf simpleConsoleLogger rc hdlAlloc e loadedBinary strat
   let !bs = force (E.renderElf e')
   T.assertBool "Invalid ELF length" (LBS.length bs > 0)
   -- If we have a runner available, compare the output of the original
@@ -215,28 +222,19 @@ readTestArguments exePath = do
 withELF :: FilePath
         -> [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite lm) a)]
         -> (forall arch . ( MS.SymArchConstraints arch
-                          , MBL.BinaryLoader arch (E.Elf (MM.ArchAddrWidth arch))
+                          , MBL.BinaryLoader arch (E.ElfHeaderInfo (MM.ArchAddrWidth arch))
                           , 16 <= MM.ArchAddrWidth arch
                           , Typeable arch
                           , E.ElfWidthConstraints (MM.ArchAddrWidth arch)
                           , R.InstructionConstraints arch
                           ) =>
-               R.RenovateConfig arch (E.Elf (MM.ArchAddrWidth arch)) (R.AnalyzeAndRewrite lm) a
-            -> E.Elf (MM.ArchAddrWidth arch)
-            -> MBL.LoadedBinary arch (E.Elf (MM.ArchAddrWidth arch))
+               R.RenovateConfig arch (E.ElfHeaderInfo (MM.ArchAddrWidth arch)) (R.AnalyzeAndRewrite lm) a
+            -> E.ElfHeaderInfo (MM.ArchAddrWidth arch)
+            -> MBL.LoadedBinary arch (E.ElfHeaderInfo (MM.ArchAddrWidth arch))
             -> IO ())
         -> T.Assertion
 withELF exePath configs k = do
   bytes <- BS.readFile exePath
-  case E.parseElf bytes of
-    E.ElfHeaderError _ err -> T.assertFailure ("ELF header error: " ++ err)
-    E.Elf32Res errs e32 -> do
-      case errs of
-        [] -> return ()
-        _ -> T.assertFailure ("ELF32 errors: " ++ show errs)
-      R.withElfConfig (E.Elf32 e32) configs k
-    E.Elf64Res errs e64 -> do
-      case errs of
-        [] -> return ()
-        _ -> T.assertFailure ("ELF64 errors: " ++ show errs)
-      R.withElfConfig (E.Elf64 e64) configs k
+  case E.decodeElfHeaderInfo bytes of
+    Left (byteOff, msg) -> T.assertFailure ("ELF parse error at " ++ show byteOff ++ ": " ++ msg)
+    Right someHeader -> R.withElfConfig someHeader configs k
