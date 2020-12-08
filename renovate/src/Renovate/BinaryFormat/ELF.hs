@@ -88,6 +88,7 @@ import qualified Data.Set as Set
 import           Data.Typeable ( Typeable )
 import qualified Data.Vector as V
 import           Data.Word ( Word16 )
+import qualified GHC.Stack as Stack
 import           GHC.TypeLits
 import qualified Lumberjack as LJ
 import           Text.Printf ( printf )
@@ -202,6 +203,7 @@ withElfConfig (E.SomeElf e0) configs k = do
 rewriteElf :: (B.InstructionConstraints arch,
                MBL.BinaryLoader arch binFmt,
                Typeable arch,
+               Stack.HasCallStack,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                16 <= MM.ArchAddrWidth arch,
                MS.SymArchConstraints arch)
@@ -344,6 +346,7 @@ sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
 doRewrite :: (B.InstructionConstraints arch,
               MBL.BinaryLoader arch binFmt,
               Typeable arch,
+              Stack.HasCallStack,
               E.ElfWidthConstraints (MM.ArchAddrWidth arch),
               16 <= MM.ArchAddrWidth arch,
               MS.SymArchConstraints arch)
@@ -631,6 +634,20 @@ choosePHDRSegmentAddress elf = do
           P.throwM $ NoSpaceForPHDRs (fromIntegral projectedOffset) (fromIntegral requiredSize)
     Just addr -> pure addr
 
+-- | Render the given 'E.Elf' into a bytestring and reparse it to get a 'E.ElfHeaderInfo'
+renderElfHeader :: (Stack.HasCallStack, P.MonadThrow m)
+                => E.Elf w
+                -> m (E.ElfHeaderInfo w)
+renderElfHeader e0 = do
+  let bs = E.renderElf e0
+  case E.decodeElfHeaderInfo (LBS.toStrict bs) of
+    Left (errOff, msg) -> P.throwM (CouldNotDecodeElf Stack.callStack errOff msg)
+    Right (E.SomeElf ehi)
+      | Just PC.Refl <- PC.testEquality (E.elfClass e0) (E.headerClass (E.header ehi)) -> return ehi
+      | otherwise -> RP.panic RP.ELFWriting "renderElfHeader" [ "Architecture width mismatch on ELF reparsing"
+                                                              , Stack.prettyCallStack Stack.callStack
+                                                              ]
+
 data TLSSegmentIndex = NoTLSSegment
                      | TLSSegmentIndex Word16
 
@@ -645,7 +662,7 @@ data TLSSegmentIndex = NoTLSSegment
 -- To accommodate this, because the 'E.Elf' does not have a PHDR table at this
 -- point, we append an interim table to the end (the second argument).
 indexLoadableSegments
-  :: (E.ElfWidthConstraints w, w ~ MM.ArchAddrWidth arch)
+  :: (E.ElfWidthConstraints w, w ~ MM.ArchAddrWidth arch, Stack.HasCallStack)
   => E.Elf w
   -> E.ElfSegment w
   -- ^ The temporary PHDR segment
@@ -654,18 +671,13 @@ indexLoadableSegments e phdrSeg = do
   -- NOTE: This segment append operation is in 'ElfRewriter', but does not
   -- affect the state.
   ((), e') <- appendSegment phdrSeg e
-  let bs = E.renderElf e'
-  case E.decodeElfHeaderInfo (LBS.toStrict bs) of
-    Left (errOff, msg) -> P.throwM (CouldNotDecodeElf "indexSegments" errOff msg)
-    Right (E.SomeElf ehi)
-      | Just PC.Refl <- PC.testEquality (E.elfClass e) (E.headerClass (E.header ehi)) -> do
-        let segInfos = mapMaybe makeLoadSegmentInfo (E.headerPhdrs ehi)
-        case NEL.nonEmpty segInfos of
-          Nothing -> P.throwM (NoLoadableSegments (E.headerPhdrs ehi))
-          Just segInfos' -> do
-            let hastls = foldr findTLSSegment NoTLSSegment (E.headerPhdrs ehi)
-            return (hastls, segInfos')
-      | otherwise -> RP.panic RP.ELFWriting "getPHDRMemSize" ["Architecture width mismatch on ELF re-parsing"]
+  ehi <- renderElfHeader e'
+  let segInfos = mapMaybe makeLoadSegmentInfo (E.headerPhdrs ehi)
+  case NEL.nonEmpty segInfos of
+    Nothing -> P.throwM (NoLoadableSegments (E.headerPhdrs ehi))
+    Just segInfos' -> do
+      let hastls = foldr findTLSSegment NoTLSSegment (E.headerPhdrs ehi)
+      return (hastls, segInfos')
 
 findTLSSegment :: E.Phdr w -> TLSSegmentIndex -> TLSSegmentIndex
 findTLSSegment phdr tls =
@@ -684,16 +696,11 @@ findTLSSegment phdr tls =
 -- This will throw an exception if the bytestring created by encoding the
 -- current 'E.Elf' file cannot be re-decoded.  Arguably, that could be a panic
 -- indicating a fundamental error in elf-edit or in the use of it here.
-getPHDRMemSize :: P.MonadThrow m => E.Elf w -> m (E.ElfWordType w)
+getPHDRMemSize :: (Stack.HasCallStack, P.MonadThrow m) => E.Elf w -> m (E.ElfWordType w)
 getPHDRMemSize elf = do
-  let bs = E.renderElf elf
-  case E.decodeElfHeaderInfo (LBS.toStrict bs) of
-    Left (errOff, msg) -> P.throwM (CouldNotDecodeElf "getPHDRMemSize" errOff msg)
-    Right (E.SomeElf ehi)
-      | Just PC.Refl <- PC.testEquality (E.elfClass elf) (E.headerClass (E.header ehi)) -> do
-          let (_off, sz) = E.phdrTableRange ehi
-          return sz
-      | otherwise -> RP.panic RP.ELFWriting "getPHDRMemSize" ["Architecture width mismatch on ELF re-parsing"]
+  ehi <- renderElfHeader elf
+  let (_off, sz) = E.phdrTableRange ehi
+  return sz
 
 -- | Append the given 'E.ElfSegment' to the given 'E.Elf' and compute the
 -- extents it would have
@@ -710,7 +717,7 @@ getPHDRMemSize elf = do
 -- 1. After the segment is appended, there is only a single PHDR table (i.e.,
 --    there is only one ElfDataSegmentHeaders)
 phdrExtentsWith
-  :: (w ~ MM.ArchAddrWidth arch, E.ElfWidthConstraints w)
+  :: (w ~ MM.ArchAddrWidth arch, E.ElfWidthConstraints w, Stack.HasCallStack)
   => E.Elf w
   -> E.ElfSegment w
   -> ElfRewriter lm arch (EIS.Extent w)
@@ -718,16 +725,12 @@ phdrExtentsWith elf seg = do
   -- NOTE: This does not actually modify the rewriter state at all, despite
   -- being in the 'ElfRewriter'; that function only has that type for ease of
   -- use with some other combinators
-  ((), elf') <- appendSegment seg elf
+  --
   -- FIXME: Assert that there is only a single instance of 'E.ElfDataSegmentHeaders'
-  let bs = E.renderElf elf'
-  case E.decodeElfHeaderInfo (LBS.toStrict bs) of
-    Left (errorOffset, msg) -> P.throwM (CouldNotDecodeElf "phdrExtentsWith" errorOffset msg)
-    Right (E.SomeElf ehi)
-      | Just PC.Refl <- PC.testEquality (E.elfClass elf) (E.headerClass (E.header ehi)) -> do
-          let (E.FileOffset off, sz) = E.phdrTableRange ehi
-          return EIS.Extent { EIS.offset = off, EIS.size = sz }
-      | otherwise -> RP.panic RP.ELFWriting "phdrExtentsWith" ["Architecture width mismatch on ELF re-parsing"]
+  ((), elf') <- appendSegment seg elf
+  ehi <- renderElfHeader elf'
+  let (E.FileOffset off, sz) = E.phdrTableRange ehi
+  return EIS.Extent { EIS.offset = off, EIS.size = sz }
 
 -- | Count the number of program headers (i.e., entries in the PHDR table)
 --

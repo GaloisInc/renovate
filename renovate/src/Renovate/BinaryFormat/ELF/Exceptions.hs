@@ -21,6 +21,7 @@ import qualified Control.Monad.Catch.Pure as P
 import qualified Data.Binary.Get as DBG
 import qualified Data.ElfEdit as EE
 import           Data.Word (Word64)
+import qualified GHC.Stack as Stack
 
 import qualified Data.ElfEdit as E
 
@@ -47,7 +48,7 @@ data ElfRewritingException =
     TooManyEXIDXs [E.SegmentIndex]
   | WrongEXIDXIndex E.SegmentIndex
   | NoSpaceForPHDRs Word64 Word64
-  | CouldNotDecodeElf String DBG.ByteOffset String
+  | CouldNotDecodeElf Stack.CallStack DBG.ByteOffset String
   | forall w . (Integral (EE.ElfWordType w)) => NoLoadableSegments [EE.Phdr w]
 
 deriving instance Show ElfRewritingException
@@ -84,7 +85,7 @@ printELFRewritingException exception =
       CouldNotDecodeElf ctx off msg ->
         unwords
           [ "Could not decode encoded ELF in"
-          , ctx
+          , Stack.prettyCallStack ctx
           , "at offset"
           , show off
           , ":"
