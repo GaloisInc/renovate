@@ -203,6 +203,7 @@ mainWithOptions o = do
 simpleConsoleLogger :: LJ.LogAction IO R.Diagnostic
 simpleConsoleLogger = LJ.LogAction $ \msg -> do
   PDT.putDoc (PD.pretty msg)
+  putStrLn ""
 
 data REPLInfo =
   REPLInfo { rewriterInfo :: Some (R.RewriterInfo ())
