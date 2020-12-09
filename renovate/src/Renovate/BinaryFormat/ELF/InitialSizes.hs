@@ -32,9 +32,6 @@ data InitialSizes w =
                , programHeaderTable :: !(Extent w)
                }
 
--- NOTE: Will have to traverse the ELF file to get the section index numbers;
--- unless the 'shdrCount' is accurate and they are required to be contiguous
-
 computeInitialSizes :: E.ElfHeaderInfo w -> InitialSizes w
 computeInitialSizes ehi =
   InitialSizes { sectionExtents = V.ifoldl' addSectionExtent Map.empty (E.headerShdrs ehi)
