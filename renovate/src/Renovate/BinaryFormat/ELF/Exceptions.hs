@@ -1,3 +1,6 @@
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-
 Module : Renovate.BinaryFormat.ELF.Exceptions
 Description : Exceptions that may arise during ELF rewriting
@@ -15,7 +18,10 @@ module Renovate.BinaryFormat.ELF.Exceptions
   ) where
 
 import qualified Control.Monad.Catch.Pure as P
+import qualified Data.Binary.Get as DBG
+import qualified Data.ElfEdit as EE
 import           Data.Word (Word64)
+import qualified GHC.Stack as Stack
 
 import qualified Data.ElfEdit as E
 
@@ -39,31 +45,27 @@ wrapErrorMessage classifier msg =
              ]
 
 data ElfRewritingException =
-    WrongNumberOfPHDRs [E.SegmentIndex]
-  | TooManyEXIDXs [E.SegmentIndex]
+    TooManyEXIDXs [E.SegmentIndex]
   | WrongEXIDXIndex E.SegmentIndex
   | NoSpaceForPHDRs Word64 Word64
-  | WrongNumberOfSegmentsWithIndex Int E.SegmentIndex
-  deriving (Eq, Ord, Show)
+  | CouldNotDecodeElf Stack.CallStack DBG.ByteOffset String
+  | forall w . (Integral (EE.ElfWordType w)) => NoLoadableSegments [EE.Phdr w]
+
+deriving instance Show ElfRewritingException
 
 classifyException :: ElfRewritingException -> ExceptionClassification
 classifyException =
   \case
     TooManyEXIDXs{} -> MalformedInput
     WrongEXIDXIndex{} -> MalformedInput
-    WrongNumberOfPHDRs{} -> InternalError
     NoSpaceForPHDRs{} -> InternalError
-    WrongNumberOfSegmentsWithIndex{} -> InternalError
+    CouldNotDecodeElf {} -> InternalError
+    NoLoadableSegments {} -> InternalError
 
 printELFRewritingException :: ElfRewritingException -> String
 printELFRewritingException exception =
   wrapErrorMessage (classifyException exception) $
     case exception of
-      WrongNumberOfPHDRs idxs ->
-        unwords
-          [ "Wrong number of PT_PHDR segments, at the following indices:"
-          , show idxs
-          ]
       WrongEXIDXIndex idx ->
         unwords
           [ "Expected EXIDX segment to have index 0, but it had index"
@@ -80,12 +82,15 @@ printELFRewritingException exception =
           , "Offset of PHDR segment: " ++ show offset
           , "Size of PHDR segment: " ++ show size
           ]
-      WrongNumberOfSegmentsWithIndex howMany idx ->
+      CouldNotDecodeElf ctx off msg ->
         unwords
-          [ "Expected exactly one segment with index"
-          , show idx
-          , "but found"
-          , show howMany
+          [ "Could not decode encoded ELF in"
+          , Stack.prettyCallStack ctx
+          , "at offset"
+          , show off
+          , ":"
+          , msg
           ]
+      NoLoadableSegments phdrs -> ("No loadable segments: " ++ show phdrs)
 
 instance P.Exception ElfRewritingException

@@ -12,6 +12,7 @@ module Renovate.BinaryFormat.ELF.Rewriter (
   SomeConcreteBlocks(..),
   SomeConcretizedBlocks(..),
   assertM,
+  logDiagnostic,
   -- * Lenses
   riInitialBytes,
   riStats,
@@ -65,6 +66,7 @@ import qualified Data.Generics.Product as GL
 import qualified Data.Map as M
 import qualified Data.Set as S
 import           Data.Word ( Word16, Word64 )
+import qualified Lumberjack as LJ
 
 import           Prelude
 
@@ -92,7 +94,7 @@ data RewriterInfo lm arch =
   RewriterInfo { _riOverwrittenRegions :: [(String, Word64)]
                -- ^ The name of a data region and its length (which is
                -- the number of zero bytes that that replaced it)
-               , _riAppendedSegments :: [(E.ElfSegmentType, Word16, Word64, Word64)]
+               , _riAppendedSegments :: [(E.PhdrType, Word16, Word64, Word64)]
                -- ^ The type of the segment, the index of the segment,
                -- the aligned offset at which it will be placed, the
                -- amount of padding required.
@@ -105,6 +107,7 @@ data RewriterInfo lm arch =
                , _riInstrumentationSites :: [RW.RewriteSite arch]
                , _riLogMsgs :: [lm]
                , _riELF :: E.Elf (MM.ArchAddrWidth arch)
+               , _riInitialELFHeader :: E.ElfHeaderInfo (MM.ArchAddrWidth arch)
                , _riOriginalTextSize :: Int
                -- ^ The number of bytes in the original text section
                , _riNewTextSize :: Int
@@ -150,20 +153,22 @@ newtype ElfRewriter lm arch a =
     )
 
 runElfRewriter :: E.ElfWidthConstraints (MM.ArchAddrWidth arch)
-               => RenovateConfig arch binFmt callbacks b
+               => LJ.LogAction IO RD.Diagnostic
+               -> RenovateConfig arch binFmt callbacks b
+               -> E.ElfHeaderInfo (MM.ArchAddrWidth arch)
                -> E.Elf (MM.ArchAddrWidth arch)
                -> ElfRewriter lm arch a
                -> IO (a, RewriterInfo lm arch, Env.RewriterEnv arch)
-runElfRewriter config e a = do
-  env <- Env.makeRewriterEnv config e
+runElfRewriter logAction config ehi e a = do
+  env <- Env.makeRewriterEnv logAction config e
   (result, info) <-
     S.runStateT
       (R.runReaderT (unElfRewrite a) env)
-      (emptyRewriterInfo e)
+      (emptyRewriterInfo ehi e)
   return (result, info, env)
 
-emptyRewriterInfo :: E.Elf (MM.ArchAddrWidth arch) -> RewriterInfo lm arch
-emptyRewriterInfo e = RewriterInfo { _riOverwrittenRegions       = []
+emptyRewriterInfo :: E.ElfHeaderInfo (MM.ArchAddrWidth arch) -> E.Elf (MM.ArchAddrWidth arch) -> RewriterInfo lm arch
+emptyRewriterInfo ehi e = RewriterInfo { _riOverwrittenRegions       = []
                                    , _riAppendedSegments         = []
                                    , _riEntryPointAddress        = Nothing
                                    , _riSectionBaseAddress       = Nothing
@@ -174,6 +179,7 @@ emptyRewriterInfo e = RewriterInfo { _riOverwrittenRegions       = []
                                    , _riInstrumentationSites     = []
                                    , _riLogMsgs                  = []
                                    , _riELF                      = e
+                                   , _riInitialELFHeader         = ehi
                                    , _riOriginalTextSize         = 0
                                    , _riTransitivelyIncompleteBlocks = S.empty
                                    , _riIncompleteFunctions      = M.empty
@@ -184,6 +190,12 @@ emptyRewriterInfo e = RewriterInfo { _riOverwrittenRegions       = []
                                    , _riTranslationErrors        = []
                                    , _riClassifyFailures         = []
                                    }
+
+logDiagnostic :: RD.Diagnostic -> ElfRewriter lm arch ()
+logDiagnostic d = do
+  la <- R.asks Env.reLogAction
+  IO.liftIO $ LJ.writeLog la d
+
 riOriginalTextSize :: L.Simple L.Lens (RewriterInfo lm arch) Int
 riOriginalTextSize = GL.field @"_riOriginalTextSize"
 
@@ -205,7 +217,7 @@ riIncompleteFunctions = GL.field @"_riIncompleteFunctions"
 riOverwrittenRegions :: L.Simple L.Lens (RewriterInfo lm arch) [(String, Word64)]
 riOverwrittenRegions = GL.field @"_riOverwrittenRegions"
 
-riAppendedSegments :: L.Simple L.Lens (RewriterInfo lm arch) [(E.ElfSegmentType, Word16, Word64, Word64)]
+riAppendedSegments :: L.Simple L.Lens (RewriterInfo lm arch) [(E.PhdrType, Word16, Word64, Word64)]
 riAppendedSegments = GL.field @"_riAppendedSegments"
 
 riEntryPointAddress :: L.Simple L.Lens (RewriterInfo lm arch) (Maybe Word64)

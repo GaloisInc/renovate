@@ -12,6 +12,9 @@ A typical analysis looks something like:
 >>> :set -XDataKinds
 >>> :set -XTypeApplications
 >>> import           Data.Functor.Const ( Const(..) )
+>>> import qualified Lumberjack as LJ
+>>> import qualified Prettyprinter as PD
+>>> import qualified Prettyprinter.Render.Text as PDT
 >>> import qualified Data.ElfEdit as E                   -- (elf-edit)
 >>> import qualified Data.Macaw.BinaryLoader as MBL      -- (macaw-loader)
 >>> import           Data.Macaw.BinaryLoader.X86 ()      -- (macaw-loader-x86)
@@ -42,11 +45,17 @@ analysisConfigs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.c
 :}
 
 >>> :{
-myAnalyzeElf :: E.SomeElf E.Elf -> IO Int
+simpleConsoleLogger :: LJ.LogAction IO R.Diagnostic
+simpleConsoleLogger = LJ.LogAction $ \msg -> do
+  PDT.putDoc (PD.pretty msg)
+:}
+
+>>> :{
+myAnalyzeElf :: E.SomeElf E.ElfHeaderInfo -> IO Int
 myAnalyzeElf someElf = do
   fha <- FH.newHandleAllocator
   R.withElfConfig someElf analysisConfigs $ \config e loadedBinary -> do
-    (res, diags) <- R.analyzeElf config fha e loadedBinary
+    (res, diags) <- R.analyzeElf simpleConsoleLogger config fha e loadedBinary
     print diags
     return (getConst res)
 :}
@@ -146,12 +155,12 @@ analysisConfigs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.c
 :}
 
 >>> :{
-myAnalyzeElf :: E.SomeElf E.Elf -> IO Int
+myAnalyzeElf :: E.SomeElf E.ElfHeaderInfo -> IO Int
 myAnalyzeElf someElf = do
   fha <- FH.newHandleAllocator
   R.withElfConfig someElf analysisConfigs $ \config e loadedBinary -> do
     let strat = R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline
-    (newElf, res, ri, _) <- R.rewriteElf config fha e loadedBinary strat
+    (newElf, res, ri, _) <- R.rewriteElf simpleConsoleLogger config fha e loadedBinary strat
     print (getConst res)
     print (ri ^. R.riBlockMapping)
     return (getConst res)

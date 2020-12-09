@@ -43,6 +43,7 @@ library
                        Renovate.BinaryFormat.ELF.Common
                        Renovate.BinaryFormat.ELF.BSS
                        Renovate.BinaryFormat.ELF.Exceptions
+                       Renovate.BinaryFormat.ELF.InitialSizes
                        Renovate.BinaryFormat.ELF.Rewriter
                        Renovate.BinaryFormat.ELF.Rewriter.Env
                        Renovate.ISA
@@ -55,6 +56,7 @@ library
   build-depends:       base >=4.10 && <5,
                        panic >= 0.4 && < 0.5,
                        bytestring,
+                       binary,
                        text,
                        containers >= 0.5 && < 0.7,
                        heaps >= 0.3 && < 0.4,
@@ -96,6 +98,8 @@ executable run-discovery
                        elf-edit,
                        macaw-base,
                        macaw-loader,
+                       macaw-loader-ppc,
+                       macaw-loader-x86,
                        macaw-ppc,
                        macaw-x86,
                        parameterized-utils,

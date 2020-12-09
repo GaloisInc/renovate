@@ -10,6 +10,7 @@ data RenovatePanic = Layout
                    | BasicBlockSize
                    | Concretize
                    | Symbolize
+                   | ELFWriting
   deriving (Show)
 
 instance P.PanicComponent RenovatePanic where

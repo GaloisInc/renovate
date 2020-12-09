@@ -15,6 +15,7 @@ import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Typeable ( Typeable )
 import           Data.Word ( Word64 )
 
+import qualified Data.ElfEdit as EE
 import qualified Data.Macaw.CFG as MC
 
 import           Renovate.Address
@@ -36,6 +37,8 @@ data Diagnostic = forall arch t tp . InstructionIsNotJump (ISA arch) (RB.Instruc
                 | forall w . MC.MemWidth w => MemoryError (MC.MemoryError w)
                 | forall w . MC.MemWidth w => NoByteRegionAtAddress (MC.MemAddr w)
                 | forall arch . (MC.MemWidth (MC.ArchAddrWidth arch)) => EmptyBlock (ConcreteAddress arch)
+                | ELFParseErrors [EE.ElfParseError]
+                | ELFMessage String
                 deriving (Typeable)
 
 instance Show Diagnostic where
@@ -83,6 +86,12 @@ instance PD.Pretty Diagnostic where
     PD.hsep [ PD.pretty "No byte region at address:"
             , PD.pretty (show addr)
             ]
+  pretty (ELFParseErrors errs) =
+    PD.vsep ( PD.pretty "Error parsing ELF file:"
+            : map PD.viaShow errs
+            )
+  pretty (ELFMessage msg) =
+    PD.hsep [ PD.pretty "ELF Writer: ", PD.pretty msg ]
 
 -- | A set of diagnostic messages emitted during a recovery or redirect -- analysis.
 data Diagnostics = Diagnostics { diagnosticMessages :: !(Seq.Seq Diagnostic) }

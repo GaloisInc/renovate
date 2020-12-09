@@ -15,12 +15,13 @@ module Renovate.BinaryFormat.ELF.Internal
   ( findSpaceForPHDRs
   , LoadSegmentInfo(..)
   , makeLoadSegmentInfo
+  , PHDRAddress(..)
   ) where
 
-import qualified Data.Ord as O
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as NEL
 import qualified Data.Maybe as Maybe
+import qualified Data.Ord as O
 
 import qualified Data.ElfEdit as E
 
@@ -50,6 +51,10 @@ makeLoadSegmentInfo phdr =
                               , pMemSz = E.phdrMemSize phdr
                               }
 
+data PHDRAddress w = TLSSafeAddress (E.ElfWordType w)
+                   | FallbackAddress (E.ElfWordType w)
+                   | NoAddress
+
 -- | Find a spot in the program's virtual address space for the new PHDR segment
 --
 -- This is an implementation of the core of 'choosePHDRSegmentAddress', see the
@@ -62,11 +67,11 @@ makeLoadSegmentInfo phdr =
 -- It guarantees that the address it returns is greater than or equal to the
 -- given offset (see commentary on 'doRewrite' in "Renovate.BinaryFormat.ELF").
 findSpaceForPHDRs ::
-  (Num (E.ElfWordType w), Ord (E.ElfWordType w), Integral (E.ElfWordType w)) =>
+  (E.ElfWidthConstraints w) =>
   NEL.NonEmpty (LoadSegmentInfo w) {-^ Info about other LOAD segments -} ->
   E.ElfWordType w {- ^ Offset of PHDR in file -} ->
   E.ElfWordType w {- ^ Size of PHDR segment -} ->
-  Maybe (E.ElfWordType w)
+  PHDRAddress w
 findSpaceForPHDRs segInfos phdrOffset phdrSize =
   let sortedSegInfos@(firstSegment NEL.:| _) =
         NEL.sortBy (O.comparing pVAddr) segInfos
@@ -125,10 +130,10 @@ findSpaceForPHDRs segInfos phdrOffset phdrSize =
       validCandidates = filter (>= phdrOffset) rawCandidates
   in
      if null validCandidates
-     then Nothing
+     then NoAddress
      else
        let best = L.minimumBy (O.comparing (\addr -> abs (addr - phdrOffset))) validCandidates
        in if let m = minimum (fmap (\segInfo -> abs (pVAddr segInfo - pOffset segInfo)) segInfos)
              in m < abs (best - phdrOffset)
-          then Nothing
-          else Just best
+          then FallbackAddress best
+          else TLSSafeAddress best
