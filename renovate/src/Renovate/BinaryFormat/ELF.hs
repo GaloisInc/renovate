@@ -607,12 +607,18 @@ nullifyPhdr s = pure $ case E.elfSegmentType s of
 -- 3. The size and file offset of the program header segment don't depend on
 --    the virtual address chosen
 choosePHDRSegmentAddress ::
-  (w ~ MM.ArchAddrWidth arch, E.ElfWidthConstraints w) =>
+  (w ~ MM.ArchAddrWidth arch, E.ElfWidthConstraints w, Stack.HasCallStack) =>
   E.Elf w ->
   ElfRewriter lm arch (E.ElfWordType w)
 choosePHDRSegmentAddress elf = do
-  -- A high (hopefully unused), page-aligned address
-  let defaultAddress = 0x900000
+  -- The initial virtual address to assign to the provisional PHDR segment.  It
+  -- should not actually matter what this is, because we are computing the real
+  -- address that will be assigned to the segment.  It does, however, have to
+  -- not be too high, otherwise it will "consume" all of the address space after
+  -- the existing segments, breaking the search for an unused address.
+  --
+  -- Given that, 0 seems fine here.
+  let defaultAddress = 0
 
   -- To figure out where to put this new segment, we'll need to know its offset
   -- and how big it is, so we first append it at an arbitrary address and get
@@ -624,15 +630,19 @@ choosePHDRSegmentAddress elf = do
   -- one can't be found.
   (tlssegment, segmentInfos) <- indexLoadableSegments elf fakePhdrSeg
   case findSpaceForPHDRs segmentInfos projectedOffset requiredSize of
-    Nothing ->
+    NoAddress -> P.throwM $ NoSpaceForPHDRs (fromIntegral projectedOffset) (fromIntegral requiredSize)
+    TLSSafeAddress addr -> pure addr
+    FallbackAddress addr ->
+      -- The fallback address is a free address that does not obey all of the
+      -- restrictions necessary for QEMU+TLS compatibility.
+      --
       -- This is fine in practice if there's no thread-local storage,
       -- because libc won't need to walk the program headers to initialize
       -- thread-local storage.
       case tlssegment of
-        NoTLSSegment -> pure defaultAddress
+        NoTLSSegment -> pure addr
         TLSSegmentIndex {} ->
           P.throwM $ NoSpaceForPHDRs (fromIntegral projectedOffset) (fromIntegral requiredSize)
-    Just addr -> pure addr
 
 -- | Render the given 'E.Elf' into a bytestring and reparse it to get a 'E.ElfHeaderInfo'
 renderElfHeader :: (Stack.HasCallStack, P.MonadThrow m)
