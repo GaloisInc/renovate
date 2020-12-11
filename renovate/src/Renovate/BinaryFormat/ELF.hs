@@ -436,7 +436,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   (newTextSecIdx, newTextSec) <- withCurrentELF (newTextSection newTextAddr instrumentedBytes)
   -- Wrap the new text section in a loadable segment
   newTextSegment <- withCurrentELF (newExecutableSegment newTextAddr (Seq.singleton (E.ElfDataSection newTextSec)))
-  modifyCurrentELF (appendSegment newTextSegment)
+  modifyCurrentELF (liftElfAction (appendSegment newTextSegment))
 
 
   -- Update the symbol table (if there is one)
@@ -466,7 +466,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   let dataPage = fromMaybe (B.pack (replicate 4096 0)) mNewData
   newDataSec <- withCurrentELF (newDataSection (fromIntegral (rcDataLayoutBase cfg)) dataPage)
   newDataSeg <- withCurrentELF (newDataSegment newDataSec)
-  modifyCurrentELF (appendSegment newDataSeg)
+  modifyCurrentELF (liftElfAction (appendSegment newDataSeg))
 
   modifyCurrentELF appendHeaders
   -- Now overwrite the original code (in the .text segment) with the
@@ -504,7 +504,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- other parts of the ELF don't shift around, but inform the audience that
   -- they're uninteresting.
   modifyCurrentELF (\e -> ((),) <$> E.traverseElfSegments nullifyPhdr e)
-  modifyCurrentELF (appendSegment newSegment)
+  modifyCurrentELF (liftElfAction (appendSegment newSegment))
 
   -- Linux calculates the program break based on the virtual address and size of
   -- the LOAD segment with the highest virtual address, whereas QEMU calculates
@@ -521,24 +521,22 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   phdrActualSize <- withCurrentELF getPHDRMemSize
 
   lastWritableSegmentIdx <- withCurrentELF (pure . (+1) . nextSegmentIndex)
-  modifyCurrentELF $ appendSegment $
-    let alignedAddr =
-          alignValue
+  let alignedWritableSegAddr = alignValue
             -- Put this new segment immediately after the PHDRs in the virtual
             -- address space
             (E.elfSegmentVirtAddr newSegment + phdrActualSize)
             (fromIntegral pageAlignment)
-    in E.ElfSegment
+  let lastWritableSegment = E.ElfSegment
          { E.elfSegmentType = E.PT_LOAD
          , E.elfSegmentFlags = E.pf_w
          , E.elfSegmentIndex = lastWritableSegmentIdx
-         , E.elfSegmentVirtAddr = alignedAddr
-         , E.elfSegmentPhysAddr = alignedAddr
+         , E.elfSegmentVirtAddr = alignedWritableSegAddr
+         , E.elfSegmentPhysAddr = alignedWritableSegAddr
          , E.elfSegmentAlign = 1
          , E.elfSegmentMemSize = E.ElfRelativeSize 0
          , E.elfSegmentData = Seq.singleton (E.ElfDataRaw "")
          }
-
+  modifyCurrentELF (liftElfAction (appendSegment lastWritableSegment))
   return analysisResult
 
 -- | Collect the currently-used section numbers in the 'E.Elf' file
@@ -678,9 +676,7 @@ indexLoadableSegments
   -- ^ The temporary PHDR segment
   -> ElfRewriter lm arch (TLSSegmentIndex, NEL.NonEmpty (LoadSegmentInfo w))
 indexLoadableSegments e phdrSeg = do
-  -- NOTE: This segment append operation is in 'ElfRewriter', but does not
-  -- affect the state.
-  ((), e') <- appendSegment phdrSeg e
+  let e' = appendSegment phdrSeg e
   ehi <- renderElfHeader e'
   let segInfos = mapMaybe makeLoadSegmentInfo (E.headerPhdrs ehi)
   case NEL.nonEmpty segInfos of
@@ -732,12 +728,8 @@ phdrExtentsWith
   -> E.ElfSegment w
   -> ElfRewriter lm arch (EIS.Extent w)
 phdrExtentsWith elf seg = do
-  -- NOTE: This does not actually modify the rewriter state at all, despite
-  -- being in the 'ElfRewriter'; that function only has that type for ease of
-  -- use with some other combinators
-  --
   -- FIXME: Assert that there is only a single instance of 'E.ElfDataSegmentHeaders'
-  ((), elf') <- appendSegment seg elf
+  let elf' = appendSegment seg elf
   ehi <- renderElfHeader elf'
   let (E.FileOffset off, sz) = E.phdrTableRange ehi
   return EIS.Extent { EIS.offset = off, EIS.size = sz }
@@ -753,16 +745,17 @@ programHeaderCount e = sum [ E.elfSegmentCount e
                            , length (E.elfGnuRelroRegions e)
                            ]
 
--- | Append a segment to the current ELF binary
+liftElfAction :: (E.Elf w -> E.Elf w) -> E.Elf w -> ElfRewriter lm arch ((), E.Elf w)
+liftElfAction a e = return ((), a e)
+
+-- | Append a segment to the provided ELF binary
 --
 -- This function checks the alignment requirement of the segment and adds the
 -- necessary padding to maintain the alignment constraints.
-appendSegment :: ( w ~ MM.ArchAddrWidth arch
-                 , E.ElfWidthConstraints w
-                 )
+appendSegment :: ( E.ElfWidthConstraints w )
               => E.ElfSegment w
               -> E.Elf w
-              -> ElfRewriter lm arch ((), E.Elf w)
+              -> E.Elf w
 appendSegment seg e = do
   let bytes = E.renderElf e
   let currentOffset = LBS.length bytes
@@ -776,7 +769,7 @@ appendSegment seg e = do
   let paddingBytes = desiredOffset - currentOffset
   let paddingRegion = E.ElfDataRaw (B.replicate (fromIntegral paddingBytes) 0)
   let newRegions = if paddingBytes > 0 then [ paddingRegion, E.ElfDataSegment seg ] else [ E.ElfDataSegment seg ]
-  return ((), e L.& E.elfFileData L.%~ (`mappend` Seq.fromList newRegions))
+  e L.& E.elfFileData L.%~ (`mappend` Seq.fromList newRegions)
 
 -- | Create a fresh segment containing only the PHDR table
 --
