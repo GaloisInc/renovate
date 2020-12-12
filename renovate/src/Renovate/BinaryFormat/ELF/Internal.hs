@@ -55,6 +55,10 @@ data PHDRAddress w = TLSSafeAddress (E.ElfWordType w)
                    | FallbackAddress (E.ElfWordType w)
                    | NoAddress
 
+deriving instance Eq (E.ElfWordType w) => Eq (PHDRAddress w)
+deriving instance Show (E.ElfWordType w) => Show (PHDRAddress w)
+-- Eq and Show instances are primarily for unit testing
+
 -- | Find a spot in the program's virtual address space for the new PHDR segment
 --
 -- This is an implementation of the core of 'choosePHDRSegmentAddress', see the
