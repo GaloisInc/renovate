@@ -46,7 +46,19 @@ jobs:
         restore-keys: |
           cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles(format('cabal.GHC-{0}.config', matrix.ghc)) }}-
 
-    - name: Build
+    - name: Build renovate
+      run: |
+        cp cabal.project.dist cabal.project
+        cabal v2-configure pkg:renovate --write-ghc-environment-files=always -j1 --enable-tests
+        cabal v2-build pkg:renovate
+
+    - name: Build renovate x86
+      run: |
+        cp cabal.project.dist cabal.project
+        cabal v2-configure pkg:renovate-x86 --write-ghc-environment-files=always -j1 --enable-tests
+        cabal v2-build pkg:renovate-x86
+
+    - name: Build refurbish
       run: |
         cp cabal.project.dist cabal.project
         cabal v2-configure pkg:refurbish --write-ghc-environment-files=always -j1 --enable-tests
@@ -54,7 +66,11 @@ jobs:
 
     - name: Test renovate
       run: |
-        cabal v2-test pkg:renovate --test-options='--use-docker-runner=False'
+        cabal v2-test pkg:renovate
+
+    - name: Test renovate x86
+      run: |
+        cabal v2-test pkg:renovate-x86
 
     - name: Test refurbish
       if: runner.os == 'Linux'
