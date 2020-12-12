@@ -34,7 +34,7 @@ library
                        parameterized-utils,
                        ansi-wl-pprint,
                        exceptions,
-                       prettyprinter,
+                       prettyprinter >= 1.7.0,
                        located-base >= 0.1 && < 0.2,
                        renovate
   hs-source-dirs:      src
