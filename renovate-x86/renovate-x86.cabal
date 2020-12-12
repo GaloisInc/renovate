@@ -61,8 +61,10 @@ test-suite renovate-x86-tests
                  elf-edit,
                  filepath,
                  tasty-hunit,
+                 lumberjack,
                  macaw-loader,
                  macaw-loader-x86,
+                 prettyprinter,
                  renovate,
                  renovate-x86,
                  crucible

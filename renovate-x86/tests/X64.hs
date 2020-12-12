@@ -12,11 +12,13 @@ import qualified Data.ByteString as B
 import qualified Data.Foldable as F
 import qualified Data.Map as M
 import qualified Data.Set as S
-import Data.Word ( Word64 )
-import System.FilePath ( (<.>), replaceExtension )
+import           Data.Word ( Word64 )
+import qualified Lumberjack as LJ
+import qualified Prettyprinter as PD
+import           System.FilePath ( (<.>), replaceExtension )
 import qualified Test.Tasty as T
 import qualified Test.Tasty.HUnit as T
-import Text.Read ( readMaybe )
+import           Text.Read ( readMaybe )
 
 import qualified Data.Parameterized.NatRepr as NR
 import qualified Data.Macaw.BinaryLoader as MBL
@@ -79,10 +81,12 @@ mkTest :: C.HandleAllocator -> FilePath -> T.TestTree
 mkTest hdlAlloc fp = T.testCase fp $ withELF elfFilename testRewrite
   where
     elfFilename = replaceExtension fp "exe"
+    testRewrite :: E.SomeElf E.ElfHeaderInfo -> IO ()
     testRewrite elf = do
       Just expected <- readMaybe <$> readFile (fp <.> "expected")
-      let cfg = [(R.X86_64, R.SomeConfig NR.knownNat MBL.Elf64Repr (R64.config (R.AnalyzeOnly (analysis expected))))]
-      R.withElfConfig (E.Elf64 elf) cfg (testBlockRecovery hdlAlloc)
+      let cfg = [(R.X86_64
+                 , R.SomeConfig NR.knownNat MBL.Elf64Repr (R64.config (R.AnalyzeOnly (analysis expected))))]
+      R.withElfConfig elf cfg (testBlockRecovery hdlAlloc)
 
 
 analysis :: (Monad m, R.HasAnalysisEnv env, MM.MemWidth (MM.ArchAddrWidth arch))
@@ -120,20 +124,18 @@ testBlockRecovery :: ( w ~ MM.ArchAddrWidth arch
                      )
                   => C.HandleAllocator
                   -> R.RenovateConfig arch binFmt R.AnalyzeOnly TestConfig
-                  -> E.Elf w
+                  -> E.ElfHeaderInfo w
                   -> MBL.LoadedBinary arch binFmt
                   -> T.Assertion
 testBlockRecovery hdlAlloc rc elf loadedBinary = do
-  ((TestCfg status msgs), _) <- R.analyzeElf rc hdlAlloc elf loadedBinary
+  let logger = LJ.LogAction $ putStrLn . show . PD.pretty
+  ((TestCfg status msgs), _) <- R.analyzeElf logger rc hdlAlloc elf loadedBinary
   T.assertBool (unlines ("Analysis Failed:" : msgs)) status
 
-withELF :: FilePath -> (E.Elf 64 -> IO ()) -> IO ()
+withELF :: FilePath -> (E.SomeElf E.ElfHeaderInfo -> IO ()) -> IO ()
 withELF fp k = do
   bytes <- B.readFile fp
-  case E.parseElf bytes of
-    E.ElfHeaderError off msg ->
+  case E.decodeElfHeaderInfo bytes of
+    Left (off, msg) ->
       error ("Error parsing ELF header at offset " ++ show off ++ ": " ++ msg)
-    E.Elf32Res [] _e32 -> error "ELF32 is unsupported in the test suite"
-    E.Elf64Res [] e64 -> k e64
-    E.Elf32Res errs _ -> error ("Errors while parsing ELF file: " ++ show errs)
-    E.Elf64Res errs _ -> error ("Errors while parsing ELF file: " ++ show errs)
+    Right someElfHdr -> k someElfHdr
