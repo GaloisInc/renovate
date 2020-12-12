@@ -52,7 +52,11 @@ jobs:
         cabal v2-configure pkg:refurbish --write-ghc-environment-files=always -j1 --enable-tests
         cabal v2-build pkg:refurbish
 
-    - name: Test
+    - name: Test renovate
+      run: |
+        cabal v2-test pkg:renovate --test-options='--use-docker-runner=False'
+
+    - name: Test refurbish
       if: runner.os == 'Linux'
       # NOTE: Locally, we use a docker runner to isolate test cases in case the
       # rewriter breaks them in a dangerous way. Docker-in-docker isn't so great
