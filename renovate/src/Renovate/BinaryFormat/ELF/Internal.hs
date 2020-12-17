@@ -51,9 +51,8 @@ makeLoadSegmentInfo phdr =
                               , pMemSz = E.phdrMemSize phdr
                               }
 
-data PHDRAddress w = TLSSafeAddress (E.ElfWordType w)
+data PHDRAddress w = TLSSafeAddress (E.ElfWordType w)  -- TLS = Thread Local Storage
                    | FallbackAddress (E.ElfWordType w)
-                   | NoAddress
 
 deriving instance Eq (E.ElfWordType w) => Eq (PHDRAddress w)
 deriving instance Show (E.ElfWordType w) => Show (PHDRAddress w)
