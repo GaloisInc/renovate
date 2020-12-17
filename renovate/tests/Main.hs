@@ -95,14 +95,16 @@ findSpaceForPHDRsTests =
                           }
             in ELF.findSpaceForPHDRs (info1 NEL.:| [info2]) offset 0x160
     -- Values in the following test case are taken from
-    -- linked-list.noopt.nostdlib.aarch32.exe. Unfortunately, it is
-    -- unsatisfiable because the .bss section has a HUGE buffer in it, which
-    -- overlaps with where we want to put the new PHDRs.
+    -- linked-list.noopt.nostdlib.aarch32.exe. The .bss section has a
+    -- HUGE buffer in it, which overlaps with the optimal placement of
+    -- a new PHDR segment.  However, we can still find a
+    -- FallbackAddress which is safe assuming the binary has no TLS
+    -- (Thread Local Storage) segment (and it doesn't).
     , T.testCase "linked-list.noopt.nostdlib.aarch32.exe" $
         -- Type           Offset   VirtAddr   PhysAddr   FileSiz MemSiz   Flg Align
         -- LOAD           0x000000 0x00010000 0x00010000 0x0031c 0x0031c  R E 0x10000
         -- LOAD           0x00031c 0x0002031c 0x0002031c 0x00004 0x400008 RW  0x10000
-        ELF.NoAddress T.@=?
+        ELF.FallbackAddress 0x421000 T.@=?
           let info1 :: ELF.LoadSegmentInfo 64
               info1 = ELF.LoadSegmentInfo
                         { ELF.pOffset = 0x0
