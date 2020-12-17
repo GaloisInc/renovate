@@ -90,15 +90,14 @@ findSpaceForPHDRs segInfos phdrOffset phdrSize =
         if pVAddr firstSegment > phdrSize + pgAlign
         then Just $ alignValueDown (pVAddr firstSegment - phdrSize - 1) pgAlign
         else Nothing
-      afterLast = Maybe.catMaybes
-        [ -- Immediately after
-          Just $ alignValue (pVAddr lastSegment + pMemSz lastSegment + 1) pgAlign
-        , -- Possibly much further after, if the provided PHDR segment offset is
-          -- higher than the range covered by the last segment.
-          if phdrOffset > pVAddr lastSegment + pMemSz lastSegment
-          then Just $ alignValue phdrOffset pgAlign
-          else Nothing
-        ]
+      afterLast =
+        let lastEnd = pVAddr lastSegment + pMemSz lastSegment
+        in if phdrOffset > lastEnd
+          then alignValue phdrOffset pgAlign
+               -- Possibly much further after, if the provided PHDR segment offset is
+               -- higher than the range covered by the last segment.
+          else alignValue (lastEnd + 1) pgAlign
+               -- Immediately after, which is better/closer than the original offset
       -- We don't have to check every address between two segments, just the
       -- maximal and minimal ones.
       --
@@ -132,14 +131,10 @@ findSpaceForPHDRs segInfos phdrOffset phdrSize =
                     ]
                   ]
 
-      rawCandidates = Maybe.maybeToList beforeFirst ++ between ++ afterLast
-      validCandidates = filter (>= phdrOffset) rawCandidates
-  in
-     if null validCandidates
-     then NoAddress
-     else
-       let best = L.minimumBy (O.comparing (\addr -> abs (addr - phdrOffset))) validCandidates
-       in if let m = minimum (fmap (\segInfo -> abs (pVAddr segInfo - pOffset segInfo)) segInfos)
-             in m < abs (best - phdrOffset)
-          then FallbackAddress best
-          else TLSSafeAddress best
+      rawCandidates = Maybe.maybeToList beforeFirst ++ between
+      validCandidates = afterLast : filter (>= phdrOffset) rawCandidates
+  in let best = L.minimumBy (O.comparing (\addr -> abs (addr - phdrOffset))) validCandidates
+     in if let m = minimum (fmap (\segInfo -> abs (pVAddr segInfo - pOffset segInfo)) segInfos)
+           in m < abs (best - phdrOffset)
+        then FallbackAddress best
+        else TLSSafeAddress best
