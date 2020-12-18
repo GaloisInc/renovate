@@ -628,7 +628,6 @@ choosePHDRSegmentAddress elf = do
   -- one can't be found.
   (tlssegment, segmentInfos) <- indexLoadableSegments elf fakePhdrSeg
   case findSpaceForPHDRs segmentInfos projectedOffset requiredSize of
-    NoAddress -> P.throwM $ NoSpaceForPHDRs (fromIntegral projectedOffset) (fromIntegral requiredSize)
     TLSSafeAddress addr -> pure addr
     FallbackAddress addr ->
       -- The fallback address is a free address that does not obey all of the

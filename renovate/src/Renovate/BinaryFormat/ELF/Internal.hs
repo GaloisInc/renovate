@@ -51,9 +51,12 @@ makeLoadSegmentInfo phdr =
                               , pMemSz = E.phdrMemSize phdr
                               }
 
-data PHDRAddress w = TLSSafeAddress (E.ElfWordType w)
+data PHDRAddress w = TLSSafeAddress (E.ElfWordType w)  -- TLS = Thread Local Storage
                    | FallbackAddress (E.ElfWordType w)
-                   | NoAddress
+
+deriving instance Eq (E.ElfWordType w) => Eq (PHDRAddress w)
+deriving instance Show (E.ElfWordType w) => Show (PHDRAddress w)
+-- Eq and Show instances are primarily for unit testing
 
 -- | Find a spot in the program's virtual address space for the new PHDR segment
 --
@@ -86,26 +89,27 @@ findSpaceForPHDRs segInfos phdrOffset phdrSize =
         if pVAddr firstSegment > phdrSize + pgAlign
         then Just $ alignValueDown (pVAddr firstSegment - phdrSize - 1) pgAlign
         else Nothing
-      afterLast = Maybe.catMaybes
-        [ -- Immediately after
-          Just $ alignValue (pVAddr lastSegment + pMemSz lastSegment + 1) pgAlign
-        , -- Possibly much further after, if the provided PHDR segment offset is
-          -- higher than the range covered by the last segment.
-          if phdrOffset > pVAddr lastSegment + pMemSz lastSegment
-          then Just $ alignValue phdrOffset pgAlign
-          else Nothing
-        ]
+      afterLast =
+        let lastEnd = pVAddr lastSegment + pMemSz lastSegment
+        in if phdrOffset > lastEnd
+          then alignValue phdrOffset pgAlign
+               -- Possibly much further after, if the provided PHDR segment offset is
+               -- higher than the range covered by the last segment.
+          else alignValue (lastEnd + 1) pgAlign
+               -- Immediately after, which is better/closer than the original offset
       -- We don't have to check every address between two segments, just the
       -- maximal and minimal ones.
       --
       -- In detail: For every pair (loSeg, hiSeg) of segments that are adjacent
       -- in the virtual address space,
-      -- * Find the lowest aligned address after the end of loSeg. If this
-      --   address plus the size of the PHDRs is less than the address of hiSeg,
-      --   add it to the set of candidate addresses.
-      -- * Find the highest aligned address before the start of hiSeg minus the
-      --   size of the PHDRs. If this address is higher than the end of loSeg,
-      --   add it to the set of candidate addresses.
+      --
+      --  * Find the lowest aligned address after the end of loSeg. If this
+      --    address plus the size of the PHDRs is less than the address of hiSeg,
+      --    add it to the set of candidate addresses.
+      --
+      --  * Find the highest aligned address before the start of hiSeg minus the
+      --    size of the PHDRs. If this address is higher than the end of loSeg,
+      --    add it to the set of candidate addresses.
       --
       -- In a later step, we winnow down these candidates to find the optimal
       -- address.
@@ -126,14 +130,10 @@ findSpaceForPHDRs segInfos phdrOffset phdrSize =
                     ]
                   ]
 
-      rawCandidates = Maybe.maybeToList beforeFirst ++ between ++ afterLast
-      validCandidates = filter (>= phdrOffset) rawCandidates
-  in
-     if null validCandidates
-     then NoAddress
-     else
-       let best = L.minimumBy (O.comparing (\addr -> abs (addr - phdrOffset))) validCandidates
-       in if let m = minimum (fmap (\segInfo -> abs (pVAddr segInfo - pOffset segInfo)) segInfos)
-             in m < abs (best - phdrOffset)
-          then FallbackAddress best
-          else TLSSafeAddress best
+      rawCandidates = Maybe.maybeToList beforeFirst ++ between
+      validCandidates = afterLast : filter (>= phdrOffset) rawCandidates
+  in let best = L.minimumBy (O.comparing (\addr -> abs (addr - phdrOffset))) validCandidates
+     in if let m = minimum (fmap (\segInfo -> abs (pVAddr segInfo - pOffset segInfo)) segInfos)
+           in m < abs (best - phdrOffset)
+        then FallbackAddress best
+        else TLSSafeAddress best
