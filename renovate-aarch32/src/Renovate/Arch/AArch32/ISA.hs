@@ -435,7 +435,7 @@ armJumpType i mem insnAddr pb =
               Some (R.RelativeJump R.Conditional insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
             -- FIXME: Handle T32 cases
             _ -> Some (R.NotInstrumentable insnAddr)
-        MD.ParsedLookupTable _regs _cond _tgts ->
+        MD.ParsedLookupTable _regs _cond _tgts _ ->
           -- NOTE: Macaw won't identify a conditional indirect jump as a jump
           -- table, so these are always unconditional until that is made more
           -- general.  macaw-refinement could identify one...
