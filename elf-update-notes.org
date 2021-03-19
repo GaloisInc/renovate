@@ -1,0 +1,27 @@
+Issues to keep in mind while updating renovate to use the new elf-edit API
+
+- We need to start with the primitive ElfHeaderInfo API in a few places (macaw-loader uses that now)
+- Offsets can't be calculated from the ~Elf~ itself; they can only be calculated with the ~ElfHeaderInfo~
+  - We can pre-compute all of the segment offsets before we start rewriting because we never move existing segments
+  - This affects ~choosePHDRSegmentAddress~ at least
+
+- Overwriting data in place is generally difficult (especially given the new API).
+  - Would it be easier to reconstruct a binary by copying over everything we want to keep, but while respecting alignment? We would just copy over all of the non-dynamic sized sections
+  - It seems like everything necessary could be computed from the ElfHeaderInfo object
+  - Step 1 of rewriting would be to copy over everything that is not dynamically-sized, but preserve offsets and alignment of everything else.  We could then put back all of the dynamic things at the end and append anything we need.  We can also pre-compute the new text section to avoid a traversal
+- There still isn't enough information to pull that off.  It looks like the minimum to expose would be the layout constructor, which would let us use the data region size calculation code
+
+** TODO ~segmentToPhdr~ has a similar issue where it needs to extract the bounds of the original phdrs
+** TODO ~getPHDR~ also has the same problem - we need a way to compute the size of the program headers
+** TODO ~replaceSectionWithPadding~ needs to compute the size of data regions to stub them out while not perturbing the offsets of other segments (this is especially important for the dynamically-sized tables)
+   - This could be done by re-rendering to bytes and parsing out a fresh ElfHeaderInfo structure.  It could also probably be pre-calculated
+** DONE ~appendDataRegion~ needs to be able to compute the current size of an ELF file so that it can determine how much padding is necessary.  There is a function to render ELF files, so that should be fine
+
+
+** List of functions that re-render an ELF file
+   - appendDataRegion (shouldn't matter, as long as the table goes at the end)
+   - appendSegment (shouldn't matter)
+   - getPHDRMemSize (requires a PHDR table - we have this one)
+   - phdrExtentsWith (requires PHDR table to be in a real spot)
+   - indexLoadableSegments (requires PHDR table)
+
