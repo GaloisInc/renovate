@@ -69,7 +69,7 @@ library
                        lens >= 4 && < 5,
                        generic-lens >= 0.5 && < 1.1,
                        located-base >= 0.1 && < 0.2,
-                       lumberjack >= 0.1 && < 0.2,
+                       lumberjack >= 0.1 && < 1.1,
                        union-find >= 0.2 && < 0.3,
                        prettyprinter >= 1.7 && < 1.8,
                        parameterized-utils,

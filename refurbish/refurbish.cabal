@@ -58,7 +58,7 @@ executable refurbish
                        crucible,
                        optparse-applicative,
                        lens,
-                       lumberjack >= 0.1 && < 0.2,
+                       lumberjack >= 0.1 && < 1.1,
                        fmt >= 0.6 && < 0.7,
                        haskeline >= 0.7 && < 0.9,
                        directory >= 1 && < 2,
