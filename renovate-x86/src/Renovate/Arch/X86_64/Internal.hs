@@ -24,6 +24,7 @@ module Renovate.Arch.X86_64.Internal (
   instrOperands,
   mkUnitAnnot,
   annotateInstr,
+  annotateInstrWith,
   noAddr,
   x64Size,
   prettyPrintWithAnnotations,
@@ -222,6 +223,9 @@ makeInstr X86Repr mnemonic operands =
 
 annotateInstr :: Instruction tp () -> a -> Instruction tp a
 annotateInstr (XI ii) a = XI (fmap (\ao -> ao { aoAnnotation = a}) ii)
+
+annotateInstrWith :: (AnnotatedOperand () -> AnnotatedOperand a) -> Instruction tp () -> Instruction tp a
+annotateInstrWith f (XI ii) = XI (fmap f ii)
 
 noAddr :: Instruction tp () -> Instruction tp TargetAddress
 noAddr i = annotateInstr i NoAddress
