@@ -19,7 +19,7 @@ import qualified GHC.Err.Located as L
 import qualified Control.Monad.Catch as C
 import           Data.Bits ( bit )
 import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy.Builder as B
+import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Functor.Identity as I
 import           Data.Int ( Int32 )
@@ -49,9 +49,11 @@ assemble :: forall (tp :: R.InstructionArchReprKind X86.X86_64) m
          => Instruction tp ()
          -> m B.ByteString
 assemble i =
-  case D.assembleInstruction (toFlexInst i) of
-    Nothing -> C.throwM (InstructionAssemblyFailure i)
-    Just bldr -> return (LB.toStrict (B.toLazyByteString bldr))
+  case i of
+    XI ii -> case D.assembleInstruction (fmap aoOperand ii) of
+      Nothing -> C.throwM (InstructionAssemblyFailure i)
+      Just bldr -> return (LB.toStrict (BB.toLazyByteString bldr))
+    RawBytes b -> return b
 
 -- | Disassemble a single instruction from a 'B.ByteString' and return
 -- the instruction and remaining bytes.
@@ -95,7 +97,7 @@ isa = R.ISA
   { R.isaInstructionSize = x64Size
   , R.isaJumpType = x64JumpType
   , R.isaInstructionArchReprs = R.SomeInstructionArchRepr X86Repr DLN.:| []
-  , R.isaInstructionRepr = \(XI _) -> X86Repr
+  , R.isaInstructionRepr = instructionRepr
   , R.isaMakeRelativeJumpTo = x64MakeRelativeJumpTo
   , R.isaMaxRelativeJumpSize = const (bit 31 - 1)
   , R.isaMakePadding = x64MakePadding
@@ -267,6 +269,9 @@ x64JumpTypeRaw :: forall (tp :: R.InstructionArchReprKind X86.X86_64) t
                 . Instruction tp t
                -> R.ConcreteAddress X86.X86_64
                -> Some (R.JumpType X86.X86_64)
+x64JumpTypeRaw (RawBytes _) _ =
+  -- NOTE: This could be a panic: none of these should show up until a user inserts them
+  Some R.NoJump
 x64JumpTypeRaw xi@(XI ii) addr =
   case (D.iiOp ii, map (fst . aoOperand) (D.iiArgs ii)) of
     ("jmp", [D.JumpOffset _ off]) -> Some (R.RelativeJump R.Unconditional addr (fixJumpOffset sz off))
@@ -431,6 +436,7 @@ x64SymbolizeAddresses :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
                       -> Maybe (R.SymbolicAddress X86.X86_64)
                       -> Instruction tp ()
                       -> [R.TaggedInstruction X86.X86_64 tp TargetAddress]
+x64SymbolizeAddresses _ _ _ (RawBytes b) = [R.tagInstruction Nothing (RawBytes b)]
 x64SymbolizeAddresses mem insnAddr mSymbolicTarget xi@(XI ii)
   | 'j' : _ <- D.iiOp ii = [R.tagInstruction mSymbolicTarget jmpInstr]
   | 'c' : 'a' : 'l' : 'l' : _ <- D.iiOp ii
@@ -480,6 +486,7 @@ x64ConcretizeAddresses :: forall (tp :: R.InstructionArchReprKind X86.X86_64) tk
                        -- ^ The new target of the relative jump for this
                        -- instruction, if any
                        -> DLN.NonEmpty (Instruction tp ())
+x64ConcretizeAddresses _ _ (RawBytes b) _ = RawBytes b DLN.:| []
 x64ConcretizeAddresses mem insnAddr xi@(XI ii) target =
   case (D.iiOp ii, target) of
     ('j' : _, R.RelocatableTarget newTarget) ->
