@@ -13,6 +13,7 @@ module Renovate.Arch.X86_64.Internal (
   instructionRepr,
   valueRepr,
   makeInstr,
+  rawBytes,
   toFlexInst,
   fromFlexInst,
   Instruction(..),
@@ -227,6 +228,9 @@ makeInstr X86Repr mnemonic operands =
   case D.mkInstruction mnemonic operands of
     Just i -> fromFlexInst X86Repr i
     Nothing -> L.error ("Renovate.ISA.X64: Could not create an instruction for '" ++ mnemonic ++ " " ++ show operands ++ "'")
+
+rawBytes :: X86Repr tp -> B.ByteString -> Instruction tp ()
+rawBytes X86Repr bytes = RawBytes bytes
 
 annotateInstr :: Instruction tp () -> a -> Instruction tp a
 annotateInstr (XI ii) a = XI (fmap (\ao -> ao { aoAnnotation = a}) ii)
