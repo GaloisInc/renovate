@@ -334,7 +334,7 @@ cfgHeads cfgs = runST $ do
 
   goWTOComponent :: CFG.BlockMap ext blocks ret -> WTO.WTOComponent (Some (CFG.BlockID blocks)) -> pairs
   goWTOComponent _ WTO.Vertex{} = []
-  goWTOComponent m component =
+  goWTOComponent m (WTO.SCC component) =
     [ (src, tgt)
     | tgt <- goSomeBlockID m (WTO.wtoHead component)
     , node <- F.toList component
