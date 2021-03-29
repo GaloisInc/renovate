@@ -13,6 +13,7 @@ module Renovate.Arch.X86_64.Internal (
   instructionRepr,
   valueRepr,
   makeInstr,
+  rawBytes,
   toFlexInst,
   fromFlexInst,
   Instruction(..),
@@ -39,7 +40,7 @@ import qualified GHC.Err.Located as L
 
 import qualified Control.Monad.Catch as C
 import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy.Builder as B
+import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as LB
 import           Data.Maybe ( fromMaybe )
 import           Data.Parameterized.Classes
@@ -47,6 +48,7 @@ import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Typeable ( Typeable )
 import           Data.Word ( Word8 )
+import           Numeric ( showHex )
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
 
 import qualified Data.Macaw.X86 as X86
@@ -111,14 +113,13 @@ instance OrdF X86Repr where
 -- annotation on each operand of type @a@.
 data Instruction (tp :: R.InstructionArchReprKind X86.X86_64) a where
   XI :: D.InstructionInstanceF (AnnotatedOperand a) -> Instruction OnlyEncoding a
-
-unXI :: Instruction tp a -> D.InstructionInstanceF (AnnotatedOperand a)
-unXI (XI ii) = ii
+  RawBytes :: B.ByteString -> Instruction OnlyEncoding a
 
 instructionRepr :: Instruction tp a -> X86Repr tp
 instructionRepr i =
   case i of
     XI {} -> X86Repr
+    RawBytes {} -> X86Repr
 
 deriving instance (Show a) => Show (Instruction tp a)
 deriving instance (Eq a) => Eq (Instruction tp a)
@@ -134,7 +135,12 @@ instance PD.Pretty (Instruction tp a) where
 -- We can't really get the address here, so we'll have to come up with
 -- something else longer term.
 prettyPrint :: Instruction tp a -> String
-prettyPrint = prettyPrint' (D.ppInstruction . toFlexInst)
+prettyPrint = prettyPrint' (doPP Nothing)
+
+doPP :: Maybe (AnnotatedOperand a -> PP.Doc) -> Instruction tp a -> PP.Doc
+doPP Nothing (XI ii) = D.ppInstruction (fmap aoOperand ii)
+doPP (Just ppWith) (XI ii) = D.ppInstructionWith ppWith ii
+doPP _ (RawBytes b) = PP.pretty "data: " <> PP.hsep [PP.pretty (showHex w "") | w <- B.unpack b]
 
 prettyPrint' :: (Instruction tp a -> PP.Doc) -> Instruction tp a -> String
 prettyPrint' pp i = PP.displayS (PP.renderCompact (pp i)) ""
@@ -142,9 +148,8 @@ prettyPrint' pp i = PP.displayS (PP.renderCompact (pp i)) ""
 prettyPrintWithAnnotations :: R.TaggedInstruction X86.X86_64 tp TargetAddress
                            -> String
 prettyPrintWithAnnotations insn =
-  prettyPrint' ppInsn (R.projectInstruction insn) ++ insnAnnStr
+  prettyPrint' (doPP (Just ppValue)) (R.projectInstruction insn) ++ insnAnnStr
   where
-    ppInsn = D.ppInstructionWith ppValue . unXI
     ppValue ao = PP.hsep $ D.ppValue (fst $ aoOperand ao) : annDocs
       where
         annDocs = case aoAnnotation ao of
@@ -193,17 +198,20 @@ instance C.Exception AssemblyFailure
 
 -- | Retrieve the 'String' opcode from an instruction (for diagnostic purposes)
 instrOpcode :: Instruction tp a -> String
-instrOpcode = D.iiOp . toFlexInst
+instrOpcode (XI ii) = D.iiOp ii
+instrOpcode (RawBytes _) = "<data>"
 
 -- | Extract the operands from an instruction
 instrOperands :: Instruction tp a -> [(D.Value, D.OperandType)]
 instrOperands (XI ii) = fmap aoOperand (D.iiArgs ii)
+instrOperands (RawBytes _) = []
 
 -- | Strip off our wrapper around a flexdis86 instruction.
 --
 -- We end up needing this to assemble an instruction and pretty print.
-toFlexInst :: Instruction tp a -> D.InstructionInstance
-toFlexInst = fmap aoOperand . unXI
+toFlexInst :: Instruction tp a -> Maybe D.InstructionInstance
+toFlexInst (XI ii) = Just (fmap aoOperand ii)
+toFlexInst (RawBytes _) = Nothing
 
 -- | Wrap a flexdis86 instruction with our wrapper that fixes some
 -- operand types and hides the flexdis type from the rest of the code.
@@ -221,11 +229,16 @@ makeInstr X86Repr mnemonic operands =
     Just i -> fromFlexInst X86Repr i
     Nothing -> L.error ("Renovate.ISA.X64: Could not create an instruction for '" ++ mnemonic ++ " " ++ show operands ++ "'")
 
+rawBytes :: X86Repr tp -> B.ByteString -> Instruction tp ()
+rawBytes X86Repr bytes = RawBytes bytes
+
 annotateInstr :: Instruction tp () -> a -> Instruction tp a
 annotateInstr (XI ii) a = XI (fmap (\ao -> ao { aoAnnotation = a}) ii)
+annotateInstr (RawBytes b) _ = RawBytes b
 
 annotateInstrWith :: (AnnotatedOperand () -> AnnotatedOperand a) -> Instruction tp () -> Instruction tp a
 annotateInstrWith f (XI ii) = XI (fmap f ii)
+annotateInstrWith _f (RawBytes b) = RawBytes b
 
 noAddr :: Instruction tp () -> Instruction tp TargetAddress
 noAddr i = annotateInstr i NoAddress
@@ -235,8 +248,13 @@ noAddr i = annotateInstr i NoAddress
 --
 -- It might be faster to just inspect the encoding; we can do that
 -- later.
+--
+-- FIXME: This needs to be bigger than word8 if we can embed data
 x64Size :: Instruction tp t -> Word8
-x64Size i = fromIntegral (LB.length b)
-  where
-    err = L.error ("Invalid instruction: ") -- ++ show i)
-    b = B.toLazyByteString $ fromMaybe err $ D.assembleInstruction (toFlexInst i)
+x64Size i =
+  case i of
+    XI ii ->
+      let err = error ("Invalid instruction")
+          b = BB.toLazyByteString $ fromMaybe err $ D.assembleInstruction (fmap aoOperand ii)
+      in fromIntegral (LB.length b)
+    RawBytes b -> fromIntegral (B.length b)

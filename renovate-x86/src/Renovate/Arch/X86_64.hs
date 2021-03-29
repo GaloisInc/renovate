@@ -26,6 +26,7 @@ module Renovate.Arch.X86_64 (
   prettyPrintWithAnnotations,
   x64Size,
   makeInstr,
+  rawBytes,
   instructionRepr,
   AnnotatedOperand(..),
   X86Repr(..),
