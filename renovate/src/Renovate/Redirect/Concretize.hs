@@ -8,7 +8,10 @@
 {-# LANGUAGE TypeInType #-}
 -- | Defines a function to convert from symbolic blocks to concrete
 -- blocks.
-module Renovate.Redirect.Concretize ( concretize ) where
+module Renovate.Redirect.Concretize (
+    InjectConcreteInstructions(..)
+  , concretize
+  ) where
 
 import           Control.Exception ( assert )
 import           Control.Monad.IO.Class ( MonadIO )
@@ -36,6 +39,40 @@ import           Renovate.Redirect.LayoutBlocks.Types ( WithProvenance(..)
                                                       , LayoutStrategy
                                                       )
 import           Renovate.Redirect.Monad
+import qualified Renovate.Rewrite as RRW
+
+data InjectConcreteInstructions arch where
+  InjectConcreteInstructions :: (ArchConstraints arch tp)
+                             => InstructionArchRepr arch tp
+                             -> DLN.NonEmpty (Instruction arch tp ())
+                             -> InjectConcreteInstructions arch
+
+concreteAddressMap
+  :: Layout AddressAssignedBlock i arch
+  -> M.Map (SymbolicAddress arch) (ConcreteAddress arch)
+concreteAddressMap layout =
+  mconcat [ concreteBlockAddressMap
+          , injectedBlobAddressMap
+          , injectedInstructionAddressMap
+          ]
+  where
+    concreteBlockAddresses = programBlockLayout layout
+    concreteBlockAddressMap =
+      M.fromList [ (symbolicBlockSymbolicAddress sb, ca)
+                 | wp <- F.toList concreteBlockAddresses
+                 , let aab = withoutProvenance wp
+                 , let sb = lbBlock aab
+                 , let ca = lbAt aab
+                 ]
+    injectedBlobAddressMap =
+        M.fromList [ (symAddr, concAddr)
+                   | (symAddr, concAddr, _) <- injectedBlockLayout layout
+                   ]
+    injectedInstructionAddressMap =
+        M.fromList [ (symAddr, concAddr)
+                   | (symAddr, concAddr, _) <- injectedInstructionLayout layout
+                   ]
+
 
 -- | Take the rewritten symbolic blocks and assign them concrete
 -- addresses.  This includes rewriting jump instructions to refer to
@@ -60,29 +97,22 @@ concretize :: (MonadIO m, T.Traversable t, InstructionConstraints arch, Typeable
            -- ^ The start address of the concretized (instrumented) blocks
            -> t (WithProvenance SymbolicBlock arch)
            -> t (SymbolicAddress arch, BS.ByteString)
+           -> t (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch)
            -> BlockInfo arch
-           -> RewriterT arch m (Layout ConcretizedBlock arch)
-concretize strat startAddr blocks injectedCode blockInfo = do
+           -> RewriterT arch m ( Layout ConcretizedBlock InjectConcreteInstructions arch
+                               , M.Map (SymbolicAddress arch) (ConcreteAddress arch)
+                               )
+concretize strat startAddr blocks injectedCode injectedInstructions blockInfo = do
   -- First, build up a mapping of symbolic address to new concrete
   -- address
   symmap <- askSymbolMap
-  layout <- layoutBlocks strat startAddr blocks injectedCode (biCFG blockInfo)
-  let concreteAddresses = programBlockLayout layout
-  let injectedAddresses = injectedBlockLayout layout
-  let concreteAddressMap = M.fromList [ (symbolicBlockSymbolicAddress sb, ca)
-                                      | wp <- F.toList concreteAddresses
-                                      , let aab = withoutProvenance wp
-                                      , let sb = lbBlock aab
-                                      , let ca = lbAt aab
-                                      ]
-  let injectedAddressMap = M.fromList [ (symAddr, concAddr)
-                                      | (symAddr, concAddr, _) <- injectedAddresses
-                                      ]
-  let concToSymAddrMap = concreteAddressMap <> injectedAddressMap
+  layout <- layoutBlocks strat startAddr blocks injectedCode injectedInstructions (biCFG blockInfo)
+  let symToConcAddrs = concreteAddressMap layout
+
       -- Make note of symbolic names for each embrittled function. We can
       -- use this to make new symtab entries for them.
   let brittleMap = M.fromList [ (ca, (concreteBlockAddress oa, nm))
-                              | wp <- F.toList concreteAddresses
+                              | wp <- F.toList (programBlockLayout layout)
                               , let oa = originalBlock wp
                               , let aab = withoutProvenance wp
                               , let ca = lbAt aab
@@ -93,11 +123,14 @@ concretize strat startAddr blocks injectedCode blockInfo = do
   -- Now go through and fix up all of the jumps to symbolic addresses (which
   -- happen to occur at the end of basic blocks).  Note that we only traverse
   -- the concrete blocks here, not the injected blocks.
-  v <- T.traverse (concretizeJumps concToSymAddrMap) concreteAddresses
-  return Layout { programBlockLayout = v
-                , layoutPaddingBlocks = layoutPaddingBlocks layout
-                , injectedBlockLayout = injectedBlockLayout layout
-                }
+  v <- T.traverse (concretizeJumps symToConcAddrs) (programBlockLayout layout)
+  concretizedInjectedInstructions <- mapM (concretizeInjectedInstructions symToConcAddrs) (injectedInstructionLayout layout)
+  let concLayout = Layout { programBlockLayout = v
+                          , layoutPaddingBlocks = layoutPaddingBlocks layout
+                          , injectedBlockLayout = injectedBlockLayout layout
+                          , injectedInstructionLayout = concretizedInjectedInstructions
+                          }
+  return (concLayout, symToConcAddrs)
 
 {-
 
@@ -120,6 +153,23 @@ these could be sentinels that require translation back to IP relative
 
 -}
 
+neconcat :: DLN.NonEmpty (DLN.NonEmpty a) -> DLN.NonEmpty a
+neconcat nel =
+  case nel of
+    (e0 DLN.:| rest) DLN.:| others ->
+      e0 DLN.:| (rest <> concat (fmap F.toList others))
+
+concretizeInjectedInstructions
+  :: (Monad m, InstructionConstraints arch)
+  => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
+  -> (SymbolicAddress arch, ConcreteAddress arch, RRW.InjectSymbolicInstructions arch)
+  -> RewriterT arch m (SymbolicAddress arch, ConcreteAddress arch, InjectConcreteInstructions arch)
+concretizeInjectedInstructions symToConcAddrs (symAddr, concAddr, RRW.InjectSymbolicInstructions repr insns) = do
+  let conc = T.traverse (concretizeAddresses symToConcAddrs) insns
+  concInstrsWithSizes <- S.evalStateT conc concAddr
+  let concInstrs = neconcat (fmap fst concInstrsWithSizes)
+  return (symAddr, concAddr, InjectConcreteInstructions repr concInstrs)
+
 -- | Convert jumps to symbolic addresses in 'SymbolicBlock's to concrete jumps.
 -- This essentially converts a 'SymbolicBlock' to a 'ConcreteBlock'.
 --
@@ -138,10 +188,10 @@ concretizeJumps :: (Monad m, InstructionConstraints arch)
                 => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
                 -> WithProvenance AddressAssignedBlock arch
                 -> RewriterT arch m (WithProvenance ConcretizedBlock arch)
-concretizeJumps concreteAddressMap wp
+concretizeJumps symToConcAddrs wp
   | changed status = withSymbolicInstructions sb $ \repr symInsns -> do
     -- Concretize all of the instructions (including jumps)
-    let concretizeInstrs = T.traverse (concretizeAddresses concreteAddressMap) symInsns
+    let concretizeInstrs = T.traverse (concretizeAddresses symToConcAddrs) symInsns
     (concretizedInstrsWithSizes, nextAddr) <- S.runStateT concretizeInstrs firstInstrAddr
     let Sum baseBlockSize = foldMap snd concretizedInstrsWithSizes
     let baseBlockInstrs = foldMap (F.toList . fst) concretizedInstrsWithSizes
@@ -160,7 +210,7 @@ concretizeJumps concreteAddressMap wp
             -- Stable addresses are not in the map
             Just (StableAddress concSucc) -> Just concSucc
             Just symSucc
-              | Just concSucc <- M.lookup symSucc concreteAddressMap -> Just concSucc
+              | Just concSucc <- M.lookup symSucc symToConcAddrs -> Just concSucc
               | otherwise ->
                 RP.panic RP.Concretize "concretizeJumps" [ "Could not find symbolic successor for original block: " ++ show firstInstrAddr
                                                          ]
@@ -204,7 +254,7 @@ concretizeAddresses :: forall m arch tp
                     => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
                     -> TaggedInstruction arch tp (InstructionAnnotation arch)
                     -> S.StateT (ConcreteAddress arch) (RewriterT arch m) (DLN.NonEmpty (Instruction arch tp ()), Sum Word64)
-concretizeAddresses concreteAddressMap taggedInstr = do
+concretizeAddresses symToConcAddrs taggedInstr = do
   insnAddr <- S.get
   isa <- S.lift askISA
   mem <- S.lift askMem
@@ -218,7 +268,7 @@ concretizeAddresses concreteAddressMap taggedInstr = do
       case symbolicTarget taggedInstr of
         Some NoTarget -> k NoTarget
         Some (RelocatableTarget symTarget) ->
-          let concreteTarget = lookupConcreteTarget concreteAddressMap symTarget
+          let concreteTarget = lookupConcreteTarget symToConcAddrs symTarget
           in k (RelocatableTarget concreteTarget)
 
 -- | Map from a symbolic address to a concrete one, failing if there is no entry

@@ -60,6 +60,7 @@ module Renovate.BinaryFormat.ELF (
   riSections,
   riTranslationErrors,
   riClassifyFailures,
+  riSymbolicToConcreteMap
   ) where
 
 import           Control.Applicative
@@ -1236,7 +1237,7 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
             let rewriter = RW.hoist . rewrite rae analysisResult setupVal
             r <- RE.redirect isa blockInfo textAddrRange rewriter mem strat layoutAddr baseSymBlocks
             return (analysisResult, r)
-        (analysisResult, (allBlocks, injected, blockPairs)) <- extractOrThrowRewriterResult eBlocks r1
+        (analysisResult, (allBlocks, injectedBytes, injectedInsns, blockPairs, symToConcAddrs)) <- extractOrThrowRewriterResult eBlocks r1
         riRewritePairs L..= map RT.toRewritePair blockPairs
         let s1 = RE.rrState r1
         let newSyms = RE.rwsNewSymbolsMap s1
@@ -1252,9 +1253,10 @@ instrumentTextSection cfg hdlAlloc loadedBinary textAddrRange@(textSectionStartA
         riTransitivelyIncompleteBlocks L..= RM.transitivelyIncompleteBlocks blockInfo
         riTranslationErrors L..= R.biTranslationError blockInfo
         riClassifyFailures L..= R.biClassifyFailure blockInfo
+        riSymbolicToConcreteMap L..= symToConcAddrs
         case cfg of
           RenovateConfig { rcAssembler = asm } -> do
-            (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks injected
+            (overwrittenBytes, instrumentationBytes) <- BA.assembleBlocks mem isa textSectionStartAddr textSectionEndAddr textBytes layoutAddr asm allBlocks injectedBytes injectedInsns
             let newDataBytes = mkNewDataSection newGlobalBase info
             return (analysisResult, overwrittenBytes, instrumentationBytes, newDataBytes, newSyms, RE.blockMapping (RE.rwsStats s1))
 

@@ -91,10 +91,11 @@ data LayoutStrategy = LayoutStrategy
   , trampolines :: TrampolineStrategy
   } deriving (Eq, Ord, Read, Show)
 
-data Layout b arch =
+data Layout b i arch =
   Layout { programBlockLayout :: [WithProvenance b arch]
          , layoutPaddingBlocks :: [PaddingBlock arch]
          , injectedBlockLayout :: [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)]
+         , injectedInstructionLayout :: [(SymbolicAddress arch, ConcreteAddress arch, i arch)]
          }
 
 -- | A wrapper around a block type @b@ that tracks the provenance of the block

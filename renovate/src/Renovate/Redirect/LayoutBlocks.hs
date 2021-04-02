@@ -20,7 +20,6 @@ import           Data.Typeable ( Typeable )
 import           Renovate.Address
 import           Renovate.BasicBlock ( InstructionConstraints, AddressAssignedBlock, SymbolicBlock )
 import           Renovate.Recovery ( SymbolicCFG )
-import           Renovate.Redirect.Monad
 import           Renovate.Redirect.LayoutBlocks.Compact ( Layout(..), compactLayout )
 import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , Grouping(..)
@@ -30,6 +29,8 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       , RewritePair(..)
                                                       , WithProvenance
                                                       )
+import           Renovate.Redirect.Monad
+import qualified Renovate.Rewrite as RRW
 
 -- | Compute a concrete address for each 'SymbolicBlock'.
 --
@@ -41,7 +42,8 @@ layoutBlocks :: (MonadIO m, T.Traversable t, InstructionConstraints arch, Typeab
              -- ^ Address to begin block layout of instrumented blocks
              -> t (WithProvenance SymbolicBlock arch)
              -> t (SymbolicAddress arch, BS.ByteString)
+             -> t (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch)
              -> Map (ConcreteAddress arch) (SymbolicCFG arch)
-             -> RewriterT arch m (Layout AddressAssignedBlock arch)
-layoutBlocks strat startAddr blocks injectedCode cfgs =
-  compactLayout startAddr strat blocks injectedCode cfgs
+             -> RewriterT arch m (Layout AddressAssignedBlock RRW.InjectSymbolicInstructions arch)
+layoutBlocks strat startAddr blocks injectedCode injectedInstructions cfgs =
+  compactLayout startAddr strat blocks injectedCode injectedInstructions cfgs

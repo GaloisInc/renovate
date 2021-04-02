@@ -39,6 +39,7 @@ import qualified Data.Macaw.CFG as MM
 import           Renovate.Address
 import           Renovate.BasicBlock
 import           Renovate.ISA
+import qualified Renovate.Redirect.Concretize as RRC
 
 data BlockAssemblyException where
   -- A discontiguous block was starting with the given concrete block
@@ -86,6 +87,12 @@ instance (InstructionConstraints arch) => PD.Pretty (Chunk arch) where
 
 instance C.Exception BlockAssemblyException
 
+instructionBlockChunk
+  :: (SymbolicAddress arch, ConcreteAddress arch, RRC.InjectConcreteInstructions arch)
+  -> Chunk arch
+instructionBlockChunk (_symAddr, concAddr, RRC.InjectConcreteInstructions repr insns) =
+  BlockChunk (concretizedBlock concAddr insns repr)
+
 -- | Given a list of basic blocks and the original text section, create two new
 -- text sections.  The first contains all of the basic blocks that are laid out
 -- in the original text section address range; byte ranges not covered by the
@@ -112,8 +119,9 @@ assembleBlocks :: (L.HasCallStack, C.MonadThrow m, InstructionConstraints arch)
                -- ^ A function to assemble a single instruction to bytes
                -> [ConcretizedBlock arch]
                -> [(SymbolicAddress arch, ConcreteAddress arch, B.ByteString)]
+               -> [(SymbolicAddress arch, ConcreteAddress arch, RRC.InjectConcreteInstructions arch)]
                -> m (B.ByteString, B.ByteString)
-assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble blocks injectedCode = do
+assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble blocks injectedCode injectedInsns = do
   s1 <- St.execStateT (unA assembleDriver) s0
   return (fromBuilder (asTextSection s1), fromBuilder (asExtraText s1))
   where
@@ -139,7 +147,10 @@ assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble 
     -- below.  Most of the code here doesn't really need to know anything
     -- besides the address and size of each chunk (and how to turn a chunk into
     -- a bytestring).
-    allCode = map BlockChunk blocks ++ [ RawChunk addr bytes | (_, addr, bytes) <- injectedCode ]
+    allCode = concat [ map BlockChunk blocks
+                     , [ RawChunk addr bytes | (_, addr, bytes) <- injectedCode ]
+                     , map instructionBlockChunk injectedInsns
+                     ]
     (origBlocks, allocatedBlocks) = foldr go ([],[]) allCode
     filteredBlocks = filter inText origBlocks
     inText c = absoluteAddress absStartAddr <= absoluteAddress (chunkAddress c) &&

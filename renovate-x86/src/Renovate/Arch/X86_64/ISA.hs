@@ -16,6 +16,7 @@ module Renovate.Arch.X86_64.ISA (
 
 import qualified GHC.Err.Located as L
 
+import           Control.Applicative ( Alternative, empty )
 import qualified Control.Monad.Catch as C
 import           Data.Bits ( bit )
 import qualified Data.ByteString as B
@@ -559,8 +560,29 @@ fixRipRelAddresses mem insnAddr i AnnotatedOperand { aoOperand = (v, ty)
   case targetAddr of
     NoAddress -> mkUnitAnnot (v, ty)
     AbsoluteAddress a
-      | Just v' <- mapAddrRef (absToRip mem insnAddr i a) (const Nothing) v -> mkUnitAnnot (v', ty)
+      | Just v' <- mapAddrRef (absToRip mem insnAddr i a) (updateNonMemoryOperand i insnAddr a) v ->
+        mkUnitAnnot (v', ty)
       | otherwise -> L.error "Unexpected rip rel fix"
+
+-- | Update operands that have an 'AbsoluteAddress' annotation, but that are not memory operands
+--
+-- Right now, this is *only* jumps (or calls) to concrete addresses in the form
+-- of 'D.JumpOffset' operands
+updateNonMemoryOperand
+  :: (Alternative f)
+  => Instruction tp TargetAddress
+  -> R.ConcreteAddress X86.X86_64
+  -> R.ConcreteAddress X86.X86_64
+  -> D.Value
+  -> f D.Value
+updateNonMemoryOperand i iStartAddr targetAddr v =
+  case v of
+    D.JumpOffset D.JSize32 (D.FixedOffset _) ->
+      pure (D.JumpOffset D.JSize32 (D.FixedOffset off))
+    _ -> empty
+  where
+    iEndAddr = iStartAddr `R.addressAddOffset` fromIntegral (x64Size i)
+    off = fromIntegral (targetAddr `R.addressDiff` iEndAddr)
 
 mapAddrRef :: (Applicative f) => (D.AddrRef -> f D.AddrRef) -> (D.Value -> f D.Value) -> D.Value -> f D.Value
 mapAddrRef f ifNotMem v =

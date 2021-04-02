@@ -1,9 +1,10 @@
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 module Renovate.Rewrite (
   RewriteMT,
@@ -22,6 +23,8 @@ module Renovate.Rewrite (
   getBlockIndex,
   getABI,
   getISA,
+  InjectSymbolicInstructions(..),
+  injectInstructions,
   injectFunction,
   recordRewrite,
   recordLogMsg,
@@ -31,6 +34,7 @@ import qualified Control.Monad.Identity as I
 import qualified Control.Monad.RWS.Strict as RWS
 import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
+import qualified Data.List.NonEmpty as DLN
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import           Data.Word ( Word32 )
@@ -76,6 +80,12 @@ data RewriteInfo lm arch =
               -- injection API provided by 'RewriteM'
               , injectedFunctions :: M.Map (A.SymbolicAddress arch) (String, BS.ByteString)
               -- ^ Functions injected (most likely during the setup phase, but not necessarily)
+              , injectedInstructions :: M.Map (A.SymbolicAddress arch) (String, InjectSymbolicInstructions arch)
+              -- ^ Bundles of instructions that are to be injected into the program
+              --
+              -- This is a method for injecting instructions that need to be
+              -- concretized (i.e., that cannot be reduced to a 'BS.ByteString'
+              -- by the caller)
               , logMsgs :: [lm]
               -- ^ A collection of msgs logged during rewriting.
               }
@@ -89,6 +99,7 @@ class HasInjectedFunctions m arch where
   -- NOTE: This is mostly not user-facing, but it is used internally.  Users can
   -- maintain the mapping if they really want it
   getInjectedFunctions :: m [(A.SymbolicAddress arch, BS.ByteString)]
+  getInjectedInstructions :: m [(A.SymbolicAddress arch, InjectSymbolicInstructions arch)]
 
 data RewriteEnv arch = RewriteEnv
   { envBlockCFGIndex :: BlockCFGIndex arch
@@ -126,10 +137,16 @@ type RewriteM lm arch = RewriteMT lm arch I.Identity
 
 instance Monad m => HasInjectedFunctions (RewriteMT lm arch m) arch where
   getInjectedFunctions = getInj
+  getInjectedInstructions = getInjInsns
 
 getInj :: Monad m => RewriteMT lm arch m [(A.SymbolicAddress arch, BS.ByteString)]
 getInj = do
   m <- RWS.gets injectedFunctions
+  return [ (a, bs) | (a, (_, bs)) <- M.toList m ]
+
+getInjInsns :: (Monad m) => RewriteMT lm arch m [(A.SymbolicAddress arch, InjectSymbolicInstructions arch)]
+getInjInsns = do
+  m <- RWS.gets injectedInstructions
   return [ (a, bs) | (a, (_, bs)) <- M.toList m ]
 
 hoist :: Monad m => RewriteM lm arch a -> RewriteMT lm arch m a
@@ -195,6 +212,7 @@ runRewriteMT env newGlobalBase symAlloc i = do
                             , nextGlobalAddress = newGlobalBase
                             , symAddrAlloc = symAlloc
                             , injectedFunctions = M.empty
+                            , injectedInstructions = M.empty
                             , logMsgs = []
                             }
 
@@ -211,6 +229,27 @@ injectFunction funcName bytes = do
   let (addr, alloc1) = RS.nextSymbolicAddress alloc0
   RWS.modify' $ \s -> s { symAddrAlloc = alloc1
                         , injectedFunctions = M.insert addr (funcName, bytes) (injectedFunctions s)
+                        }
+  return addr
+
+data InjectSymbolicInstructions arch where
+  InjectSymbolicInstructions :: (B.ArchConstraints arch tp)
+                             => B.InstructionArchRepr arch tp
+                             -> DLN.NonEmpty (B.TaggedInstruction arch tp (B.InstructionAnnotation arch))
+                             -> InjectSymbolicInstructions arch
+
+injectInstructions
+  :: (B.ArchConstraints arch tp)
+  => String
+  -> B.InstructionArchRepr arch tp
+  -> DLN.NonEmpty (B.TaggedInstruction arch tp (B.InstructionAnnotation arch))
+  -> RewriteM lm arch (A.SymbolicAddress arch)
+injectInstructions funcName repr insns = do
+  alloc0 <- RWS.gets symAddrAlloc
+  let (addr, alloc1) = RS.nextSymbolicAddress alloc0
+  let inj = InjectSymbolicInstructions repr insns
+  RWS.modify' $ \s -> s { symAddrAlloc = alloc1
+                        , injectedInstructions = M.insert addr (funcName, inj) (injectedInstructions s)
                         }
   return addr
 

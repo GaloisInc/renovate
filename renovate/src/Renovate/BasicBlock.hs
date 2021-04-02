@@ -48,6 +48,7 @@ module Renovate.BasicBlock (
   blockSize,
   withInstructionAddresses,
   instructionAddresses',
+  computeInstructionSize,
   -- * Instructions
   InstructionArchRepr,
   InstructionArchReprKind,
