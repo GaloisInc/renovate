@@ -59,7 +59,7 @@ import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
                                                       )
 import           Renovate.Redirect.Internal
 import qualified Renovate.Redirect.Monad as RM
-import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions )
+import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions, getInjectedInstructions )
 
 -- | Given a list of basic blocks with instructions of type @i@ with
 -- annotation @a@ (which is fixed by the 'ISA' choice), rewrite the
@@ -90,7 +90,12 @@ redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch
          -- ^ The start address for the copied blocks
          -> [(ConcreteBlock arch, SymbolicBlock arch)]
          -- ^ Symbolized basic blocks
-         -> RM.RewriterT arch m ([ConcretizedBlock arch], [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)], [WithProvenance ConcretizedBlock arch])
+         -> RM.RewriterT arch m ( [ConcretizedBlock arch]
+                                , [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)]
+                                , [(SymbolicAddress arch, ConcreteAddress arch, InjectConcreteInstructions arch)]
+                                , [WithProvenance ConcretizedBlock arch]
+                                , M.Map (SymbolicAddress arch) (ConcreteAddress arch)
+                                )
 redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr baseSymBlocks = do
   -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
   RM.recordSection "text" (RM.SectionInfo textStart textEnd)
@@ -134,15 +139,17 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
          RM.recordIncompleteBlock
        return $! WithProvenance cb sb Immutable
   injectedCode <- lift getInjectedFunctions
-  layout <- concretize strat layoutAddr transformedBlocks injectedCode blockInfo
+  injectedInstructions <- lift getInjectedInstructions
+  (layout, symToConcAddrs) <- concretize strat layoutAddr transformedBlocks injectedCode injectedInstructions blockInfo
   let concretizedBlocks = programBlockLayout layout
   let paddingBlocks = layoutPaddingBlocks layout
   let injectedBlocks = injectedBlockLayout layout
+  let injectedInsns = injectedInstructionLayout layout
   RM.recordBlockMap (toBlockMapping concretizedBlocks)
   redirectedBlocks <- redirectOriginalBlocks concretizedBlocks
   RM.recordBackwardBlockMap (toBackwardBlockMapping redirectedBlocks)
   let sortedBlocks = L.sortBy (comparing concretizedBlockAddress) (fmap concretizePadding paddingBlocks ++ concatMap unPair (F.toList redirectedBlocks))
-  return (sortedBlocks, injectedBlocks, concretizedBlocks)
+  return (sortedBlocks, injectedBlocks, injectedInsns, concretizedBlocks, symToConcAddrs)
   where
     concretizePadding :: PaddingBlock arch -> ConcretizedBlock arch
     concretizePadding pb =

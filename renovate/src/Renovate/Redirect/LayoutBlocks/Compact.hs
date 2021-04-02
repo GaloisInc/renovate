@@ -43,11 +43,12 @@ import qualified Lang.Crucible.CFG.Core as CFG
 import qualified What4.ProgramLoc as W4
 
 import           Renovate.Address
-import           Renovate.BasicBlock
+import           Renovate.BasicBlock as RB
 import           Renovate.ISA
 import qualified Renovate.Panic as RP
 import           Renovate.Recovery ( SCFG, SymbolicCFG, getSymbolicCFG )
 import           Renovate.Redirect.Monad
+import qualified Renovate.Rewrite as RRW
 
 import           Renovate.Redirect.LayoutBlocks.Types
 
@@ -68,9 +69,10 @@ compactLayout :: forall m t arch
               -> LayoutStrategy
               -> t (WithProvenance SymbolicBlock arch)
               -> t (SymbolicAddress arch, BS.ByteString)
+              -> t (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch)
               -> M.Map (ConcreteAddress arch) (SymbolicCFG arch)
-              -> RewriterT arch m (Layout AddressAssignedBlock arch)
-compactLayout startAddr strat blocks0 injectedCode cfgs = do
+              -> RewriterT arch m (Layout AddressAssignedBlock RRW.InjectSymbolicInstructions arch)
+compactLayout startAddr strat blocks0 injectedCode injectedInstructions cfgs = do
   -- Augment all symbolic blocks such that fallthrough behavior is explicitly
   -- represented with symbolic unconditional jumps.
   --
@@ -134,7 +136,10 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
 
   -- Allocate an address for each block (falling back to startAddr if the heap
   -- can't provide a large enough space).
-  (h1, symBlockAddrs, injectedAddrs) <- allocateSymbolicBlockAddresses startAddr h0 sortedBlocks injectedCode
+  ( h1,
+    symBlockAddrs,
+    injectedBlobAddrs,
+    injectedInstructionAddrs ) <- allocateSymbolicBlockAddresses startAddr h0 sortedBlocks injectedCode injectedInstructions
 
   -- Overwrite any leftover space with ISA-specific padding. This is not,
   -- strictly speaking, necessary; without it, the assembler will take bytes
@@ -170,7 +175,12 @@ compactLayout startAddr strat blocks0 injectedCode cfgs = do
 
   return Layout { programBlockLayout = assignedPairs
                 , layoutPaddingBlocks = paddingBlocks
-                , injectedBlockLayout = [ (symAddr, caddr, bs) | (caddr, (symAddr, bs)) <- M.elems injectedAddrs ]
+                , injectedBlockLayout = [ (symAddr, caddr, bs)
+                                        | (caddr, (symAddr, bs)) <- M.elems injectedBlobAddrs
+                                        ]
+                , injectedInstructionLayout = [ (symAddr, caddr, iins)
+                                              | (caddr, (symAddr, iins)) <- M.elems injectedInstructionAddrs
+                                              ]
                 }
   where
     bySize isa mem = Down . sum . map (symbolicBlockSize isa mem)
@@ -403,26 +413,47 @@ assignConcreteAddress assignedAddrs wp
     sb = withoutProvenance wp
     status = rewriteStatus wp
 
+-- | Compute the size in bytes of an instruction sequence injected into the binary
+--
+-- Note that this mocks up a fake address to compute the size of the
+-- instructions, under the general assumption that instruction sizes won't
+-- change during concretization.
+computeByteSize
+  :: (MM.MemWidth (MM.ArchAddrWidth arch))
+  => ISA arch
+  -> MM.Memory (MM.ArchAddrWidth arch)
+  -> RRW.InjectSymbolicInstructions arch
+  -> Word64
+computeByteSize isa mem (RRW.InjectSymbolicInstructions _repr insns) =
+  fromIntegral (sum (fmap (RB.computeInstructionSize isa mem fakeAddress) insns))
+  where
+    fakeAddress = concreteFromAbsolute 0
+
 allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch), F.Foldable t, Functor t)
                                => ConcreteAddress arch
                                -> AddressHeap arch
                                -> [[SymbolicBlock arch]]
                                -> t (SymbolicAddress arch, BS.ByteString)
+                               -> t (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch)
                                -> RewriterT arch m ( AddressHeap arch
                                                    , M.Map (SymbolicInfo arch) (ConcreteAddress arch, Word64)
                                                    , M.Map (SymbolicAddress arch) (ConcreteAddress arch, (SymbolicAddress arch, BS.ByteString))
+                                                   , M.Map (SymbolicAddress arch) (ConcreteAddress arch, (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch))
                                                    )
-allocateSymbolicBlockAddresses startAddr h0 blocksBySize injectedCode = do
+allocateSymbolicBlockAddresses startAddr h0 blocksBySize injectedCode injectedInstructions = do
   isa <- askISA
   mem <- askMem
   let blockItemSize = symbolicBlockSize isa mem
   let blockItemKey sb =
         SymbolicInfo (symbolicBlockSymbolicAddress sb) (symbolicBlockOriginalAddress sb)
   let blockItemVal addr size _block = (addr, size)
-  let injectedItemVal addr _size code = (addr, code)
-  (nextStart, h1, m1) <- F.foldlM (allocateBlockGroupAddresses blockItemSize blockItemKey blockItemVal) (startAddr, h0, M.empty) blocksBySize
-  (_, h2, m2) <- F.foldlM (allocateBlockGroupAddresses (fromIntegral . BS.length . snd) fst injectedItemVal) (nextStart, h1, M.empty) ((:[]) <$> injectedCode)
-  return (h2, m1, m2)
+  (nextStart1, h1, m1) <- F.foldlM (allocateBlockGroupAddresses blockItemSize blockItemKey blockItemVal) (startAddr, h0, M.empty) blocksBySize
+  let injectedInsnsVal addr _size code = (addr, code)
+  (nextStart2, h2, m2) <- F.foldlM (allocateBlockGroupAddresses (computeByteSize isa mem . snd) fst injectedInsnsVal) (nextStart1, h1, M.empty) ((:[]) <$> injectedInstructions)
+  let bytesLength = fromIntegral . BS.length . snd
+  let injectedBlobVal addr _size code = (addr, code)
+  (_, h3, m3) <- F.foldlM (allocateBlockGroupAddresses bytesLength fst injectedBlobVal) (nextStart2, h2, M.empty) ((:[]) <$> injectedCode)
+  return (h3, m1, m3, m2)
 
 -- | Allocate an address for the given symbolic block.
 --

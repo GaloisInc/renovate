@@ -43,6 +43,7 @@ module Renovate.BinaryFormat.ELF.Rewriter (
   riSections,
   riTranslationErrors,
   riClassifyFailures,
+  riSymbolicToConcreteMap,
   -- * Re-exports
   Env.RewriterEnv,
   Env.reSegmentMaximumSize,
@@ -123,6 +124,7 @@ data RewriterInfo lm arch =
                -- ^ The correspondence between original and new blocks
                , _riTranslationErrors :: [(RA.ConcreteAddress arch, T.Text)]
                , _riClassifyFailures :: [RA.ConcreteAddress arch]
+               , _riSymbolicToConcreteMap :: M.Map (RA.SymbolicAddress arch) (RA.ConcreteAddress arch)
                }
   deriving (Generic)
 
@@ -189,6 +191,7 @@ emptyRewriterInfo ehi e = RewriterInfo { _riOverwrittenRegions       = []
                                    , _riRewritePairs             = []
                                    , _riTranslationErrors        = []
                                    , _riClassifyFailures         = []
+                                   , _riSymbolicToConcreteMap    = M.empty
                                    }
 
 logDiagnostic :: RD.Diagnostic -> ElfRewriter lm arch ()
@@ -283,3 +286,6 @@ riTranslationErrors = GL.field @"_riTranslationErrors"
 
 riClassifyFailures :: L.Lens' (RewriterInfo lm arch) [RA.ConcreteAddress arch]
 riClassifyFailures = GL.field @"_riClassifyFailures"
+
+riSymbolicToConcreteMap :: L.Lens' (RewriterInfo lm arch) (M.Map (RA.SymbolicAddress arch) (RA.ConcreteAddress arch))
+riSymbolicToConcreteMap = GL.field @"_riSymbolicToConcreteMap"
