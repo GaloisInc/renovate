@@ -1,3 +1,6 @@
 cabal.project
 stack.yaml
 dist-newstyle
+.boring
+_darcs
+*~
