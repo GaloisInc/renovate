@@ -30,9 +30,9 @@ module Renovate.Recovery (
 import qualified Control.Lens as L
 import           Control.Monad ( guard )
 import qualified Control.Monad.Catch as C
-import qualified Control.Monad.Identity as I
 import           Control.Monad.IO.Class ( MonadIO )
 import qualified Control.Monad.IO.Unlift as MIU
+import qualified Control.Monad.Identity as I
 import           Control.Monad.ST ( stToIO, ST, RealWorld )
 import qualified Data.ByteString as B
 import           Data.Either ( partitionEithers )
@@ -455,7 +455,7 @@ blockStopAddress blockStarts pb startAddr
 -- the function containing the untranslatable block (Left).  We need this list
 -- to mark functions as incomplete.
 buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow m)
-           => (forall ids . MC.ParsedBlock arch ids -> ConcreteAddress arch -> ConcreteAddress arch -> B.ByteString -> Maybe (ConcreteBlock arch))
+           => (forall ids . MC.ParsedBlock arch ids -> ConcreteAddress arch -> ConcreteAddress arch -> B.ByteString -> Either C.SomeException (ConcreteBlock arch))
            -- ^ A function to disassemble an entire block at once (up to the
            -- requested number of bytes)
            -> (forall tp . Instruction arch tp () -> Maybe B.ByteString)
@@ -477,8 +477,8 @@ buildBlock disBlock asm1 mem blockStarts (funcAddr, (PU.Some pb))
         Right [MC.ByteRegion bs] -> do
           let stopAddr = blockStopAddress blockStarts pb concAddr
           case disBlock pb concAddr stopAddr bs of
-            Nothing -> C.throwM (EmptyBlock concAddr)
-            Just bb ->
+            Left err -> C.throwM (EmptyBlock concAddr err)
+            Right bb ->
               -- If we can't re-assemble all of the instructions we have found,
               -- pretend we never saw this block.  Note that the caller will have to
               -- remember this to note that the function containing this block is
