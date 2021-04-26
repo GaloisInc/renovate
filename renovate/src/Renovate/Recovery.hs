@@ -33,7 +33,6 @@ import qualified Control.Monad.Catch as C
 import           Control.Monad.IO.Class ( MonadIO )
 import qualified Control.Monad.IO.Unlift as MIU
 import qualified Control.Monad.Identity as I
-import           Control.Monad.ST ( stToIO, ST, RealWorld )
 import qualified Data.ByteString as B
 import           Data.Either ( partitionEithers )
 import qualified Data.Foldable as F
@@ -148,8 +147,7 @@ analyzeDiscoveredFunctions recovery mem textAddrRange info !iterations =
   case M.lookupMin (info L.^. MC.unexploredFunctions) of
     Nothing -> return info
     Just (addr, rsn) -> do
-      let bcb = fromMaybe (const (return ())) (recoveryBlockCallback recovery)
-      (info', _) <- stToIO (MC.analyzeFunction bcb addr rsn info)
+      let (info', _someFunInfo) = MC.analyzeFunction addr rsn info
       case recoveryFuncCallback recovery of
         Just (freq, fcb)
           | iterations `mod` freq == 0 -> do
@@ -314,7 +312,6 @@ data Recovery arch =
            , recoveryAsm :: forall m tp . (C.MonadThrow m) => Instruction arch tp () -> m B.ByteString
            , recoveryArchInfo :: MC.ArchitectureInfo arch
            , recoveryHandleAllocator :: C.HandleAllocator
-           , recoveryBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
            , recoveryFuncCallback :: Maybe (Int, MC.ArchSegmentOff arch -> BlockInfo arch -> IO ())
            , recoveryRefinement :: Maybe MR.RefinementConfig
            }
