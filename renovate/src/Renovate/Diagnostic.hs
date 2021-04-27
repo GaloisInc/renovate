@@ -36,7 +36,7 @@ data Diagnostic = forall arch t tp . InstructionIsNotJump (ISA arch) (RB.Instruc
                 -- now...
                 | forall w . MC.MemWidth w => MemoryError (MC.MemoryError w)
                 | forall w . MC.MemWidth w => NoByteRegionAtAddress (MC.MemAddr w)
-                | forall arch . (MC.MemWidth (MC.ArchAddrWidth arch)) => EmptyBlock (ConcreteAddress arch)
+                | forall arch . (MC.MemWidth (MC.ArchAddrWidth arch)) => EmptyBlock (ConcreteAddress arch) E.SomeException
                 | ELFParseErrors [EE.ElfParseError]
                 | ELFMessage String
                 deriving (Typeable)
@@ -46,9 +46,10 @@ instance Show Diagnostic where
 instance E.Exception Diagnostic
 
 instance PD.Pretty Diagnostic where
-  pretty (EmptyBlock addr) =
+  pretty (EmptyBlock addr x) =
     PD.hsep [ PD.pretty "Empty block at address"
             , PD.pretty (show addr)
+            , PD.parens (PD.viaShow x)
             ]
   pretty (InstructionIsNotJump isa i) =
     PD.hsep [ PD.pretty "Instruction is not a jump:"

@@ -1298,7 +1298,6 @@ withAnalysisEnv cfg hdlAlloc loadedBinary symmap textAddrRange k = do
                             , R.recoveryAsm = rcAssembler cfg
                             , R.recoveryArchInfo = archInfo
                             , R.recoveryHandleAllocator = hdlAlloc
-                            , R.recoveryBlockCallback = rcBlockCallback cfg
                             , R.recoveryFuncCallback = fmap (second ($ loadedBinary)) (rcFunctionCallback cfg)
                             , R.recoveryRefinement = rcRefinementConfig cfg
                             }
