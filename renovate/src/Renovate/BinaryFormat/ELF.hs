@@ -105,11 +105,12 @@ import qualified Data.Parameterized.Classes as PC
 import qualified Data.Parameterized.NatRepr as NR
 import qualified Lang.Crucible.FunctionHandle as C
 
-import qualified Renovate.Address as RA
+import qualified Renovate.Core.Address as RA
+import qualified Renovate.Core.BasicBlock as B
+import qualified Renovate.Core.Layout as RT
 import qualified Renovate.Analysis.FunctionRecovery as FR
 import qualified Renovate.Arch as Arch
-import qualified Renovate.BasicBlock as B
-import qualified Renovate.BasicBlock.Assemble as BA
+import qualified Renovate.Assemble as BA
 import           Renovate.BinaryFormat.ELF.BSS ( expandBSS )
 import           Renovate.BinaryFormat.ELF.Common
 import           Renovate.BinaryFormat.ELF.Exceptions
@@ -118,11 +119,11 @@ import           Renovate.BinaryFormat.ELF.Rewriter as Rewriter
 import qualified Renovate.BinaryFormat.ELF.InitialSizes as EIS
 import           Renovate.Config
 import qualified Renovate.Diagnostic as RD
+import qualified Renovate.ISA as RI
 import qualified Renovate.Metrics as RM
 import qualified Renovate.Panic as RP
 import qualified Renovate.Recovery as R
 import qualified Renovate.Redirect as RE
-import qualified Renovate.Redirect.LayoutBlocks.Types as RT
 import qualified Renovate.Redirect.Symbolize as RS
 import qualified Renovate.Rewrite as RW
 
@@ -149,7 +150,7 @@ withElfConfig :: (C.MonadThrow m)
                                   16 <= MM.ArchAddrWidth arch,
                                   MBL.BinaryLoader arch (E.ElfHeaderInfo (MM.ArchAddrWidth arch)),
                                   E.ElfWidthConstraints (MM.ArchAddrWidth arch),
-                                  B.InstructionConstraints arch)
+                                  RI.ArchConstraints arch)
                                    => RenovateConfig arch (E.ElfHeaderInfo (MM.ArchAddrWidth arch)) callbacks b
                                    -> E.ElfHeaderInfo (MM.ArchAddrWidth arch)
                                    -> MBL.LoadedBinary arch (E.ElfHeaderInfo (MM.ArchAddrWidth arch))
@@ -197,11 +198,11 @@ withElfConfig (E.SomeElf e0) configs k = do
 
 -- | Apply a rewriter to an ELF file using the chosen layout strategy.
 --
--- The 'RE.LayoutStrategy' determines how rewritten basic blocks will be laid
+-- The 'RT.LayoutStrategy' determines how rewritten basic blocks will be laid
 -- out in the new binary file.  If the rewriter succeeds, it returns a new ELF
 -- file and some metadata describing the changes made to the file.  Some of the
 -- metadata is provided by rewriter passes in the 'RW.RewriteM' environment.
-rewriteElf :: (B.InstructionConstraints arch,
+rewriteElf :: (RI.ArchConstraints arch,
                MBL.BinaryLoader arch binFmt,
                Typeable arch,
                Stack.HasCallStack,
@@ -218,7 +219,7 @@ rewriteElf :: (B.InstructionConstraints arch,
            -> MBL.LoadedBinary arch binFmt
            -- ^ A representation of the contents of memory of the ELF file
            -- (including statically-allocated data)
-           -> RE.LayoutStrategy
+           -> RT.LayoutStrategy
            -- ^ The layout strategy for blocks in the new binary
            -> IO (E.Elf (MM.ArchAddrWidth arch), b arch, RewriterInfo lm arch, RewriterEnv arch)
 rewriteElf logAction cfg hdlAlloc ehi loadedBinary strat = do
@@ -235,7 +236,7 @@ rewriteElf logAction cfg hdlAlloc ehi loadedBinary strat = do
 --
 -- Note that the configuration type is keyed by the 'AnalyzeOnly' tag, which
 -- restricts the type of the analysis compared to the rewriting variant.
-analyzeElf :: (B.InstructionConstraints arch,
+analyzeElf :: (RI.ArchConstraints arch,
                MBL.BinaryLoader arch binFmt,
                E.ElfWidthConstraints (MM.ArchAddrWidth arch),
                16 <= MM.ArchAddrWidth arch,
@@ -344,7 +345,7 @@ sectionAddressRange sec = (textSectionStartAddr, textSectionEndAddr)
 --  * Fix handling of new data segments (reserve a fixed amount of space before the new text)
 --  * More carefully analyze alignment requirements (the new PHDRs and new text
 --    are currently page aligned - is that necessary?)
-doRewrite :: (B.InstructionConstraints arch,
+doRewrite :: (RI.ArchConstraints arch,
               MBL.BinaryLoader arch binFmt,
               Typeable arch,
               Stack.HasCallStack,
@@ -355,7 +356,7 @@ doRewrite :: (B.InstructionConstraints arch,
           -> C.HandleAllocator
           -> MBL.LoadedBinary arch binFmt
           -> RE.SymbolMap arch
-          -> RE.LayoutStrategy
+          -> RT.LayoutStrategy
           -> ElfRewriter lm arch (b arch)
 doRewrite cfg hdlAlloc loadedBinary symmap strat = do
   -- We need to compute the extents of every ElfDataRegion so that we can
@@ -1176,7 +1177,7 @@ nextSegmentIndex = fromIntegral . programHeaderCount
 instrumentTextSection :: forall w arch binFmt b lm
                        . (w ~ MM.ArchAddrWidth arch,
                           MBL.BinaryLoader arch binFmt,
-                          B.InstructionConstraints arch,
+                          RI.ArchConstraints arch,
                           Typeable arch,
                           Integral (E.ElfWordType w),
                           16 <= w,
@@ -1189,7 +1190,7 @@ instrumentTextSection :: forall w arch binFmt b lm
                       -- ^ The address of the (start, end) of the text section
                       -> B.ByteString
                       -- ^ The bytes of the text section
-                      -> RE.LayoutStrategy
+                      -> RT.LayoutStrategy
                       -- ^ The strategy to use for laying out instrumented blocks
                       -> RA.ConcreteAddress arch
                       -- ^ The address to lay out the instrumented blocks
@@ -1276,7 +1277,7 @@ extractOrThrowRewriterResult e r = do
 withAnalysisEnv :: forall w arch binFmt callbacks b a lm
                     . (w ~ MM.ArchAddrWidth arch,
                        MBL.BinaryLoader arch binFmt,
-                       B.InstructionConstraints arch,
+                       RI.ArchConstraints arch,
                        Integral (E.ElfWordType w),
                        16 <= w,
                        MS.SymArchConstraints arch)

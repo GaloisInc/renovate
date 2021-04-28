@@ -10,8 +10,8 @@ import qualified Data.Macaw.Discovery as MD
 import qualified Data.Macaw.Memory as MM
 import           Data.Parameterized.Some ( Some(..) )
 
-import qualified Renovate.Address as RA
-import qualified Renovate.BasicBlock as RB
+import qualified Renovate.Core.Address as RA
+import qualified Renovate.Core.BasicBlock as RB
 import qualified Renovate.ISA as RI
 
 -- | Compute fallthrough successors of basic blocks

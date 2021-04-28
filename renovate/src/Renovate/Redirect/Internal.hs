@@ -9,10 +9,10 @@ import qualified Data.Traversable as T
 
 import           Prelude
 
-import           Renovate.BasicBlock
+import           Renovate.Core.BasicBlock
 import           Renovate.ISA
 import           Renovate.Redirect.Monad
-import           Renovate.Redirect.LayoutBlocks.Types
+import           Renovate.Core.Layout
 
 -- | Overwrite the entry points of each original block with a pointer
 -- to the instrumented block, if possible.
@@ -22,7 +22,7 @@ import           Renovate.Redirect.LayoutBlocks.Types
 -- blocks.  We will generate a diagnostic for each one.
 --
 -- This is a low level helper mostly exposed for testing
-redirectOriginalBlocks :: (Monad m, T.Traversable t, InstructionConstraints arch)
+redirectOriginalBlocks :: (Monad m, T.Traversable t)
                        => t (WithProvenance ConcretizedBlock arch)
                        -> RewriterT arch m (t (WithProvenance ConcretizedBlock arch))
 redirectOriginalBlocks = T.traverse redirectBlock
@@ -36,7 +36,7 @@ redirectOriginalBlocks = T.traverse redirectBlock
 --
 -- Note that the address of the jump instruction is the address of the
 -- original block (since it will be the first instruction).
-redirectBlock :: (Monad m, InstructionConstraints arch)
+redirectBlock :: (Monad m)
               => WithProvenance ConcretizedBlock arch
               -> RewriterT arch m (WithProvenance ConcretizedBlock arch)
 redirectBlock input =

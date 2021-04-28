@@ -5,7 +5,7 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
-module Renovate.Redirect.LayoutBlocks.Types (
+module Renovate.Core.Layout (
   LayoutStrategy(..),
   Allocator(..),
   CompactOrdering(..),
@@ -26,8 +26,8 @@ import qualified Data.ByteString as BS
 import qualified Data.Vector.Unboxed as V
 import           Data.Word ( Word32 )
 
-import           Renovate.Address ( ConcreteAddress, SymbolicAddress )
-import           Renovate.BasicBlock
+import           Renovate.Core.Address ( ConcreteAddress, SymbolicAddress )
+import           Renovate.Core.BasicBlock
 
 -- | A type for selecting the which addresses are available for laying out
 -- basic blocks in rewritten binaries.

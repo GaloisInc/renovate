@@ -12,8 +12,9 @@ module Renovate.ABI (
   ) where
 
 import Data.Word ( Word8, Word32 )
-import Renovate.Address
-import Renovate.BasicBlock
+import Renovate.Core.Address
+import Renovate.Core.Instruction
+import Renovate.Core.Relocation
 
 -- | A description of the properties of an Application Binary
 -- Interface (ABI) that we currently care about.  Right now, it is

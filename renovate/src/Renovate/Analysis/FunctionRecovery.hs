@@ -22,8 +22,6 @@ module Renovate.Analysis.FunctionRecovery (
   FunctionCFG(..)
   ) where
 
-import qualified GHC.Err.Located as L
-
 import           Control.Applicative
 import qualified Control.Monad.RWS.Strict as RWS
 import qualified Data.Foldable as F
@@ -32,13 +30,14 @@ import qualified Data.Map.Strict as M
 import           Data.Parameterized.Some ( Some(..) )
 import           Data.Semigroup
 import qualified Data.Set as S
+import           GHC.Stack ( HasCallStack )
 
 import qualified Data.Macaw.CFG as MM
 
 import           Prelude
 
-import           Renovate.Address
-import           Renovate.BasicBlock
+import           Renovate.Core.Address
+import           Renovate.Core.BasicBlock
 import           Renovate.ISA
 import           Renovate.Recovery
 
@@ -133,7 +132,7 @@ makeCFGForEntry entryAddr = do
                               , cfgCompletion = if fsHasIndirectJump st then Incomplete else Complete
                               }
 
-processWorklist :: forall arch . (MM.MemWidth (MM.ArchAddrWidth arch)) => M arch ()
+processWorklist :: forall arch . (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch)) => M arch ()
 processWorklist = do
   wl <- RWS.gets fsWorklist
   case S.minView wl of
@@ -144,7 +143,7 @@ processWorklist = do
                             }
       b <- M.lookup addr <$> RWS.asks envBlocks >>= \case
         Just b -> return b
-        Nothing -> L.error $ "Address " <> show addr <> " not found in blocks"
+        Nothing -> error $ "Address " <> show addr <> " not found in blocks"
       isa <- RWS.asks envISA
       mem <- RWS.asks envMem
       withInstructionAddresses isa b $ \_repr insns -> do

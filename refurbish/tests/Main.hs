@@ -152,7 +152,7 @@ simpleConsoleLogger = LJ.LogAction $ \msg -> do
 testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , E.ElfWidthConstraints w
                 , MS.SymArchConstraints arch
-                , R.InstructionConstraints arch
+                , R.ArchConstraints arch
                 , Typeable arch
                 , 16 <= w
                 , MBL.BinaryLoader arch (E.ElfHeaderInfo w)
@@ -226,7 +226,7 @@ withELF :: FilePath
                           , 16 <= MM.ArchAddrWidth arch
                           , Typeable arch
                           , E.ElfWidthConstraints (MM.ArchAddrWidth arch)
-                          , R.InstructionConstraints arch
+                          , R.ArchConstraints arch
                           ) =>
                R.RenovateConfig arch (E.ElfHeaderInfo (MM.ArchAddrWidth arch)) (R.AnalyzeAndRewrite lm) a
             -> E.ElfHeaderInfo (MM.ArchAddrWidth arch)

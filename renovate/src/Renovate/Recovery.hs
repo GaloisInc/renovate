@@ -46,7 +46,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Encoding.Error as T
 import qualified Data.Traversable as T
-import qualified GHC.Err.Located as L
+import           GHC.Stack ( HasCallStack )
 import           GHC.TypeLits
 import qualified Lumberjack as LJ
 
@@ -64,8 +64,9 @@ import qualified Lang.Crucible.FunctionHandle as C
 import qualified What4.FunctionName as C
 import qualified What4.ProgramLoc as C
 
-import           Renovate.Address
-import           Renovate.BasicBlock
+import           Renovate.Core.Address
+import           Renovate.Core.BasicBlock
+import qualified Renovate.Core.Instruction as RCI
 import           Renovate.Diagnostic
 import           Renovate.ISA
 import           Renovate.Recovery.Overlap
@@ -309,7 +310,7 @@ blockInfo recovery mem textAddrRange di = do
 data Recovery arch =
   Recovery { recoveryISA :: ISA arch
            , recoveryDis :: forall m ids . (C.MonadThrow m) => MC.ParsedBlock arch ids -> ConcreteAddress arch -> ConcreteAddress arch -> B.ByteString -> m (ConcreteBlock arch)
-           , recoveryAsm :: forall m tp . (C.MonadThrow m) => Instruction arch tp () -> m B.ByteString
+           , recoveryAsm :: forall m tp . (C.MonadThrow m) => RCI.Instruction arch tp () -> m B.ByteString
            , recoveryArchInfo :: MC.ArchitectureInfo arch
            , recoveryHandleAllocator :: C.HandleAllocator
            , recoveryFuncCallback :: Maybe (Int, MC.ArchSegmentOff arch -> BlockInfo arch -> IO ())
@@ -451,11 +452,11 @@ blockStopAddress blockStarts pb startAddr
 -- For each block, it is either translated (Right), or we report the address of
 -- the function containing the untranslatable block (Left).  We need this list
 -- to mark functions as incomplete.
-buildBlock :: (L.HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow m)
+buildBlock :: (HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow m)
            => (forall ids . MC.ParsedBlock arch ids -> ConcreteAddress arch -> ConcreteAddress arch -> B.ByteString -> Either C.SomeException (ConcreteBlock arch))
            -- ^ A function to disassemble an entire block at once (up to the
            -- requested number of bytes)
-           -> (forall tp . Instruction arch tp () -> Maybe B.ByteString)
+           -> (forall tp . RCI.Instruction arch tp () -> Maybe B.ByteString)
            -- ^ The function to pull a single instruction off of the
            -- byte stream; it returns the number of bytes consumed and
            -- the new instruction.

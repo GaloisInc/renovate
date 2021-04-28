@@ -11,7 +11,7 @@ import qualified Data.Map as M
 import qualified Data.Macaw.CFG as MC
 import qualified Data.Macaw.Discovery as MC
 
-import           Renovate.Address ( ConcreteAddress, concreteAsSegmentOff )
+import           Renovate.Core.Address ( ConcreteAddress, concreteAsSegmentOff )
 
 type SymbolMap     arch = M.Map (ConcreteAddress arch) B.ByteString
 type NewSymbolsMap arch = M.Map (ConcreteAddress arch) (ConcreteAddress arch, B.ByteString)

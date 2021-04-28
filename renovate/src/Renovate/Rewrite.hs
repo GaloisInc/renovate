@@ -40,13 +40,14 @@ import qualified Data.Set as S
 import           Data.Word ( Word32 )
 
 import qualified Data.Macaw.CFG as MM
-
 import qualified Lang.Crucible.FunctionHandle as C
 
-import qualified Renovate.Address as A
-import qualified Renovate.Analysis.FunctionRecovery as FR
-import qualified Renovate.BasicBlock as B
 import qualified Renovate.ABI as ABI
+import qualified Renovate.Analysis.FunctionRecovery as FR
+import qualified Renovate.Core.Address as A
+import qualified Renovate.Core.BasicBlock as B
+import qualified Renovate.Core.Instruction as RCI
+import qualified Renovate.Core.Relocation as RCR
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as RR
 import qualified Renovate.Redirect.Symbolize as RS
@@ -233,16 +234,16 @@ injectFunction funcName bytes = do
   return addr
 
 data InjectSymbolicInstructions arch where
-  InjectSymbolicInstructions :: (B.ArchConstraints arch tp)
-                             => B.InstructionArchRepr arch tp
-                             -> DLN.NonEmpty (B.Instruction arch tp (B.Relocation arch))
+  InjectSymbolicInstructions :: (RCI.InstructionConstraints arch tp)
+                             => RCI.InstructionArchRepr arch tp
+                             -> DLN.NonEmpty (RCI.Instruction arch tp (RCR.Relocation arch))
                              -> InjectSymbolicInstructions arch
 
 injectInstructions
-  :: (B.ArchConstraints arch tp)
+  :: (RCI.InstructionConstraints arch tp)
   => String
-  -> B.InstructionArchRepr arch tp
-  -> DLN.NonEmpty (B.Instruction arch tp (B.Relocation arch))
+  -> RCI.InstructionArchRepr arch tp
+  -> DLN.NonEmpty (RCI.Instruction arch tp (RCR.Relocation arch))
   -> RewriteM lm arch (A.SymbolicAddress arch)
 injectInstructions funcName repr insns = do
   alloc0 <- RWS.gets symAddrAlloc
