@@ -20,7 +20,6 @@ import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import qualified Data.List.NonEmpty as DLN
 import qualified Data.Map as M
-import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Traversable as T
 import           Data.Typeable ( Typeable )
 import qualified Data.Map as Map
@@ -252,24 +251,16 @@ concretizeJumps symToConcAddrs wp
 concretizeAddresses :: forall m arch tp
                      . (Monad m, InstructionConstraints arch)
                     => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
-                    -> TaggedInstruction arch tp (InstructionAnnotation arch)
+                    -> Instruction arch tp (Relocation arch)
                     -> S.StateT (ConcreteAddress arch) (RewriterT arch m) (DLN.NonEmpty (Instruction arch tp ()), Sum Word64)
-concretizeAddresses symToConcAddrs taggedInstr = do
+concretizeAddresses symToConcAddrs instr = do
   insnAddr <- S.get
   isa <- S.lift askISA
   mem <- S.lift askMem
-  let insns = withConcTarget (isaConcretizeAddresses isa mem insnAddr (projectInstruction taggedInstr))
+  let insns = isaConcretizeAddresses isa mem (lookupConcreteTarget symToConcAddrs) insnAddr instr
   let size = sum (fmap (toInteger . isaInstructionSize isa) insns)
   S.put (insnAddr `addressAddOffset` fromIntegral size)
   return (insns, fromIntegral size)
-  where
-    withConcTarget :: forall a . (forall tk . RelocatableTarget arch ConcreteAddress tk -> a) -> a
-    withConcTarget k =
-      case symbolicTarget taggedInstr of
-        Some NoTarget -> k NoTarget
-        Some (RelocatableTarget symTarget) ->
-          let concreteTarget = lookupConcreteTarget symToConcAddrs symTarget
-          in k (RelocatableTarget concreteTarget)
 
 -- | Map from a symbolic address to a concrete one, failing if there is no entry
 -- in the mapping

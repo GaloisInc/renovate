@@ -6,7 +6,6 @@ module Renovate.Arch.AArch32 (
   ISA.assemble,
   ISA.disassemble,
   ISA.Instruction,
-  ISA.TargetAddress(..),
   ISA.InstructionDisassemblyFailure(..),
   ISA.ARMRepr(..),
   ISA.A32,

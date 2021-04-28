@@ -157,7 +157,7 @@ data AnalyzeOnly arch binFmt b =
 data ModifiedInstructions arch where
   ModifiedInstructions :: ( B.ArchConstraints arch tp )
                        => B.InstructionArchRepr arch tp
-                       -> DLN.NonEmpty (B.TaggedInstruction arch tp (B.InstructionAnnotation arch))
+                       -> DLN.NonEmpty (B.Instruction arch tp (B.Relocation arch))
                        -> ModifiedInstructions arch
 
 -- | The configuration for a combined analysis and rewriting pass
@@ -262,6 +262,7 @@ compose funcs = go funcs
                                    is'
                                    repr'
                                    (B.symbolicBlockSymbolicSuccessor b)
+                                   (B.symbolicBlockDiscoveryBlock b)
           in go fs b'
         Nothing -> go fs b
 

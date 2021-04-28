@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -18,7 +19,6 @@ module Renovate.Arch.X86_64.Internal (
   fromFlexInst,
   Instruction(..),
   AnnotatedOperand(..),
-  TargetAddress(..),
   Value(..),
   toFlexValue,
   instrOpcode,
@@ -44,9 +44,9 @@ import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as LB
 import           Data.Maybe ( fromMaybe )
 import           Data.Parameterized.Classes
-import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Typeable ( Typeable )
+import           Data.Void ( Void, absurd )
 import           Data.Word ( Word8 )
 import           Numeric ( showHex )
 import qualified Text.PrettyPrint.ANSI.Leijen as PP
@@ -57,6 +57,10 @@ import qualified Flexdis86 as D
 import qualified Renovate as R
 
 -- | The type of operands to x86_64 instructions
+--
+-- This is a wrapper around the native 'D.Value' from flexdis but with an extra
+-- phantom parameter to represent the instruction encoding (which is trivially
+-- fixed for x86)
 data Value tp where
   Value :: D.Value -> Value OnlyEncoding
 
@@ -82,21 +86,17 @@ valueRepr (Value _) = X86Repr
 
 type instance R.RegisterType X86.X86_64 = Value
 
--- | The target address of a jump.  This is used as the annotation
--- type for symbolic instructions.
-data TargetAddress = NoAddress
-                   | AbsoluteAddress (R.ConcreteAddress X86.X86_64)
-                   deriving (Eq, Ord, Show)
-
 -- | The type of an operand with an annotation
-data AnnotatedOperand a = AnnotatedOperand { aoOperand :: (D.Value, D.OperandType)
-                                           , aoAnnotation :: a
-                                           }
-                        deriving (Functor, Eq, Show)
+data AnnotatedOperand a =
+  AnnotatedOperand { aoOperand :: (D.Value, D.OperandType)
+                   , aoAnnotation :: a
+                   }
+  deriving (Functor, Eq, Show)
 
 data EncodingKind = OnlyEncoding
 type OnlyEncoding = 'OnlyEncoding
 
+type instance R.ArchitectureRelocation X86.X86_64 = Void
 type instance R.InstructionArchReprKind X86.X86_64 = EncodingKind
 type instance R.InstructionArchRepr X86.X86_64 = X86Repr
 
@@ -112,7 +112,9 @@ instance OrdF X86Repr where
 -- | A wrapper around a flexdis86 instruction with an arbitrary
 -- annotation on each operand of type @a@.
 data Instruction (tp :: R.InstructionArchReprKind X86.X86_64) a where
+  -- | A flexdis86 instruction with annotated operands
   XI :: D.InstructionInstanceF (AnnotatedOperand a) -> Instruction OnlyEncoding a
+  -- | Raw bytes injected into the instruction stream (trivially assembled as bytes)
   RawBytes :: B.ByteString -> Instruction OnlyEncoding a
 
 instructionRepr :: Instruction tp a -> X86Repr tp
@@ -126,7 +128,6 @@ deriving instance (Eq a) => Eq (Instruction tp a)
 deriving instance Functor (Instruction tp)
 
 type instance R.Instruction X86.X86_64 = Instruction
-type instance R.InstructionAnnotation X86.X86_64 = TargetAddress
 
 instance PD.Pretty (Instruction tp a) where
   pretty = PD.pretty . prettyPrint
@@ -145,20 +146,18 @@ doPP _ (RawBytes b) = PP.pretty "data: " <> PP.hsep [PP.pretty (showHex w "") | 
 prettyPrint' :: (Instruction tp a -> PP.Doc) -> Instruction tp a -> String
 prettyPrint' pp i = PP.displayS (PP.renderCompact (pp i)) ""
 
-prettyPrintWithAnnotations :: R.TaggedInstruction X86.X86_64 tp TargetAddress
+prettyPrintWithAnnotations :: R.Instruction X86.X86_64 tp (R.Relocation X86.X86_64)
                            -> String
 prettyPrintWithAnnotations insn =
-  prettyPrint' (doPP (Just ppValue)) (R.projectInstruction insn) ++ insnAnnStr
+  prettyPrint' (doPP (Just ppValue)) insn
   where
     ppValue ao = PP.hsep $ D.ppValue (fst $ aoOperand ao) : annDocs
       where
         annDocs = case aoAnnotation ao of
-          NoAddress -> []
-          AbsoluteAddress addr -> [PP.angles (PP.text $ show $ PD.pretty addr)]
-
-    insnAnnStr = case R.symbolicTarget insn of
-      Some (R.RelocatableTarget tgt) -> " <<" ++ show (PD.pretty tgt) ++ ">>"
-      Some R.NoTarget -> ""
+          R.NoRelocation -> []
+          R.PCRelativeRelocation addr -> [PP.angles (PP.text "concrete:" <> (PP.text $ show $ PD.pretty addr))]
+          R.SymbolicRelocation addr -> [PP.angles (PP.text "symbolic:" <> (PP.text $ show $ PD.pretty addr))]
+          R.ArchRelocation v -> absurd v
 
 -- | The types of failures that can occur during disassembly of x86_64
 -- instructions.
@@ -240,8 +239,8 @@ annotateInstrWith :: (AnnotatedOperand () -> AnnotatedOperand a) -> Instruction 
 annotateInstrWith f (XI ii) = XI (fmap f ii)
 annotateInstrWith _f (RawBytes b) = RawBytes b
 
-noAddr :: Instruction tp () -> Instruction tp TargetAddress
-noAddr i = annotateInstr i NoAddress
+noAddr :: Instruction tp () -> Instruction tp (R.Relocation X86.X86_64)
+noAddr i = annotateInstr i R.NoRelocation
 
 -- | Compute the size of an instruction by assembling it and
 -- measuring.

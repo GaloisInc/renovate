@@ -34,7 +34,6 @@ module Renovate.Arch.X86_64 (
   -- * Types
   X86.X86_64,
   Instruction,
-  TargetAddress(..),
   Value(..),
   AssemblyFailure(..),
   DisassemblyFailure(..)

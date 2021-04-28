@@ -15,6 +15,7 @@ import qualified Data.Foldable as F
 import           Data.Functor.Const ( Const(..) )
 import qualified Data.List.NonEmpty as DLN
 import           Data.Parameterized.Classes
+import           Data.Parameterized.Some ( Some(..) )
 import qualified System.Exit as E
 import qualified Test.Tasty.HUnit as T
 
@@ -66,8 +67,11 @@ ppc64Inject env _ (InjectedAddr addr) sb = do
       Just Refl -> do
         let callI = DP.Instruction DP.BL (DP.Calltarget (DP.BT 0) PL.:< PL.Nil)
         let genI = R.fromGenericInstruction @RP.PPC64 RP.PPCRepr callI
-        let newCall = R.isaSymbolizeAddresses isa mem (R.concreteFromAbsolute 0) (Just addr) genI
-        return (Just (R.ModifiedInstructions repr (prepend newCall insns)))
+        let toSymbolic _ = addr
+        case R.symbolicBlockDiscoveryBlock sb of
+          Some pb -> do
+            let newCall = R.isaSymbolizeAddresses isa mem toSymbolic pb (R.concreteFromAbsolute 0) genI
+            return (Just (R.ModifiedInstructions repr (prepend newCall insns)))
   where
     mem = MBL.memoryImage (R.analysisLoadedBinary env)
     isa = R.analysisISA env

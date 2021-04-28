@@ -11,7 +11,6 @@ module Renovate.Redirect (
   SymbolicBlock,
   ConcreteAddress,
   SymbolicAddress,
-  TaggedInstruction,
   RewritePair(..),
   -- * Rewriter Monad
   RM.runRewriterT,
@@ -129,6 +128,7 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
                                    insns'
                                    repr'
                                    (symbolicBlockSymbolicSuccessor sb)
+                                   (symbolicBlockDiscoveryBlock sb)
            return $! WithProvenance cb sb' Modified
          Nothing      ->
            return $! WithProvenance cb sb Unmodified

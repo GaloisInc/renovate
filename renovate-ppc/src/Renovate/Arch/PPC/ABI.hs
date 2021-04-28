@@ -87,8 +87,8 @@ ppcClearRegister :: forall arch v (tp :: R.InstructionArchReprKind arch)
                   . (arch ~ PPC.AnyPPC v)
                  => R.InstructionArchRepr arch tp
                  -> R.RegisterType arch tp
-                 -> R.Instruction arch tp (R.InstructionAnnotation arch)
-ppcClearRegister PPCRepr r = fmap (const NoAddress) i1
+                 -> R.Instruction arch tp (R.Relocation arch)
+ppcClearRegister PPCRepr r = fmap (const R.NoRelocation) i1
   where
     i1 :: R.Instruction arch tp ()
     i1 = fromInst PPCRepr i0

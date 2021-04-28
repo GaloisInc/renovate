@@ -19,7 +19,6 @@ module Renovate.Arch.PPC (
   assemble,
   disassemble,
   Instruction,
-  TargetAddress(..),
   Operand(..),
 
   -- * Exceptions

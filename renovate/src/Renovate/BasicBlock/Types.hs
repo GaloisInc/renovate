@@ -17,7 +17,8 @@ module Renovate.BasicBlock.Types (
   InstructionArchReprKind,
   SomeInstructionArchRepr(..),
   Instruction,
-  InstructionAnnotation,
+  ArchitectureRelocation,
+  Relocation(..),
   RegisterType,
   -- * Concrete blocks
   ConcreteBlock(..),
@@ -39,16 +40,7 @@ module Renovate.BasicBlock.Types (
   withConcretizedInstructions,
   SymbolicInfo(..),
   symbolicInfo,
-
   AddressAssignedBlock(..),
-  TaggedInstruction,
-  tagInstruction,
-  symbolicTarget,
-  projectInstruction,
-  RelocatableTarget(..),
-  HasSomeTarget,
-  HasNoTarget,
-
   ToGenericInstruction(..),
   -- * Constraints
   ArchConstraints,
@@ -102,8 +94,40 @@ data SomeInstructionArchRepr arch where
 -- '()' or @'InstructionAnnotation' arch@
 type family Instruction arch :: InstructionArchReprKind arch -> Type -> Type
 
--- | The type of annotations used to carry relocation information while rewriting
-type family InstructionAnnotation arch :: Type
+-- | An architecture-specific relocation extension type
+--
+-- If this is not needed, instantiate it as 'Void'
+type family ArchitectureRelocation arch :: Type
+
+-- | Representations of relocations that must be resolved during instruction concretization
+--
+-- Each operand is annotated with a relocation that contains enough information
+-- to be resolved during the concretization phase of rewriting. These
+-- relocations are analogous to those in object files, and represent symbolic
+-- addresses that must be concretized.
+data Relocation arch where
+  -- | A reference to an absolute address by means of a PC-relative offset that
+  -- needs to be re-computed when the PC of the instruction changes
+  --
+  -- These are largely used for referencing existing data values in a
+  -- position-independent way, as data is never assigned a symbolic address (as
+  -- moving existing data is too dangerous in general)
+  PCRelativeRelocation :: ConcreteAddress arch -> Relocation arch
+  -- | A reference to a symbolic location that should be referenced (probably by
+  -- a PC-relative offset) once both the containing instruction and target have
+  -- been assigned addresses.
+  --
+  -- These are assigned to injected code, injected data, and code that may move
+  -- (e.g., jump targets)
+  SymbolicRelocation :: SymbolicAddress arch -> Relocation arch
+  -- | An architecture-specific relocation type
+  --
+  -- If this is not needed, instantiate the 'ArchitectureRelocation' type as 'Void'
+  ArchRelocation :: ArchitectureRelocation arch -> Relocation arch
+  -- | For operands that do not require relocations
+  NoRelocation :: Relocation arch
+
+deriving instance (Show (ArchitectureRelocation arch), MC.MemWidth (MC.ArchAddrWidth arch)) => Show (Relocation arch)
 
 -- | The type of register values for the architecture
 type family RegisterType arch :: InstructionArchReprKind arch -> Type
@@ -125,8 +149,6 @@ class ToGenericInstruction arch
 -- constraints are not very interesting.
 type InstructionConstraints arch =
   ( PD.Pretty (Instruction arch (InstructionArchReprKind arch) ())
-  , PD.Pretty (Instruction arch (InstructionArchReprKind arch) (InstructionAnnotation arch))
-  , Show (Instruction arch (InstructionArchReprKind arch) (InstructionAnnotation arch))
   , Show (Instruction arch (InstructionArchReprKind arch) ())
   , Eq (Instruction arch (InstructionArchReprKind arch) ())
   , Ord (RegisterType arch (InstructionArchReprKind arch))
@@ -214,75 +236,6 @@ withPaddingInstructions :: PaddingBlock arch
 withPaddingInstructions (PaddingBlock _ insns repr) k =
   k repr insns
 
-data RelocatableTargetKind = HasNoTarget
-                           | HasSomeTarget
-type HasNoTarget = 'HasNoTarget
-type HasSomeTarget = 'HasSomeTarget
-
--- | A wrapper around the symbolic target of a control flow transfer instruction
---
--- This is meant for use internally within renovate and is not meant for users
---
--- The user facing API for generating instructions is 'tagInstruction'
---
--- The purpose of this tag is to provide type-level evidence that an instruction
--- with the tag actually has a symbolic target to patch up.  We will use this
--- with 'isaModifyJumpTarget' (to prove that we only pass in instructions that
--- have targets).
---
--- There isn't yet a formal connection, but the intent is that instructions with
--- relocatable jump targets should get these annotations when the symbolic block
--- is created.
---
--- The address type is a parameter because we will be converting it from a
--- 'SymbolicAddress' to a 'ConcreteAddress'.
-data RelocatableTarget arch addrTy (tp :: RelocatableTargetKind) where
-  RelocatableTarget :: addrTy arch -> RelocatableTarget arch addrTy HasSomeTarget
-  NoTarget :: RelocatableTarget arch addrTy HasNoTarget
-
--- | A wrapper around a normal instruction that includes an optional
--- 'SymbolicAddress'.
---
--- When we start relocating code, we need to track the targets of
--- jumps *symbolically* (i.e., not based on concrete address target).
--- That allows us to stitch the jumps in the instrumented blocks
--- together.  This wrapper holds the symbolic address.
---
--- Note: this representation isn't good for instructions with more
--- than one possible target (if there is such a thing).  If that
--- becomes an issue, the annotation will need to sink into the operand
--- annotations, and we'll need a helper to collect those.
-newtype TaggedInstruction arch (tp :: InstructionArchReprKind arch) a =
-  Tag { unTag :: (Instruction arch tp a, Some (RelocatableTarget arch SymbolicAddress)) }
-
-instance PD.Pretty (Instruction arch tp a) => PD.Pretty (TaggedInstruction arch tp a) where
-  pretty (Tag (i, _)) = PD.pretty i
-
--- | Annotate an instruction with a symbolic target.
---
--- We use this if the instruction is a jump and we will need to
--- relocate it, so we need to know the symbolic block it is jumping
--- to.
-tagInstruction :: forall arch (tp :: InstructionArchReprKind arch) a
-                . Maybe (SymbolicAddress arch)
-               -> Instruction arch tp a
-               -> TaggedInstruction arch tp a
-tagInstruction ma i =
-  case ma of
-    Nothing -> Tag (i, Some NoTarget)
-    Just sa -> Tag (i, Some (RelocatableTarget sa))
-
--- | If the 'TaggedInstruction' has a 'SymbolicAddress' as a target,
--- return it.
-symbolicTarget :: TaggedInstruction arch tp a -> Some (RelocatableTarget arch SymbolicAddress)
-symbolicTarget = snd . unTag
-
--- | Remove the tag from an instruction
-projectInstruction :: forall arch a (tp :: InstructionArchReprKind arch)
-                    . TaggedInstruction arch tp a
-                   -> Instruction arch tp a
-projectInstruction = fst . unTag
-
 -- | The type of 'BasicBlock's that only have symbolic addresses.
 -- Their jumps are annotated with symbolic address targets as well,
 -- which refer to other 'SymbolicBlock's.
@@ -291,9 +244,10 @@ data SymbolicBlock arch =
   ( ArchConstraints arch tp ) =>
   SymbolicBlock { symbolicBlockOriginalAddress :: ConcreteAddress arch
                 , symbolicBlockSymbolicAddress :: SymbolicAddress arch
-                , symbolicBlockInstructions :: DLN.NonEmpty (TaggedInstruction arch tp (InstructionAnnotation arch))
+                , symbolicBlockInstructions :: DLN.NonEmpty (Instruction arch tp (Relocation arch))
                 , symbolicBlockRepr :: InstructionArchRepr arch tp
                 , symbolicBlockSymbolicSuccessor :: Maybe (SymbolicAddress arch)
+                , symbolicBlockDiscoveryBlock :: Some (MD.ParsedBlock arch)
                 }
 
 symbolicBlock :: forall arch (tp :: InstructionArchReprKind arch)
@@ -302,7 +256,7 @@ symbolicBlock :: forall arch (tp :: InstructionArchReprKind arch)
               -- ^ The 'ConcreteBlock' this 'SymbolicBlock' was lifted from
               -> SymbolicAddress arch
               -- ^ The symbolic address assigned to this block
-              -> DLN.NonEmpty (TaggedInstruction arch tp (InstructionAnnotation arch))
+              -> DLN.NonEmpty (Instruction arch tp (Relocation arch))
               -- ^ Instructions with symbolic address annotations
               -> InstructionArchRepr arch tp
               -> Maybe (SymbolicAddress arch)
@@ -310,13 +264,15 @@ symbolicBlock :: forall arch (tp :: InstructionArchReprKind arch)
               --
               -- This could be Nothing if the block ends in an unconditional
               -- jump (note: calls have a fallthrough because they return)
+              -> Some (MD.ParsedBlock arch)
               -> SymbolicBlock arch
-symbolicBlock concAddr symAddr symInsns repr symSucc =
+symbolicBlock concAddr symAddr symInsns repr symSucc spb =
   SymbolicBlock { symbolicBlockOriginalAddress = concAddr
                 , symbolicBlockSymbolicAddress = symAddr
                 , symbolicBlockInstructions = symInsns
                 , symbolicBlockRepr = repr
                 , symbolicBlockSymbolicSuccessor = symSucc
+                , symbolicBlockDiscoveryBlock = spb
                 }
 
 symbolicBlockWithoutSuccessor :: SymbolicBlock arch -> SymbolicBlock arch
@@ -328,9 +284,9 @@ symbolicBlockWithoutSuccessor sb =
 withSymbolicInstructions :: SymbolicBlock arch
                          -> ( forall (tp :: InstructionArchReprKind arch)
                             . ( ArchConstraints arch tp )
-                            => InstructionArchRepr arch tp -> DLN.NonEmpty (TaggedInstruction arch tp (InstructionAnnotation arch)) -> a)
+                            => InstructionArchRepr arch tp -> DLN.NonEmpty (Instruction arch tp (Relocation arch)) -> a)
                          -> a
-withSymbolicInstructions (SymbolicBlock _caddr _saddr insns repr _) k =
+withSymbolicInstructions (SymbolicBlock _caddr _saddr insns repr _ _) k =
   k repr insns
 
 -- | Some algorithms (such as layout) will need to assigned an address
