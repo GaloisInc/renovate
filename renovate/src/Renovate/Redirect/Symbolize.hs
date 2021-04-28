@@ -14,7 +14,6 @@ import qualified Data.Foldable as F
 import qualified Data.List.NonEmpty as DLN
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Map as M
-import qualified Data.Macaw.Discovery as MD
 import           Data.Maybe ( fromMaybe )
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Traversable as T
@@ -85,14 +84,14 @@ symbolizeJumps :: forall arch
                -> (ConcreteBlock arch, SymbolicBlock arch)
 symbolizeJumps isa mem symAddrMap (cb, symAddr) =
   withInstructionAddresses isa cb $ \repr insnAddrs0 ->
-    let insnAddrs1 = fmap (symbolize (concreteDiscoveryBlock cb)) insnAddrs0
+    let insnAddrs1 = fmap symbolize insnAddrs0
     in case DLN.nonEmpty (concat insnAddrs1) of
          Nothing ->
            RP.panic RP.Symbolize "symbolizeJumps" [ "Created empty block while symbolizing block at: " ++ show (concreteBlockAddress cb)
                                                   ]
          Just insnList ->
            case RRR.reifyFallthrough isa mem cb of
-             Nothing -> (cb, symbolicBlock (concreteBlockAddress cb) symAddr insnList repr Nothing)
+             Nothing -> (cb, symbolicBlock (concreteBlockAddress cb) symAddr insnList repr Nothing (concreteDiscoveryBlock cb))
              Just concreteFallthrough ->
                -- NOTE: It is not a failure if there is no symbolic address for a
                -- fallthrough address.  That simply means that code discovery was
@@ -102,32 +101,14 @@ symbolizeJumps isa mem symAddrMap (cb, symAddr) =
                -- it originally fell through to.
                let symSucc = lookupSymbolicAddress concreteFallthrough
                    concAddr = concreteBlockAddress cb
-               in (cb, symbolicBlock concAddr symAddr insnList repr (Just symSucc))
+               in (cb, symbolicBlock concAddr symAddr insnList repr (Just symSucc) (concreteDiscoveryBlock cb))
   where
     symbolize :: forall tp
-               . Some (MD.ParsedBlock arch)
-              -> (Instruction arch tp (), ConcreteAddress arch)
-              -> [TaggedInstruction arch tp (InstructionAnnotation arch)]
-    symbolize (Some pb) (i, addr) =
-      case isaJumpType isa i mem addr pb of
-        Some (AbsoluteJump _ target) ->
-          let symTarget = lookupSymbolicAddress target
-          in isaSymbolizeAddresses isa mem addr (Just symTarget) i
-        Some (RelativeJump _ _ offset) ->
-          let symTarget = lookupSymbolicAddress (addr `addressAddOffset` offset)
-          in isaSymbolizeAddresses isa mem addr (Just symTarget) i
-        Some (IndirectJump _) ->
-          -- We do not know the destination of indirect jumps, so we
-          -- can't tag them (or rewrite them later)
-          isaSymbolizeAddresses isa mem addr Nothing i
-        Some (DirectCall _ offset) ->
-          let symTarget = lookupSymbolicAddress (addr `addressAddOffset` offset)
-          in isaSymbolizeAddresses isa mem addr (Just symTarget) i
-        Some IndirectCall -> isaSymbolizeAddresses isa mem addr Nothing i
-        Some (Return _) -> isaSymbolizeAddresses isa mem addr Nothing i
-        Some NoJump -> isaSymbolizeAddresses isa mem addr Nothing i
-        Some (NotInstrumentable _) ->
-          isaSymbolizeAddresses isa mem addr Nothing i
+               . (Instruction arch tp (), ConcreteAddress arch)
+              -> [Instruction arch tp (Relocation arch)]
+    symbolize (i, addr) =
+      case concreteDiscoveryBlock cb of
+        Some pb -> isaSymbolizeAddresses isa mem lookupSymbolicAddress pb addr i
 
     lookupSymbolicAddress target = fromMaybe (StableAddress target) (M.lookup target symAddrMap)
 

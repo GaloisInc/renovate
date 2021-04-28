@@ -23,15 +23,8 @@ module Renovate.BasicBlock (
   symbolicBlockSymbolicSuccessor,
   symbolicBlockSize,
   symbolicBlockWithoutSuccessor,
+  symbolicBlockDiscoveryBlock,
   withSymbolicInstructions,
-  -- *** Additional symbolic address support
-  TaggedInstruction,
-  tagInstruction,
-  symbolicTarget,
-  projectInstruction,
-  RelocatableTarget(..),
-  HasNoTarget,
-  HasSomeTarget,
   -- ** Padding blocks
   PaddingBlock,
   paddingBlock,
@@ -54,7 +47,8 @@ module Renovate.BasicBlock (
   InstructionArchReprKind,
   SomeInstructionArchRepr(..),
   Instruction,
-  InstructionAnnotation,
+  ArchitectureRelocation,
+  Relocation(..),
   ToGenericInstruction(..),
   RegisterType,
   AddressAssignedBlock(..),
@@ -171,7 +165,7 @@ symbolicBlockSize :: (HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch))
                   -> MC.Memory (MC.ArchAddrWidth arch)
                   -> SymbolicBlock arch
                   -> Word64
-symbolicBlockSize isa mem (SymbolicBlock origAddr _symAddr insns repr mSymSucc) =
+symbolicBlockSize isa mem (SymbolicBlock origAddr _symAddr insns repr mSymSucc _) =
   fromIntegral (normalInstSizes + fallthroughInstSizes)
   where
     -- The symbolic block has tagged instructions, which have each modifiable
@@ -204,19 +198,16 @@ computeInstructionSize :: forall arch tp
                        -> ConcreteAddress arch
                        -- ^ The address allocated to the instruction; in this
                        -- case, it is simply a fake address
-                       -> TaggedInstruction arch tp (InstructionAnnotation arch)
+                       -> Instruction arch tp (Relocation arch)
                        -> Int
 computeInstructionSize isa mem insnAddr taggedInstr =
   sum (fmap (fromIntegral . isaInstructionSize isa) concreteInsns)
   where
-    withConcTarget :: forall a . (forall tk . RelocatableTarget arch ConcreteAddress tk -> a) -> a
-    withConcTarget k =
-      case symbolicTarget taggedInstr of
-        Some NoTarget -> k NoTarget
-        Some (RelocatableTarget _) ->
-          -- We don't have a real target yet, so we use a fake one
-          k (RelocatableTarget insnAddr)
-    concreteInsns = withConcTarget (isaConcretizeAddresses isa mem insnAddr (projectInstruction taggedInstr))
+    concreteInsns = isaConcretizeAddresses isa mem toConcreteAddress insnAddr taggedInstr
+    -- We don't have a real target yet, so we use a fake one. This does not
+    -- affect the size of the instruction (since we always use the same sized
+    -- jumps in generated code).
+    toConcreteAddress = const insnAddr
 
 -- | Return the 'JumpType' of the terminator instruction (if any)
 --

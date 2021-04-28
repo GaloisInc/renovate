@@ -70,9 +70,9 @@ x64CallerSaveRegisters repr =
 
 x64ClearRegister :: R.InstructionArchRepr X86.X86_64 tp
                  -> Value tp
-                 -> Instruction tp TargetAddress
+                 -> Instruction tp (R.Relocation X86.X86_64)
 x64ClearRegister repr r =
-  fmap (const NoAddress) (makeInstr repr "xor" [toFlexValue r, toFlexValue r])
+  fmap (const R.NoRelocation) (makeInstr repr "xor" [toFlexValue r, toFlexValue r])
 
 -- | Allocate memory using mmap with an anonymous mapping
 --
@@ -84,7 +84,7 @@ x64ClearRegister repr r =
 x64AllocateMemory :: R.InstructionArchRepr X86.X86_64 tp
                   -> Word32
                   -> R.ConcreteAddress X86.X86_64
-                  -> [Instruction tp TargetAddress]
+                  -> [Instruction tp (R.Relocation X86.X86_64)]
 x64AllocateMemory repr nBytes addr = [ noAddr $ makeInstr repr "push" [D.QWordReg D.RAX]
                                 , noAddr $ makeInstr repr "push" [D.QWordReg D.RDI]
                                 , noAddr $ makeInstr repr "push" [D.QWordReg D.RSI]
@@ -130,7 +130,7 @@ map_Anon = 0x20
 -- supported in the assembler yet.
 x64ComputeStackPointerOffset :: R.InstructionArchRepr X86.X86_64 tp
                              -> R.ConcreteAddress X86.X86_64
-                             -> [Instruction tp TargetAddress]
+                             -> [Instruction tp (R.Relocation X86.X86_64)]
 x64ComputeStackPointerOffset repr memAddr =
   [ noAddr $ makeInstr repr "push" [D.QWordReg D.RBX]
   , noAddr $ makeInstr repr "mov" [D.QWordReg D.RBX, D.QWordImm (D.UImm64Concrete (fromIntegral (R.absoluteAddress memAddr)))]
@@ -150,7 +150,7 @@ x64ComputeStackPointerOffset repr memAddr =
 -- stack space by modifying rsp).
 x64SaveReturnAddress :: R.InstructionArchRepr X86.X86_64 tp
                      -> R.ConcreteAddress X86.X86_64
-                     -> [Instruction tp TargetAddress]
+                     -> [Instruction tp (R.Relocation X86.X86_64)]
 x64SaveReturnAddress repr memAddr =
   [ noAddr $ makeInstr repr "mov" [D.QWordReg D.RDI, D.QWordImm (D.UImm64Concrete (fromIntegral (R.absoluteAddress memAddr)))]
   , noAddr $ makeInstr repr "mov" [D.QWordReg D.RSI, D.QWordReg D.RSP]
@@ -172,7 +172,7 @@ x64SaveReturnAddress repr memAddr =
 x64CheckShadowStack :: forall tp
                      . R.InstructionArchRepr X86.X86_64 tp
                     -> R.ConcreteAddress X86.X86_64
-                    -> [Instruction tp TargetAddress]
+                    -> [Instruction tp (R.Relocation X86.X86_64)]
 x64CheckShadowStack repr memAddr =
   [ noAddr $ makeInstr repr "mov" [D.QWordReg D.RDI, D.QWordImm (D.UImm64Concrete (fromIntegral (R.absoluteAddress memAddr)))]
   , noAddr $ makeInstr repr "mov" [D.QWordReg D.RSI, D.QWordReg D.RSP]

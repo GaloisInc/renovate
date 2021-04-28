@@ -235,14 +235,14 @@ injectFunction funcName bytes = do
 data InjectSymbolicInstructions arch where
   InjectSymbolicInstructions :: (B.ArchConstraints arch tp)
                              => B.InstructionArchRepr arch tp
-                             -> DLN.NonEmpty (B.TaggedInstruction arch tp (B.InstructionAnnotation arch))
+                             -> DLN.NonEmpty (B.Instruction arch tp (B.Relocation arch))
                              -> InjectSymbolicInstructions arch
 
 injectInstructions
   :: (B.ArchConstraints arch tp)
   => String
   -> B.InstructionArchRepr arch tp
-  -> DLN.NonEmpty (B.TaggedInstruction arch tp (B.InstructionAnnotation arch))
+  -> DLN.NonEmpty (B.Instruction arch tp (B.Relocation arch))
   -> RewriteM lm arch (A.SymbolicAddress arch)
 injectInstructions funcName repr insns = do
   alloc0 <- RWS.gets symAddrAlloc

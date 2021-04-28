@@ -22,7 +22,6 @@ module Renovate.Arch.AArch32.ISA (
   assemble,
   disassemble,
   Instruction,
-  TargetAddress(..),
   InstructionDisassemblyFailure(..),
   ARMRepr(..),
   A32,
@@ -39,11 +38,11 @@ import qualified Data.Foldable as F
 import qualified Data.List.NonEmpty as DLN
 import           Data.Maybe ( isJust )
 import qualified Data.Parameterized.Classes as PC
-import qualified Data.Parameterized.List as PL
 import qualified Data.Parameterized.NatRepr as PN
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Parameterized.TraversableFC as FC
 import qualified Data.Text.Prettyprint.Doc as PP
+import           Data.Void ( Void )
 import           Data.Word ( Word8, Word64 )
 import qualified Data.Word.Indexed as W
 import           GHC.TypeNats ( KnownNat )
@@ -64,10 +63,6 @@ import qualified SemMC.Architecture.AArch32 as A32
 import qualified Renovate as R
 import qualified Renovate.Arch.AArch32.Panic as RP
 import           Renovate.Arch.AArch32.Repr
-
-data TargetAddress = NoAddress
-                   | AbsoluteAddress (R.ConcreteAddress MA.ARM)
-  deriving (Eq, Ord, Show)
 
 -- | A wrapper around A32 and T32 instructions type indexed to ensure that ARM
 -- and Thumb instructions cannot be mixed in a single basic block
@@ -102,7 +97,7 @@ pattern AI i <- ARMInstruction (armDropAnnotations -> i)
 -- pattern TI i <- ThumbInstruction (thumbDropAnnotations -> i)
 
 type instance R.Instruction MA.ARM = Instruction
-type instance R.InstructionAnnotation MA.ARM = TargetAddress
+type instance R.ArchitectureRelocation MA.ARM = Void
 type instance R.RegisterType MA.ARM = Operand
 
 
@@ -512,143 +507,157 @@ markLast lst =
 singleton :: DA.Instruction -> DLN.NonEmpty (Instruction A32 ())
 singleton = (DLN.:| []) . toAnnotatedARM A32Repr
 
+-- | Resolve relocations in instructions (turning them from symbolic instructions to concrete instructions)
+--
+-- On AArch32, we only use relocations for two things (right now):
+--
+-- * Jump offsets in the branch instructions
+--
+-- * Data references in load instructions
+--
+-- See Note [ARM Relocations] for some additional details and caveats
 armConcretizeAddresses :: MM.Memory 32
+                       -> (R.SymbolicAddress MA.ARM -> R.ConcreteAddress MA.ARM)
                        -> R.ConcreteAddress MA.ARM
-                       -> Instruction tp TargetAddress
-                       -> R.RelocatableTarget MA.ARM R.ConcreteAddress tk
+                       -> Instruction tp (R.Relocation MA.ARM)
                        -> DLN.NonEmpty (Instruction tp ())
-armConcretizeAddresses _mem insnAddr i0 tgt =
-  case (tgt, i0) of
-    (_, ARMBytes {}) ->
+armConcretizeAddresses _mem toConcrete insnAddr i0 =
+  case i0 of
+    ARMBytes {} ->
       RP.panic RP.ARMISA "armConcretizeAddresses" [ "Illegal raw bytes at: " ++ show insnAddr ]
-    (R.RelocatableTarget newTarget, ARMInstruction i) ->
-      case armDropAnnotations i of
-        DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
-          -- FIXME: Assert in range
-          let newOff = jumpOffset insnAddr newTarget
+    ARMInstruction (DA.Instruction opc operands) ->
+      case (opc, operands) of
+        (DA.LDR_l_A1, DA.Annotated _ p
+                DA.:< DA.Annotated _ rt
+                DA.:< DA.Annotated _ u
+                DA.:< DA.Annotated _ w
+                DA.:< DA.Annotated _ cond
+                DA.:< DA.Annotated (R.PCRelativeRelocation absAddr) _off12
+                DA.:< DA.Nil) ->
+          -- See Note [Rewriting LDR] for details on this construction
+          let w32 = fromIntegral (R.absoluteAddress (absAddr `R.addressAddOffset` 8))
+              i1 = ARMInstruction $ DA.Instruction DA.LDR_l_A1 (DA.Annotated () p DA.:< DA.Annotated () rt DA.:< DA.Annotated () u DA.:< DA.Annotated () w DA.:< DA.Annotated () cond DA.:< DA.Annotated () (DA.Bv12 0) DA.:< DA.Nil)
+              i2 = toAnnotatedARM A32Repr $ DA.Instruction DA.B_A1 (DA.Bv4 unconditional DA.:< DA.Bv24 (0 `DB.shiftR` 2) DA.:< DA.Nil)
+              i3 = ARMBytes (LBS.toStrict (BB.toLazyByteString (BB.word32LE w32)))
+              -- Operands marked with ??? were blindly chosen by disassembling a similar instruction.
+              i4 = ARMInstruction $ DA.Instruction DA.LDR_i_A1_off $
+                     (DA.Annotated () (DA.Bv1 1) -- ???
+                      DA.:< DA.Annotated () rt -- target register?
+                      DA.:< DA.Annotated () rt -- source register?
+                      DA.:< DA.Annotated () (DA.Bv1 1) -- ???
+                      DA.:< DA.Annotated () (DA.Bv1 0) -- ???
+                      DA.:< DA.Annotated () (DA.Bv4 14) -- ???
+                      DA.:< DA.Annotated () (DA.Bv12 0) -- offset
+                      DA.:< DA.Nil)
+          in i1 DLN.:| [ i2, i3, i4 ]
+        (DA.B_A1, DA.Annotated _ (DA.Bv4 cond)
+            DA.:< DA.Annotated (R.SymbolicRelocation symTarget) (DA.Bv24 _off)
+            DA.:< DA.Nil) ->
+          let newOff = jumpOffset insnAddr (toConcrete symTarget)
           in singleton (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
-        DA.Instruction DA.BL_i_A1 (DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
-          let newOff = jumpOffset insnAddr newTarget
+        (DA.BL_i_A1, DA.Annotated _ (DA.Bv4 cond)
+               DA.:< DA.Annotated (R.SymbolicRelocation symTarget) (DA.Bv24 _off)
+               DA.:< DA.Nil) ->
+          let newOff = jumpOffset insnAddr (toConcrete symTarget)
           in singleton (DA.Instruction DA.BL_i_A1 (DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
-        DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 _off DA.:< DA.Nil) ->
-          let newOff = jumpOffset insnAddr newTarget
+        (DA.BL_i_A2, DA.Annotated _ (DA.Bv1 b1)
+               DA.:< DA.Annotated _ (DA.Bv4 cond)
+               DA.:< DA.Annotated (R.SymbolicRelocation symTarget) (DA.Bv24 _off)
+               DA.:< DA.Nil) ->
+          let newOff = jumpOffset insnAddr (toConcrete symTarget)
           in singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
-        _ ->
-          RP.panic RP.ARMISA "armConcretizeAddresses" [ "Encountered unmodifiable instruction that should not have reached here"
-                                                      , "  " ++ armPrettyInstruction i0
-                                                      ]
-    (R.RelocatableTarget {}, ThumbInstruction {}) ->
-      RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet supported"
-                                               ]
-    (R.NoTarget, ARMInstruction (DA.Instruction opc operands)) ->
-      case opc of
-        DA.LDR_l_A1 ->
-          case operands of
-            -- PC-relative data references via LDR (most seem to be LDR related)
-            --
-            -- Problem: LDR only has 12 bits of offset, so only data within 12
-            -- bits (4kb) of the instruction address can be referenced.  This
-            -- isn't really enough to let us reference data from the original
-            -- text section from the new one.
-            --
-            -- We will fix that by translating into a three instruction sequence:
-            --
-            -- > ldr rt, [pc, #8]
-            -- > ldr [rt], [rt, #0]
-            -- > b +8
-            -- > .word <address that the data is really at>
-            --
-            -- That is: we put the real address of the original piece of data
-            -- inline as an absolute address that we can load locally.  We add a
-            -- fallthrough jump to make sure that we never execute the inline
-            -- data.
-            --
-            -- This is a bit awkward, as the address we are loading is actually
-            -- a pointer to a table that has the address of the real variable
-            -- are accessing in many cases.  However, it isn't guaranteed to be
-            -- that.
-            --
-            -- Note that the pseudo-code above is reflected oddly below.
-            --
-            --  * First, the computed address has to be offset by 8 to account
-            --    for the odd semantics of reading the PC.
-            --  * Second, the two jump offsets are 0 for the same reason (you
-            --    automatically get a +8 vs the PC, so we don't need any extra)
-            DA.Annotated _ p DA.:< DA.Annotated _ rt DA.:< DA.Annotated _ u DA.:< DA.Annotated _ w DA.:< DA.Annotated _ cond DA.:< DA.Annotated (AbsoluteAddress absAddr) _off12 DA.:< DA.Nil ->
-              let w32 = fromIntegral (R.absoluteAddress (absAddr `R.addressAddOffset` 8))
-                  i1 = ARMInstruction $ DA.Instruction DA.LDR_l_A1 (DA.Annotated () p DA.:< DA.Annotated () rt DA.:< DA.Annotated () u DA.:< DA.Annotated () w DA.:< DA.Annotated () cond DA.:< DA.Annotated () (DA.Bv12 0) DA.:< DA.Nil)
-                  i2 = toAnnotatedARM A32Repr $ DA.Instruction DA.B_A1 (DA.Bv4 unconditional DA.:< DA.Bv24 (0 `DB.shiftR` 2) DA.:< DA.Nil)
-                  i3 = ARMBytes (LBS.toStrict (BB.toLazyByteString (BB.word32LE w32)))
-                  -- Operands marked with ??? were blindly chosen by disassembling a similar instruction.
-                  i4 = ARMInstruction $ DA.Instruction DA.LDR_i_A1_off $
-                         (DA.Annotated () (DA.Bv1 1) -- ???
-                          DA.:< DA.Annotated () rt -- target register?
-                          DA.:< DA.Annotated () rt -- source register?
-                          DA.:< DA.Annotated () (DA.Bv1 1) -- ???
-                          DA.:< DA.Annotated () (DA.Bv1 0) -- ???
-                          DA.:< DA.Annotated () (DA.Bv4 14) -- ???
-                          DA.:< DA.Annotated () (DA.Bv12 0) -- offset
-                          DA.:< DA.Nil)
-              in i1 DLN.:| [ i2, i3, i4 ]
-            _ -> ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands)) DLN.:| []
         _ -> ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands)) DLN.:| []
-    (R.NoTarget, ThumbInstruction {}) ->
-      RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet support" ]
+    ThumbInstruction {} ->
+      RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet supported"
+                                                  ]
   where
     toUnitAnnotation :: forall tp
-                      . DA.Annotated TargetAddress DA.Operand tp
+                      . DA.Annotated (R.Relocation MA.ARM) DA.Operand tp
                      -> DA.Annotated () DA.Operand tp
     toUnitAnnotation (DA.Annotated _ op) = DA.Annotated () op
 
+-- | Compute the type of relocation to generate for the offset of the given jump instruction (if any)
+--
+-- This really has meaning for absolute (rare) and relative jumps.  Calls and
+-- indirect jumps do not get relocations in renovate.
+jumpTargetRelocation
+  :: MM.Memory 32
+  -> (R.ConcreteAddress MA.ARM -> R.SymbolicAddress MA.ARM)
+  -> MD.ParsedBlock MA.ARM ids
+  -> R.ConcreteAddress MA.ARM
+  -> Instruction tp ()
+  -> Maybe (R.Relocation MA.ARM)
+jumpTargetRelocation mem toSymbolic pb insnAddr i =
+  case armJumpType i mem insnAddr pb of
+    Some (R.RelativeJump _jc src offset) -> Just (R.SymbolicRelocation (toSymbolic (src `R.addressAddOffset` offset)))
+    Some (R.AbsoluteJump _jc target) -> Just (R.SymbolicRelocation (toSymbolic target))
+    Some (R.IndirectJump {}) -> Nothing
+    Some (R.DirectCall src offset) -> Just (R.SymbolicRelocation (toSymbolic (src `R.addressAddOffset` offset)))
+    Some R.IndirectCall -> Nothing
+    Some (R.Return {}) -> Nothing
+    Some R.NoJump -> Nothing
+    Some (R.NotInstrumentable _) -> Nothing
+
+noRelocation :: DA.Operand tp -> DA.Annotated (R.Relocation MA.ARM) DA.Operand tp
+noRelocation = DA.Annotated R.NoRelocation
+
 armSymbolizeAddresses :: MM.Memory 32
+                      -> (R.ConcreteAddress MA.ARM -> R.SymbolicAddress MA.ARM)
+                      -> MD.ParsedBlock MA.ARM ids
                       -> R.ConcreteAddress MA.ARM
-                      -> Maybe (R.SymbolicAddress MA.ARM)
                       -> Instruction tp ()
-                      -> [R.TaggedInstruction MA.ARM tp TargetAddress]
-armSymbolizeAddresses _mem insnAddr mSymbolicTarget i =
+                      -> [R.Instruction MA.ARM tp (R.Relocation MA.ARM)]
+armSymbolizeAddresses mem toSymbolic pb insnAddr i =
   case i of
-    ARMInstruction (armDropAnnotations -> DA.Instruction opc operands) ->
-      case opc of
-        DA.LDR_l_A1 ->
-          case operands of
-            -- LDRT_A1 :: Opcode o '["Bv1", "Bv4", "Bv1", "Bv1", "Bv4", "Bv12"]
-            --
-            -- P, Rt, U, W, cond, imm12
-            --
-            -- NOTE: So far, all PC-relative address computation in gcc-compiled
-            -- binaries seems to be done using this instruction
-            p DA.:< rt DA.:< u DA.:< w DA.:< cond DA.:< op12@(DA.Bv12 (asInteger -> off12)) DA.:< DA.Nil ->
-              let target = insnAddr `R.addressAddOffset` fromIntegral off12
-                  i' = DA.Instruction (coerce opc) (     noAddr p
-                                                   DA.:< noAddr rt
-                                                   DA.:< noAddr u
-                                                   DA.:< noAddr w
-                                                   DA.:< noAddr cond
-                                                   DA.:< withAddr target op12
+    ARMInstruction (DA.Instruction opc operands) ->
+      case (opc, operands) of
+        (DA.LDR_l_A1, DA.Annotated _ p
+                DA.:< DA.Annotated _ rt
+                DA.:< DA.Annotated _ u
+                DA.:< DA.Annotated _ w
+                DA.:< DA.Annotated _ cond
+                DA.:< DA.Annotated _ (DA.Bv12 (asInteger -> off12))
+                DA.:< DA.Nil) ->
+          -- See Note [Rewriting LDR] for details on this construction
+          let target = insnAddr `R.addressAddOffset` fromIntegral off12
+              i' = DA.Instruction (coerce opc) (     noRelocation p
+                                               DA.:< noRelocation rt
+                                               DA.:< noRelocation u
+                                               DA.:< noRelocation w
+                                               DA.:< noRelocation cond
+                                               DA.:< DA.Annotated (R.PCRelativeRelocation target) (DA.Bv12 0)
+                                               DA.:< DA.Nil
+                                               )
+          in [ARMInstruction i']
+        (DA.B_A1, DA.Annotated _ cond@(DA.Bv4 _) DA.:< DA.Annotated _ (DA.Bv24 _off) DA.:< DA.Nil)
+          | Just reloc <- jumpTargetRelocation mem toSymbolic pb insnAddr i ->
+              let i' = DA.Instruction (coerce opc) (     noRelocation cond
+                                                   DA.:< DA.Annotated reloc (DA.Bv24 0)
                                                    DA.:< DA.Nil
                                                    )
-                in [R.tagInstruction mSymbolicTarget (ARMInstruction i')]
-        _ -> toATagged opc operands
+              in [ARMInstruction i']
+        (DA.BL_i_A1, DA.Annotated _ cond@(DA.Bv4 _) DA.:< DA.Annotated _ (DA.Bv24 _off) DA.:< DA.Nil)
+          | Just reloc <- jumpTargetRelocation mem toSymbolic pb insnAddr i ->
+            let i' = DA.Instruction (coerce opc) (     noRelocation cond
+                                                 DA.:< DA.Annotated reloc (DA.Bv24 0)
+                                                 DA.:< DA.Nil
+                                                 )
+            in [ARMInstruction i']
+        (DA.BL_i_A2, DA.Annotated _ b1@(DA.Bv1 _) DA.:< DA.Annotated _ cond@(DA.Bv4 _) DA.:< DA.Annotated _ (DA.Bv24 _off) DA.:< DA.Nil)
+          | Just reloc <- jumpTargetRelocation mem toSymbolic pb insnAddr i ->
+            let i' = DA.Instruction (coerce opc) (     noRelocation b1
+                                                 DA.:< noRelocation cond
+                                                 DA.:< DA.Annotated reloc (DA.Bv24 0)
+                                                 DA.:< DA.Nil
+                                                 )
+            in [ARMInstruction i']
+        _ ->
+          let i' = DA.Instruction (coerce opc) (FC.fmapFC (\(DA.Annotated _ c) -> DA.Annotated R.NoRelocation c) operands)
+          in [ARMInstruction i']
     ARMBytes {} ->
       RP.panic RP.ARMISA "armSymbolizeAddresses" [ "Raw bytes are not allowed in the instruction stream during symbolization at: " ++ show insnAddr ]
     ThumbInstruction {} ->
       RP.panic RP.ARMISA "armSymbolizeAddresses" [ "Thumb rewriting is not yet support" ]
-  where
-    annotateNull :: forall tp . DA.Operand tp -> DA.Annotated TargetAddress DA.Operand tp
-    annotateNull operand = DA.Annotated NoAddress operand
-    toATagged :: forall sh
-               . DA.Opcode DA.Operand sh
-              -> PL.List DA.Operand sh
-              -> [R.TaggedInstruction MA.ARM A32 TargetAddress]
-    toATagged opc operands =
-      let newInsn = DA.Instruction (coerce opc) (FC.fmapFC annotateNull operands)
-      in [R.tagInstruction mSymbolicTarget (ARMInstruction newInsn)]
-
-noAddr :: DA.Operand tp -> DA.Annotated TargetAddress DA.Operand tp
-noAddr = DA.Annotated NoAddress
-
-withAddr :: R.ConcreteAddress MA.ARM -> DA.Operand tp -> DA.Annotated TargetAddress DA.Operand tp
-withAddr t = DA.Annotated (AbsoluteAddress t)
 
 isa :: R.ISA MA.ARM
 isa =
@@ -665,3 +674,93 @@ isa =
         , R.isaConcretizeAddresses = armConcretizeAddresses
         , R.isaSymbolizeAddresses = armSymbolizeAddresses
         }
+
+{- Note [ARM Relocations]
+
+Support for ARM is not complete yet, but is sufficient for many normal
+compiler-generated binaries.
+
+We currently only properly use relocations for two types of operand:
+
+- Jump offsets in the branch instructions
+- Data references in load instructions
+
+* Jumps
+
+This approach does not handle jumps performed by directly modifying the PC. This
+mode is deprecated, but can still show up.  We mark those jumps as
+un-instrumentable for now.
+
+* Data References
+
+Note that we do not handle store instructions explicitly. This is because the
+common form of memory reference in ARM is of the form:
+
+#+BEGIN_SRC
+ldr rt, [pc, #NN]
+ldr rt, [rt, #0]
+#+END_SRC
+
+or
+
+#+BEGIN_SRC
+ldr rt, [pc, #NN]
+str r1, [rt, #0]
+#+END_SRC
+
+That is: references are through indirection tables stored near the
+instruction. This is because the "reach" of each load/store instruction is very
+limited due to the limited bits allocated to the offset.  Storing addresses in
+indirection tables near the instruction allows it to load arbitrary
+addresses. Note that for the store case, we only need to update the accompanying
+~ldr~ in order to fix any changes due to relocation, as the loaded address is
+absolute.
+
+This has some consequences:
+- In a small memory codegen mode, indirection tables might not be used and this
+  strategy is incomplete
+- There could be some variants of this pattern that different compilers use that
+  we will need to look out for
+- This pattern will not cover Position Independent Code, where the indirection
+  tables contain *offsets from the PC*; handling these will likely be somewhat
+  complicated
+
+-}
+
+{- Note [Rewriting LDR]
+
+As noted in Note [ARM Relocations], we have to rewrite some LDR forms when we
+move instructions.
+
+PC-relative data references via LDR (most seem to be LDR related)
+
+Problem: LDR only has 12 bits of offset, so only data within 12
+bits (4kb) of the instruction address can be referenced.  This
+isn't really enough to let us reference data from the original
+text section from the new one.
+
+We will fix that by translating into a three instruction sequence:
+
+> ldr rt, [pc, #8]
+> ldr [rt], [rt, #0]
+> b +8
+> .word <address that the data is really at>
+
+That is: we put the real address of the original piece of data
+inline as an absolute address that we can load locally.  We add a
+fallthrough jump to make sure that we never execute the inline
+data.
+
+This is a bit awkward, as the address we are loading is actually
+a pointer to a table that has the address of the real variable
+are accessing in many cases.  However, it isn't guaranteed to be
+that.
+
+Note that the pseudo-code above is reflected oddly below.
+
+ * First, the computed address has to be offset by 8 to account
+   for the odd semantics of reading the PC.
+ * Second, the two jump offsets are 0 for the same reason (you
+   automatically get a +8 vs the PC, so we don't need any extra)
+
+-}
