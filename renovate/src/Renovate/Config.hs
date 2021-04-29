@@ -43,9 +43,11 @@ import qualified Data.Macaw.Refinement as MR
 import qualified Data.Macaw.Symbolic as MS
 import qualified Lang.Crucible.FunctionHandle as C
 
-import qualified Renovate.Address as RA
-import qualified Renovate.BasicBlock as B
 import qualified Renovate.ABI as ABI
+import qualified Renovate.Core.Address as RA
+import qualified Renovate.Core.BasicBlock as B
+import qualified Renovate.Core.Instruction as RCI
+import qualified Renovate.Core.Relocation as RCR
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as R
 import qualified Renovate.Rewrite as RW
@@ -65,10 +67,10 @@ import qualified Renovate.Rewrite as RW
 --   architecture-parameterized data (where the architecture is hidden by the
 --   existential).
 data SomeConfig callbacks (b :: Type -> Type) = forall arch binFmt
-                  . (B.InstructionConstraints arch,
-                     MS.SymArchConstraints arch,
-                     Typeable arch,
-                     MBL.BinaryLoader arch binFmt
+                  . ( MS.SymArchConstraints arch
+                    , Typeable arch
+                    , MBL.BinaryLoader arch binFmt
+                    , ISA.ArchConstraints arch
                     )
                   => SomeConfig (NR.NatRepr (MM.ArchAddrWidth arch)) (MBL.BinaryRepr binFmt) (RenovateConfig arch binFmt callbacks b)
 
@@ -155,9 +157,9 @@ data AnalyzeOnly arch binFmt b =
 -- Note that we avoid having the caller return an entire 'B.SymbolicBlock' to
 -- prevent metadata from changing.
 data ModifiedInstructions arch where
-  ModifiedInstructions :: ( B.ArchConstraints arch tp )
-                       => B.InstructionArchRepr arch tp
-                       -> DLN.NonEmpty (B.Instruction arch tp (B.Relocation arch))
+  ModifiedInstructions :: ( RCI.InstructionConstraints arch tp )
+                       => RCI.InstructionArchRepr arch tp
+                       -> DLN.NonEmpty (RCI.Instruction arch tp (RCR.Relocation arch))
                        -> ModifiedInstructions arch
 
 -- | The configuration for a combined analysis and rewriting pass
@@ -203,7 +205,7 @@ data RenovateConfig arch binFmt callbacks (b :: Type -> Type) = RenovateConfig
   , rcABI           :: ABI.ABI arch
   , rcArchInfo      :: MBL.LoadedBinary arch binFmt -> MM.ArchitectureInfo arch
   -- ^ Architecture info for macaw
-  , rcAssembler     :: forall m tp . (C.MonadThrow m) => B.Instruction arch tp () -> m B.ByteString
+  , rcAssembler     :: forall m tp . (C.MonadThrow m) => RCI.Instruction arch tp () -> m B.ByteString
   , rcDisassembler  :: forall m ids . (C.MonadThrow m) => MD.ParsedBlock arch ids -> RA.ConcreteAddress arch -> RA.ConcreteAddress arch -> B.ByteString -> m (B.ConcreteBlock arch)
   , rcBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
   -- ^ A callback called for each discovered block; the argument

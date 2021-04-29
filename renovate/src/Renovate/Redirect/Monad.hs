@@ -61,7 +61,7 @@ import           Prelude
 
 import qualified Data.Macaw.CFG as MM
 
-import           Renovate.Address
+import           Renovate.Core.Address
 import           Renovate.ISA
 import           Renovate.Diagnostic
 import           Renovate.Rewrite ( HasInjectedFunctions )

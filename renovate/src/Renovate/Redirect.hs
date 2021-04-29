@@ -3,15 +3,10 @@
 -- | This module is the entry point for binary code redirection
 module Renovate.Redirect (
   redirect,
-  LayoutStrategy(..),
-  Grouping(..),
-  Allocator(..),
-  TrampolineStrategy(..),
   ConcreteBlock,
   SymbolicBlock,
   ConcreteAddress,
   SymbolicAddress,
-  RewritePair(..),
   -- * Rewriter Monad
   RM.runRewriterT,
   RM.Diagnostic(..),
@@ -39,23 +34,14 @@ import           Prelude
 
 import qualified Data.Macaw.CFG as MM
 
-import           Renovate.Address
-import           Renovate.BasicBlock
+import           Renovate.Core.Address
+import           Renovate.Core.BasicBlock
 import qualified Renovate.Config as RC
 import           Renovate.ISA
 import           Renovate.Recovery ( BlockInfo, isIncompleteBlockAddress, biFunctions, biOverlap )
 import           Renovate.Recovery.Overlap ( disjoint )
 import           Renovate.Redirect.Concretize
-import           Renovate.Redirect.LayoutBlocks.Types ( LayoutStrategy(..)
-                                                      , Grouping(..)
-                                                      , Allocator(..)
-                                                      , TrampolineStrategy(..)
-                                                      , Status(..)
-                                                      , Layout(..)
-                                                      , RewritePair(..)
-                                                      , WithProvenance(..)
-                                                      , changed
-                                                      )
+import qualified Renovate.Core.Layout as RCL
 import           Renovate.Redirect.Internal
 import qualified Renovate.Redirect.Monad as RM
 import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions, getInjectedInstructions )
@@ -73,7 +59,7 @@ import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions, 
 -- The function runs in an arbitrary 'Monad' to allow instrumentors to
 -- carry around their own state.
 --
-redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch, Typeable arch)
+redirect :: (MonadIO m, HasInjectedFunctions m arch, Typeable arch, MM.MemWidth (MM.ArchAddrWidth arch))
          => ISA arch
          -- ^ Information about the ISA in use
          -> BlockInfo arch
@@ -84,7 +70,7 @@ redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch
          -- ^ Instrumentor
          -> MM.Memory (MM.ArchAddrWidth arch)
          -- ^ The memory space
-         -> LayoutStrategy
+         -> RCL.LayoutStrategy
          -> ConcreteAddress arch
          -- ^ The start address for the copied blocks
          -> [(ConcreteBlock arch, SymbolicBlock arch)]
@@ -92,7 +78,7 @@ redirect :: (MonadIO m, InstructionConstraints arch, HasInjectedFunctions m arch
          -> RM.RewriterT arch m ( [ConcretizedBlock arch]
                                 , [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)]
                                 , [(SymbolicAddress arch, ConcreteAddress arch, InjectConcreteInstructions arch)]
-                                , [WithProvenance ConcretizedBlock arch]
+                                , [RCL.WithProvenance ConcretizedBlock arch]
                                 , M.Map (SymbolicAddress arch) (ConcreteAddress arch)
                                 )
 redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr baseSymBlocks = do
@@ -129,22 +115,22 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
                                    repr'
                                    (symbolicBlockSymbolicSuccessor sb)
                                    (symbolicBlockDiscoveryBlock sb)
-           return $! WithProvenance cb sb' Modified
+           return $! RCL.WithProvenance cb sb' RCL.Modified
          Nothing      ->
-           return $! WithProvenance cb sb Unmodified
+           return $! RCL.WithProvenance cb sb RCL.Unmodified
      False -> do
        when (not (isRelocatableTerminatorType (terminatorType isa mem cb))) $ do
          RM.recordUnrelocatableTermBlock
        when (isIncompleteBlockAddress blockInfo (concreteBlockAddress cb)) $ do
          RM.recordIncompleteBlock
-       return $! WithProvenance cb sb Immutable
+       return $! RCL.WithProvenance cb sb RCL.Immutable
   injectedCode <- lift getInjectedFunctions
   injectedInstructions <- lift getInjectedInstructions
   (layout, symToConcAddrs) <- concretize strat layoutAddr transformedBlocks injectedCode injectedInstructions blockInfo
-  let concretizedBlocks = programBlockLayout layout
-  let paddingBlocks = layoutPaddingBlocks layout
-  let injectedBlocks = injectedBlockLayout layout
-  let injectedInsns = injectedInstructionLayout layout
+  let concretizedBlocks = RCL.programBlockLayout layout
+  let paddingBlocks = RCL.layoutPaddingBlocks layout
+  let injectedBlocks = RCL.injectedBlockLayout layout
+  let injectedInsns = RCL.injectedInstructionLayout layout
   RM.recordBlockMap (toBlockMapping concretizedBlocks)
   redirectedBlocks <- redirectOriginalBlocks concretizedBlocks
   RM.recordBackwardBlockMap (toBackwardBlockMapping redirectedBlocks)
@@ -162,29 +148,29 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
       withConcreteInstructions cb $ \repr insns ->
         concretizedBlock (concreteBlockAddress cb) insns repr
     unPair wp =
-      case rewriteStatus wp of
-        Modified    -> [toConcretized (originalBlock wp), withoutProvenance wp]
-        Unmodified  -> [toConcretized (originalBlock wp)]
-        Immutable   -> [toConcretized (originalBlock wp)]
-        Subsumed    -> [                                  withoutProvenance wp]
+      case RCL.rewriteStatus wp of
+        RCL.Modified    -> [toConcretized (RCL.originalBlock wp), RCL.withoutProvenance wp]
+        RCL.Unmodified  -> [toConcretized (RCL.originalBlock wp)]
+        RCL.Immutable   -> [toConcretized (RCL.originalBlock wp)]
+        RCL.Subsumed    -> [                                  RCL.withoutProvenance wp]
 
-toBlockMapping :: [WithProvenance ConcretizedBlock arch] -> [(ConcreteAddress arch, ConcreteAddress arch)]
+toBlockMapping :: [RCL.WithProvenance ConcretizedBlock arch] -> [(ConcreteAddress arch, ConcreteAddress arch)]
 toBlockMapping wps =
   [ (concreteBlockAddress origBlock, concretizedBlockAddress concBlock)
   | wp <- wps
-  , let origBlock = originalBlock wp
-  , let concBlock = withoutProvenance wp
+  , let origBlock = RCL.originalBlock wp
+  , let concBlock = RCL.withoutProvenance wp
   ]
 
-toBackwardBlockMapping :: [WithProvenance ConcretizedBlock arch]
+toBackwardBlockMapping :: [RCL.WithProvenance ConcretizedBlock arch]
                        -> M.Map (ConcreteAddress arch) (ConcreteAddress arch)
 toBackwardBlockMapping ps = M.fromList
   [ (new, old)
-  | WithProvenance cb sb status <- ps
+  | RCL.WithProvenance cb sb status <- ps
   , let caddr = concreteBlockAddress cb
         saddr = concretizedBlockAddress sb
-  , (new, old) <- [(caddr, caddr) | status /= Subsumed]
-               ++ [(saddr, caddr) | changed status]
+  , (new, old) <- [(caddr, caddr) | status /= RCL.Subsumed]
+               ++ [(saddr, caddr) | RCL.changed status]
   ]
 
 isRelocatableTerminatorType :: Some (JumpType arch) -> Bool

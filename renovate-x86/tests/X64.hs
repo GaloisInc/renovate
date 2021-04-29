@@ -116,7 +116,7 @@ analysis expected env =
 data TestConfig a = TestCfg Bool [String]
 
 testBlockRecovery :: ( w ~ MM.ArchAddrWidth arch
-                     , R.InstructionConstraints arch
+                     , R.ArchConstraints arch
                      , MBL.BinaryLoader arch binFmt
                      , E.ElfWidthConstraints w
                      , MS.SymArchConstraints arch

@@ -23,11 +23,11 @@ module Renovate
 ( -- * Configuration
   Arch.Architecture(..),
   C.SomeConfig(..),
-  LB.LayoutStrategy(..),
-  LB.Grouping(..),
-  LB.Allocator(..),
-  LB.TrampolineStrategy(..),
-  LB.CompactOrdering(..),
+  RCL.LayoutStrategy(..),
+  RCL.Grouping(..),
+  RCL.Allocator(..),
+  RCL.TrampolineStrategy(..),
+  RCL.CompactOrdering(..),
   C.AnalyzeOnly(..),
   C.AnalyzeAndRewrite(..),
   C.ModifiedInstructions(..),
@@ -74,23 +74,23 @@ module Renovate
   Recovery.getSymbolicRegCFG,
   B.symbolicBlockSize,
   -- * Instructions
-  B.InstructionArchRepr,
-  B.InstructionArchReprKind,
-  B.SomeInstructionArchRepr(..),
-  B.Instruction,
-  B.ArchitectureRelocation,
-  B.Relocation(..),
-  B.RegisterType,
-  B.ToGenericInstruction(..),
+  RCI.InstructionArchRepr,
+  RCI.InstructionArchReprKind,
+  RCI.SomeInstructionArchRepr(..),
+  RCI.Instruction,
+  RCI.RegisterType,
+  RCI.ToGenericInstruction(..),
+  RCR.ArchitectureRelocation,
+  RCR.Relocation(..),
   -- * Addresses
-  A.SymbolicAddress,
-  A.ConcreteAddress,
-  A.absoluteAddress,
-  A.concreteFromSegmentOff,
-  A.concreteAsSegmentOff,
-  A.concreteFromAbsolute,
-  A.addressAddOffset,
-  A.addressDiff,
+  RCA.SymbolicAddress,
+  RCA.ConcreteAddress,
+  RCA.absoluteAddress,
+  RCA.concreteFromSegmentOff,
+  RCA.concreteAsSegmentOff,
+  RCA.concreteFromAbsolute,
+  RCA.addressAddOffset,
+  RCA.addressDiff,
   B.SymbolicInfo(..),
   -- * Analysis
   -- ** Function Recovery
@@ -162,10 +162,9 @@ module Renovate
   E.riSymbolicToConcreteMap,
   D.Diagnostic(..),
   D.Diagnostics(..),
-  LB.RewritePair(..),
+  RCL.RewritePair(..),
   -- * Constraints
-  B.ArchConstraints,
-  B.InstructionConstraints,
+  ISA.ArchConstraints,
   -- * Exceptions
   A.BlockAssemblyException(..)
 )
@@ -173,14 +172,16 @@ where
 
 import qualified Renovate.ABI as ABI
 import qualified Renovate.Arch as Arch
-import qualified Renovate.Address as A
+import qualified Renovate.Core.Address as RCA
+import qualified Renovate.Core.BasicBlock as B
+import qualified Renovate.Core.Instruction as RCI
+import qualified Renovate.Core.Layout as RCL
+import qualified Renovate.Core.Relocation as RCR
 import qualified Renovate.Analysis.FunctionRecovery as FR
-import qualified Renovate.BasicBlock as B
 import qualified Renovate.Config as C
 import qualified Renovate.Diagnostic as D
 import qualified Renovate.BinaryFormat.ELF as E
 import qualified Renovate.ISA as ISA
-import qualified Renovate.Redirect.LayoutBlocks as LB
 import qualified Renovate.Rewrite as RW
 import qualified Renovate.Recovery as Recovery
-import qualified Renovate.BasicBlock.Assemble as A
+import qualified Renovate.Assemble as A

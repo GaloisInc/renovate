@@ -216,7 +216,7 @@ data BlockMapping = forall arch. MM.MemWidth (MM.ArchAddrWidth arch) =>
   BlockMapping (M.Map (R.ConcreteAddress arch) (R.ConcreteAddress arch))
 
 data SomeBlockIndex b =
-  forall arch . (MM.MemWidth (MM.ArchAddrWidth arch), R.InstructionConstraints arch) =>
+  forall arch . (MM.MemWidth (MM.ArchAddrWidth arch), R.ArchConstraints arch) =>
   SomeBlockIndex { _blockIndex :: IM.IntervalMap (R.ConcreteAddress arch) (b arch)
                  , _blockISA :: R.ISA arch
                  }
@@ -390,7 +390,7 @@ plurality ls =
     [_] -> ""
     _ -> "s"
 
-replOriginalBlockInfo :: (R.InstructionConstraints arch)
+replOriginalBlockInfo :: (R.ArchConstraints arch)
                       => REPLInfo
                       -> R.ISA arch
                       -> Word64
@@ -413,7 +413,7 @@ replOriginalBlockInfo ri isa waddr addr bs = do
           H.outputStrLn ("It occurs in the following output block" +| plurality obs |+ "")
           F.forM_ obs (printConcretizedBlock H.outputStr isa')
 
-replOutputBlockInfo :: (R.InstructionConstraints arch)
+replOutputBlockInfo :: (R.ArchConstraints arch)
                     => R.ISA arch
                     -> R.ConcreteAddress arch
                     -> [R.ConcretizedBlock arch]
@@ -504,7 +504,7 @@ analysis opts =
   addrs = S.fromList (map (R.concreteFromAbsolute . MM.memWord) (oBlocksToSkip opts))
 
 -- | Format a 'R.ConcreteBlock' to the given 'IO.Handle'
-printConcreteBlock :: (Monad m, R.InstructionConstraints arch)
+printConcreteBlock :: (Monad m, R.ArchConstraints arch)
                  => (String -> m ())
                  -> R.ISA arch
                  -> R.ConcreteBlock arch
@@ -517,7 +517,7 @@ printConcreteBlock put isa cb = do
   put "\n"
   return ()
 
-printConcretizedBlock :: (Monad m, R.InstructionConstraints arch)
+printConcretizedBlock :: (Monad m, R.ArchConstraints arch)
                  => (String -> m ())
                  -> R.ISA arch
                  -> R.ConcretizedBlock arch

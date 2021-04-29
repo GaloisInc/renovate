@@ -1,5 +1,9 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 -- | Lift concrete blocks into relocatable symbolic blocks
@@ -21,8 +25,10 @@ import           Data.Word ( Word64 )
 
 import           Prelude
 
-import           Renovate.Address
-import           Renovate.BasicBlock
+import           Renovate.Core.Address
+import           Renovate.Core.BasicBlock
+import qualified Renovate.Core.Instruction as RCI
+import qualified Renovate.Core.Relocation as RCR
 import           Renovate.ISA
 import qualified Renovate.Panic as RP
 import qualified Renovate.Redirect.ReifyFallthrough as RRR
@@ -46,7 +52,7 @@ nextSymbolicAddress (SymbolicAddressAllocator i) = (SymbolicAddress i, SymbolicA
 --
 -- Indirect jumps do not need to be annotated (in part because we
 -- cannot annotate them).
-symbolizeBasicBlocks :: (T.Traversable t, InstructionConstraints arch)
+symbolizeBasicBlocks :: (T.Traversable t, MM.MemWidth (MM.ArchAddrWidth arch))
                      => ISA arch
                      -> MM.Memory (MM.ArchAddrWidth arch)
                      -> SymbolicAddressAllocator arch
@@ -76,7 +82,7 @@ symbolizeBasicBlocks isa mem symAlloc0 concreteBlocks =
 --
 -- See Note [Jump Promotion]
 symbolizeJumps :: forall arch
-                . (InstructionConstraints arch)
+                . (MM.MemWidth (MM.ArchAddrWidth arch))
                => ISA arch
                -> MM.Memory (MM.ArchAddrWidth arch)
                -> M.Map (ConcreteAddress arch) (SymbolicAddress arch)
@@ -104,8 +110,8 @@ symbolizeJumps isa mem symAddrMap (cb, symAddr) =
                in (cb, symbolicBlock concAddr symAddr insnList repr (Just symSucc) (concreteDiscoveryBlock cb))
   where
     symbolize :: forall tp
-               . (Instruction arch tp (), ConcreteAddress arch)
-              -> [Instruction arch tp (Relocation arch)]
+               . (RCI.Instruction arch tp (), ConcreteAddress arch)
+              -> [RCI.Instruction arch tp (RCR.Relocation arch)]
     symbolize (i, addr) =
       case concreteDiscoveryBlock cb of
         Some pb -> isaSymbolizeAddresses isa mem lookupSymbolicAddress pb addr i

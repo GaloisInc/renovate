@@ -75,11 +75,11 @@ import qualified Data.ElfEdit as E
 import qualified Data.Macaw.CFG as MM
 
 import           Renovate.Config (RenovateConfig)
-import qualified Renovate.Address as RA
-import qualified Renovate.BasicBlock as B
+import qualified Renovate.Core.Address as RA
+import qualified Renovate.Core.BasicBlock as B
+import qualified Renovate.Core.Layout as RT
 import qualified Renovate.Diagnostic as RD
 import qualified Renovate.ISA as ISA
-import qualified Renovate.Redirect.LayoutBlocks.Types as RT
 import qualified Renovate.Rewrite as RW
 import qualified Renovate.Redirect.Monad as RM
 import qualified Renovate.BinaryFormat.ELF.Rewriter.Env as Env
@@ -129,11 +129,11 @@ data RewriterInfo lm arch =
   deriving (Generic)
 
 data SomeConcretizedBlocks = forall arch
-                . (B.InstructionConstraints arch)
+                . (ISA.ArchConstraints arch)
                 => SomeConcretizedBlocks (ISA.ISA arch) [B.ConcretizedBlock arch]
 
 data SomeConcreteBlocks = forall arch
-                . (B.InstructionConstraints arch)
+                . (ISA.ArchConstraints arch)
                 => SomeConcreteBlocks (ISA.ISA arch) [B.ConcreteBlock arch]
 
 newtype ElfRewriter lm arch a =

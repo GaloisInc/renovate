@@ -15,7 +15,7 @@ import qualified Data.Map as M
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Set as S
 
-import qualified Renovate.Address as RA
+import qualified Renovate.Core.Address as RA
 import qualified Renovate.Recovery as R
 
 -- | Given a 'R.BlockInfo', compute the total number of discovered blocks that are incomplete

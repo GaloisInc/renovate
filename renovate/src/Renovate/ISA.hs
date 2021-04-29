@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -18,6 +19,7 @@ module Renovate.ISA
   , HasModifiableTarget
   , NoModifiableTarget
   , isaDefaultInstructionArchRepr
+  , ArchConstraints
   ) where
 
 import qualified Data.List.NonEmpty as DLN
@@ -29,8 +31,21 @@ import qualified Data.Macaw.Types as MT
 import qualified Data.Parameterized.Classes as PC
 import           Data.Parameterized.Some ( Some(..) )
 
-import qualified Renovate.Address as RA
-import           Renovate.BasicBlock.Types
+import qualified Renovate.Core.Address as RA
+import qualified Renovate.Core.Instruction as RCI
+import qualified Renovate.Core.Relocation as RCR
+
+-- | Constraints that must be available for an architecture
+--
+-- Note that this differs from 'RCI.InstructionConstraints' in that these
+-- constraints do not (and cannot) mention the @tp@ type parameter marking the
+-- sub-ISA.
+type ArchConstraints arch =
+  ( PC.OrdF (RCI.RegisterType arch)
+  , MM.MemWidth (MM.ArchAddrWidth arch)
+  , PC.TestEquality (RCI.InstructionArchRepr arch)
+  , PC.OrdF (RCI.InstructionArchRepr arch)
+  )
 
 -- | The variety of a jump: either conditional or unconditional.  This
 -- is used as a tag for 'JumpType's.  One day, we could model the type
@@ -104,17 +119,17 @@ instance (MM.MemWidth (MM.ArchAddrWidth arch)) => PC.ShowF (JumpType arch)
 -- See separate @renovate-<arch>@ packages for actual 'ISA'
 -- definitions.
 data ISA arch = ISA
-  { isaInstructionSize :: forall t tp . Instruction arch tp t -> Word8
+  { isaInstructionSize :: forall t tp . RCI.Instruction arch tp t -> Word8
     -- ^ Compute the size of an instruction in bytes
-  , isaInstructionRepr :: forall t tp . Instruction arch tp t -> InstructionArchRepr arch tp
+  , isaInstructionRepr :: forall t tp . RCI.Instruction arch tp t -> RCI.InstructionArchRepr arch tp
     -- ^ Return the type representative for an instruction
   , isaSymbolizeAddresses :: forall tp ids
                            . MM.Memory (MM.ArchAddrWidth arch)
                           -> (RA.ConcreteAddress arch -> RA.SymbolicAddress arch)
                           -> MD.ParsedBlock arch ids
                           -> RA.ConcreteAddress arch
-                          -> Instruction arch tp ()
-                          -> [Instruction arch tp (Relocation arch)]
+                          -> RCI.Instruction arch tp ()
+                          -> [RCI.Instruction arch tp (RCR.Relocation arch)]
     -- ^ Abstract instructions and annotate them with relocations
     --
     -- * The function converts concrete (absolute) addresses into symbolic addresses, which will be wrapped up in relocations
@@ -130,8 +145,8 @@ data ISA arch = ISA
                             . MM.Memory (MM.ArchAddrWidth arch)
                            -> (RA.SymbolicAddress arch -> RA.ConcreteAddress arch)
                            -> RA.ConcreteAddress arch
-                           -> Instruction arch tp (Relocation arch)
-                           -> DLN.NonEmpty (Instruction arch tp ())
+                           -> RCI.Instruction arch tp (RCR.Relocation arch)
+                           -> DLN.NonEmpty (RCI.Instruction arch tp ())
     -- ^ Remove the annotation, with possible post-processing.
     --
     -- This is intended to fix up PC-relative memory references in operands and
@@ -139,7 +154,7 @@ data ISA arch = ISA
     --
     -- NOTE: It is allowed to return extra instructions to accomplish these things.
   , isaJumpType :: forall t tp ids
-                 . Instruction arch tp t
+                 . RCI.Instruction arch tp t
                 -> MM.Memory (MM.ArchAddrWidth arch)
                 -> RA.ConcreteAddress arch
                 -> MD.ParsedBlock arch ids
@@ -157,95 +172,95 @@ data ISA arch = ISA
   , isaMakeRelativeJumpTo :: forall tp
                            . RA.ConcreteAddress arch
                           -> RA.ConcreteAddress arch
-                          -> InstructionArchRepr arch tp
-                          -> DLN.NonEmpty (Instruction arch tp ())
+                          -> RCI.InstructionArchRepr arch tp
+                          -> DLN.NonEmpty (RCI.Instruction arch tp ())
     -- ^ Create a relative jump from the first 'RA.ConcreteAddress'
     -- to the second.  This will call error if the range is too
     -- far (see 'isaMaxRelativeJumpSize').
-  , isaMaxRelativeJumpSize :: forall tp . InstructionArchRepr arch tp -> Word64
+  , isaMaxRelativeJumpSize :: forall tp . RCI.InstructionArchRepr arch tp -> Word64
     -- ^ How far can this architecture's unconditional relative jumps reach?
     -- New code blocks will be laid out in virtual address space within this
     -- many bytes of the original code blocks, so that the two can jump to each
     -- other as necessary.
-  , isaInstructionArchReprs :: DLN.NonEmpty (SomeInstructionArchRepr arch)
+  , isaInstructionArchReprs :: DLN.NonEmpty (RCI.SomeInstructionArchRepr arch)
   -- ^ The default arch repr to use if there is nothing else, used in particular
   -- in the creation of padding.
-  , isaMakePadding :: forall tp . Word64 -> InstructionArchRepr arch tp -> [Instruction arch tp ()]
+  , isaMakePadding :: forall tp . Word64 -> RCI.InstructionArchRepr arch tp -> [RCI.Instruction arch tp ()]
     -- ^ Make the given number of bytes of padding instructions.
     -- The semantics of the instruction stream should either be
     -- no-ops or halts (i.e., not meant to be executed).
   , isaMakeSymbolicJump
       :: forall tp
        . RA.SymbolicAddress arch
-      -> InstructionArchRepr arch tp
-      -> [Instruction arch tp (Relocation arch)]
+      -> RCI.InstructionArchRepr arch tp
+      -> [RCI.Instruction arch tp (RCR.Relocation arch)]
   -- ^ Make an unconditional jump that takes execution to the given symbolic
   -- target.
   , isaMakeSymbolicCall
       :: forall tp
-       . InstructionArchRepr arch tp
+       . RCI.InstructionArchRepr arch tp
       -> RA.SymbolicAddress arch
-      -> Instruction arch tp (Relocation arch)
+      -> RCI.Instruction arch tp (RCR.Relocation arch)
   -- ^ Make an call that takes execution to the given symbolic target.
-  , isaPrettyInstruction :: forall t tp. Instruction arch tp t -> String
+  , isaPrettyInstruction :: forall t tp. RCI.Instruction arch tp t -> String
   -- ^ Pretty print an instruction for diagnostic purposes
   , isaMove
       :: forall tp
        . Some MT.TypeRepr
-      -> InstructionArchRepr arch tp
-      -> RegisterType arch tp
-      -> RegisterType arch tp
-      -> Instruction arch tp (Relocation arch)
+      -> RCI.InstructionArchRepr arch tp
+      -> RCI.RegisterType arch tp
+      -> RCI.RegisterType arch tp
+      -> RCI.Instruction arch tp (RCR.Relocation arch)
   , isaMoveImmediate
       :: forall tp
        . Some MT.TypeRepr
-      -> InstructionArchRepr arch tp
-      -> RegisterType arch tp
+      -> RCI.InstructionArchRepr arch tp
+      -> RCI.RegisterType arch tp
       -> Integer
-      -> Instruction arch tp (Relocation arch)
+      -> RCI.Instruction arch tp (RCR.Relocation arch)
   , isaLoad
       :: forall tp
        . Some MT.TypeRepr
-      -> InstructionArchRepr arch tp
-      -> RegisterType arch tp
+      -> RCI.InstructionArchRepr arch tp
+      -> RCI.RegisterType arch tp
       -> StackAddress arch tp
-      -> Instruction arch tp (Relocation arch)
+      -> RCI.Instruction arch tp (RCR.Relocation arch)
   , isaStore
       :: forall tp
        . Some MT.TypeRepr
-      -> InstructionArchRepr arch tp
+      -> RCI.InstructionArchRepr arch tp
       -> StackAddress arch tp
-      -> RegisterType arch tp
-      -> Instruction arch tp (Relocation arch)
+      -> RCI.RegisterType arch tp
+      -> RCI.Instruction arch tp (RCR.Relocation arch)
   , isaStoreImmediate
       :: forall tp
        . Some MT.TypeRepr
-      -> InstructionArchRepr arch tp
+      -> RCI.InstructionArchRepr arch tp
       -> StackAddress arch tp
       -> Integer
-      -> Instruction arch tp (Relocation arch)
+      -> RCI.Instruction arch tp (RCR.Relocation arch)
   , isaAddImmediate
       :: forall tp
-       . RegisterType arch tp
+       . RCI.RegisterType arch tp
       -> Integer
-      -> [Instruction arch tp (Relocation arch)]
+      -> [RCI.Instruction arch tp (RCR.Relocation arch)]
   , isaSubtractImmediate
       :: forall tp
-       . RegisterType arch tp
+       . RCI.RegisterType arch tp
       -> Integer
-      -> [Instruction arch tp (Relocation arch)]
+      -> [RCI.Instruction arch tp (RCR.Relocation arch)]
   }
 
-data StackAddress arch (tp :: InstructionArchReprKind arch) = StackAddress
-  { saBase :: RegisterType arch tp
+data StackAddress arch (tp :: RCI.InstructionArchReprKind arch) = StackAddress
+  { saBase :: RCI.RegisterType arch tp
   , saOffset :: Integer
   }
 
-deriving instance Eq (RegisterType arch tp) => Eq (StackAddress arch tp)
-deriving instance Ord (RegisterType arch tp) => Ord (StackAddress arch tp)
-deriving instance Show (RegisterType arch tp) => Show (StackAddress arch tp)
+deriving instance Eq (RCI.RegisterType arch tp) => Eq (StackAddress arch tp)
+deriving instance Ord (RCI.RegisterType arch tp) => Ord (StackAddress arch tp)
+deriving instance Show (RCI.RegisterType arch tp) => Show (StackAddress arch tp)
 
-isaDefaultInstructionArchRepr :: ISA arch -> SomeInstructionArchRepr arch
+isaDefaultInstructionArchRepr :: ISA arch -> RCI.SomeInstructionArchRepr arch
 isaDefaultInstructionArchRepr isa = DLN.head (isaInstructionArchReprs isa)
 
 {-

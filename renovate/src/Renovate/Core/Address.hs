@@ -1,9 +1,8 @@
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 -- | This module defines opaque concrete and symbolic address types.
-module Renovate.Address (
+module Renovate.Core.Address (
   SymbolicAddress(..),
   ConcreteAddress,
   concreteFromSegmentOff,
@@ -14,11 +13,11 @@ module Renovate.Address (
   addressDiff
   ) where
 
-import qualified GHC.Err.Located as L
 
-import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Word ( Word64 )
+import           GHC.Stack ( HasCallStack )
 import qualified Numeric as N
+import qualified Prettyprinter as PP
 
 import qualified Data.Macaw.Memory as MM
 import qualified Data.Macaw.CFG as MM
@@ -43,9 +42,9 @@ data SymbolicAddress arch = SymbolicAddress Word64
 
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (SymbolicAddress arch)
 
-instance (MM.MemWidth (MM.ArchAddrWidth arch)) => PD.Pretty (SymbolicAddress arch) where
-  pretty (SymbolicAddress a) = "0x" PD.<> PD.pretty (N.showHex a "")
-  pretty (StableAddress a) = PD.pretty a
+instance (MM.MemWidth (MM.ArchAddrWidth arch)) => PP.Pretty (SymbolicAddress arch) where
+  pretty (SymbolicAddress a) = PP.pretty "0x" <> PP.pretty (N.showHex a "")
+  pretty (StableAddress a) = PP.pretty a
 
 -- | The type of concrete addresses that can be laid out in memory
 --
@@ -66,14 +65,14 @@ newtype ConcreteAddress arch = ConcreteAddress (MM.MemAddr (MM.ArchAddrWidth arc
 
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (ConcreteAddress arch)
 
-instance (MM.MemWidth (MM.ArchAddrWidth arch)) => PD.Pretty (ConcreteAddress arch) where
-  pretty (ConcreteAddress memAddr) = PD.pretty (show memAddr)
+instance (MM.MemWidth (MM.ArchAddrWidth arch)) => PP.Pretty (ConcreteAddress arch) where
+  pretty (ConcreteAddress memAddr) = PP.pretty (show memAddr)
 
 -- | Construct a 'ConcreteAddress' from a 'MM.MemSegmentOff'
 --
 -- This can fail if the 'MM.MemSegmentOff' is not an absolute address (i.e., it
 -- is a pointer to a location in another module)
-concreteFromSegmentOff :: (L.HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch))
+concreteFromSegmentOff :: (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch))
                        => MM.Memory (MM.ArchAddrWidth arch)
                        -> MM.MemSegmentOff (MM.ArchAddrWidth arch)
                        -> Maybe (ConcreteAddress arch)

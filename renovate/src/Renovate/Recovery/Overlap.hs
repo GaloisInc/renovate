@@ -17,8 +17,8 @@ import           Data.Maybe ( fromMaybe )
 import           Data.Parameterized.Some ( Some(..) )
 
 
-import           Renovate.Address
-import           Renovate.BasicBlock
+import           Renovate.Core.Address
+import           Renovate.Core.BasicBlock
 import           Renovate.ISA
 
 data BlockRegions arch =

@@ -18,13 +18,14 @@ import           Data.Word ( Word64 )
 import qualified Data.ElfEdit as EE
 import qualified Data.Macaw.CFG as MC
 
-import           Renovate.Address
-import qualified Renovate.BasicBlock as RB
+import           Renovate.Core.Address
+import qualified Renovate.Core.Instruction as RCI
+import qualified Renovate.Core.BasicBlock as RB
 import           Renovate.ISA ( ISA(..) )
 
 -- | The types of diagnostic messages that can be generated during rewriting or
 -- recovery.
-data Diagnostic = forall arch t tp . InstructionIsNotJump (ISA arch) (RB.Instruction arch tp t)
+data Diagnostic = forall arch t tp . InstructionIsNotJump (ISA arch) (RCI.Instruction arch tp t)
                 | forall arch. (MC.MemWidth (MC.ArchAddrWidth arch)) => NoConcreteAddressForSymbolicTarget !(ConcreteAddress arch) !(SymbolicAddress arch) String
                 | forall arch. (MC.MemWidth (MC.ArchAddrWidth arch)) => BlockTooSmallForRedirection (ISA arch) Word64 (RB.ConcreteBlock arch) (RB.ConcretizedBlock arch)
                   -- ^ Indicates that the given original block was too small to hold the
