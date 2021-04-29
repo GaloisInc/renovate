@@ -7,7 +7,6 @@ description:         Provides a set of tools for analyzing and rewriting
                      * x86_64 (Intel)
                      * ppc (PowerPC)
                      * aarch32 (ARM)
-                     * aarch64 (ARM)
 license:             BSD-3-Clause
 license-file:        LICENSE
 author:              Tristan Ravitch
@@ -68,31 +67,31 @@ library
                        Renovate.Recovery.SymbolMap
   -- other-extensions:    
   build-depends:       base >=4.10 && <5,
-                       panic >= 0.4 && < 0.5,
+                       binary >= 0.8 && < 0.9,
                        bytestring >= 0.9 && < 0.12,
-                       binary,
-                       text,
                        containers >= 0.5 && < 0.7,
-                       heaps >= 0.3 && < 0.5,
-                       IntervalMap >= 0.6 && < 0.7,
-                       mtl >= 2.2 && < 2.3,
-                       unliftio-core >= 0.2 && < 0.3,
-                       mwc-random >= 0.13.6.0 && < 0.15,
-                       exceptions >= 0.7 && < 0.11,
-                       vector >= 0.10 && < 0.13,
-                       lens >= 4 && < 6,
-                       generic-lens >= 0.5 && < 2.2,
-                       lumberjack >= 0.1 && < 1.1,
-                       union-find >= 0.2 && < 0.3,
-                       prettyprinter >= 1.7 && < 1.8,
-                       parameterized-utils,
-                       macaw-base >= 0.3.2,
-                       macaw-refinement,
-                       macaw-loader,
-                       macaw-symbolic,
                        crucible,
                        elf-edit >= 0.28,
+                       exceptions >= 0.7 && < 0.11,
+                       generic-lens >= 0.5 && < 2.2,
+                       heaps >= 0.3 && < 0.5,
+                       IntervalMap >= 0.6 && < 0.7,
+                       lens >= 4 && < 6,
+                       lumberjack >= 0.1 && < 1.1,
+                       mtl >= 2.2 && < 2.3,
+                       mwc-random >= 0.13.6.0 && < 0.15,
+                       macaw-base >= 0.3.2,
+                       macaw-loader,
+                       macaw-refinement,
+                       macaw-symbolic,
+                       prettyprinter >= 1.7 && < 1.8,
+                       panic >= 0.4 && < 0.5,
+                       parameterized-utils >= 2.0 && < 2.2,
                        semmc,
+                       text,
+                       union-find >= 0.2 && < 0.3,
+                       unliftio-core >= 0.2 && < 0.3,
+                       vector >= 0.10 && < 0.13,
                        what4
 
   hs-source-dirs:      src
@@ -106,8 +105,8 @@ test-suite renovate-tests
   main-is: Main.hs
   build-depends: base,
                  elf-edit,
-                 tasty,
-                 tasty-hunit,
-                 tasty-quickcheck,
-                 QuickCheck,
-                 renovate
+                 QuickCheck >= 2.10 && < 2.15,
+                 renovate,
+                 tasty >= 1.4 && < 1.5,
+                 tasty-hunit >= 0.10 && < 0.11,
+                 tasty-quickcheck >= 0.10 && < 0.11
