@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeInType #-}
@@ -44,12 +45,15 @@ import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as LB
 import           Data.Maybe ( fromMaybe )
 import           Data.Parameterized.Classes
-import qualified Data.Text.Prettyprint.Doc as PD
 import           Data.Typeable ( Typeable )
 import           Data.Void ( Void, absurd )
 import           Data.Word ( Word8 )
 import           Numeric ( showHex )
-import qualified Text.PrettyPrint.ANSI.Leijen as PP
+import qualified Prettyprinter as PD
+import qualified Prettyprinter as PP
+import qualified Prettyprinter.Convert.AnsiWlPprint as PPCvt
+import qualified Prettyprinter.Render.String as PPR
+import qualified Prettyprinter.Render.Terminal as PPA
 
 import qualified Data.Macaw.X86 as X86
 import qualified Flexdis86 as D
@@ -138,25 +142,28 @@ instance PD.Pretty (Instruction tp a) where
 prettyPrint :: Instruction tp a -> String
 prettyPrint = prettyPrint' (doPP Nothing)
 
-doPP :: Maybe (AnnotatedOperand a -> PP.Doc) -> Instruction tp a -> PP.Doc
-doPP Nothing (XI ii) = D.ppInstruction (fmap aoOperand ii)
-doPP (Just ppWith) (XI ii) = D.ppInstructionWith ppWith ii
-doPP _ (RawBytes b) = PP.pretty "data: " <> PP.hsep [PP.pretty (showHex w "") | w <- B.unpack b]
+doPP :: Maybe (AnnotatedOperand a -> PP.Doc PPA.AnsiStyle) -> Instruction tp a -> PP.Doc PPA.AnsiStyle
+doPP Nothing (XI ii) = PPCvt.fromAnsiWlPprint $ D.ppInstruction (fmap aoOperand ii)
+doPP (Just ppWith) (XI ii) = PPCvt.fromAnsiWlPprint $
+                             D.ppInstructionWith (PPCvt.toAnsiWlPprint . ppWith) ii
+doPP _ (RawBytes b) = "data: " <> PP.hsep [PP.pretty (showHex w "") | w <- B.unpack b]
 
-prettyPrint' :: (Instruction tp a -> PP.Doc) -> Instruction tp a -> String
-prettyPrint' pp i = PP.displayS (PP.renderCompact (pp i)) ""
+prettyPrint' :: (Instruction tp a -> PP.Doc PPA.AnsiStyle) -> Instruction tp a -> String
+prettyPrint' pp i = PPR.renderString (PP.layoutCompact (pp i))
 
 prettyPrintWithAnnotations :: R.Instruction X86.X86_64 tp (R.Relocation X86.X86_64)
                            -> String
 prettyPrintWithAnnotations insn =
   prettyPrint' (doPP (Just ppValue)) insn
   where
-    ppValue ao = PP.hsep $ D.ppValue (fst $ aoOperand ao) : annDocs
+    ppValue ao = PP.hsep $
+                 PPCvt.fromAnsiWlPprint (D.ppValue (fst $ aoOperand ao))
+                 : annDocs
       where
         annDocs = case aoAnnotation ao of
           R.NoRelocation -> []
-          R.PCRelativeRelocation addr -> [PP.angles (PP.text "concrete:" <> (PP.text $ show $ PD.pretty addr))]
-          R.SymbolicRelocation addr -> [PP.angles (PP.text "symbolic:" <> (PP.text $ show $ PD.pretty addr))]
+          R.PCRelativeRelocation addr -> [PP.angles ("concrete:" <> PD.pretty addr)]
+          R.SymbolicRelocation addr   -> [PP.angles ("symbolic:" <> PD.pretty addr)]
           R.ArchRelocation v -> absurd v
 
 -- | The types of failures that can occur during disassembly of x86_64
