@@ -185,13 +185,11 @@ cfgFromAddrsWith :: (MS.SymArchConstraints arch)
                  -> (ConcreteAddress arch, ConcreteAddress arch)
                  -> MC.AddrSymMap (MC.ArchAddrWidth arch)
                  -> [MC.ArchSegmentOff arch]
-                 -> [(MC.ArchSegmentOff arch, MC.ArchSegmentOff arch)]
                  -> IO (MC.DiscoveryState arch)
-cfgFromAddrsWith recovery mem textAddrRange symbols initAddrs memWords = do
+cfgFromAddrsWith recovery mem textAddrRange symbols initAddrs = do
   let s1 = MC.markAddrsAsFunction MC.InitAddr initAddrs s0
   s2 <- analyzeDiscoveredFunctions recovery mem textAddrRange s1 0
-  let s3 = MC.exploreMemPointers memWords s2
-  analyzeDiscoveredFunctions recovery mem textAddrRange s3 0
+  analyzeDiscoveredFunctions recovery mem textAddrRange s2 0
   where
     s0 = MC.emptyDiscoveryState mem symbols (recoveryArchInfo recovery)
 
@@ -345,7 +343,7 @@ recoverBlocks :: (MS.SymArchConstraints arch, 16 <= MC.ArchAddrWidth arch)
 recoverBlocks recovery loadedBinary symmap entries textAddrRange = do
   let mem = MBL.memoryImage loadedBinary
   sam <- toMacawSymbolMap mem symmap
-  di <- cfgFromAddrsWith recovery mem textAddrRange sam (F.toList entries) []
+  di <- cfgFromAddrsWith recovery mem textAddrRange sam (F.toList entries)
   -- If the caller requested refinement, call refinement in a loop until nothing changes
   di' <- case recoveryRefinement recovery of
     Nothing -> return di
