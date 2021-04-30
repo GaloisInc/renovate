@@ -25,7 +25,6 @@ module Renovate.Config (
   ) where
 
 import qualified Control.Monad.Catch as C
-import           Control.Monad.ST ( ST, RealWorld )
 import qualified Data.ByteString as B
 import           Data.Kind ( Type )
 import qualified Data.List.NonEmpty as DLN
@@ -207,9 +206,6 @@ data RenovateConfig arch binFmt callbacks (b :: Type -> Type) = RenovateConfig
   -- ^ Architecture info for macaw
   , rcAssembler     :: forall m tp . (C.MonadThrow m) => RCI.Instruction arch tp () -> m B.ByteString
   , rcDisassembler  :: forall m ids . (C.MonadThrow m) => MD.ParsedBlock arch ids -> RA.ConcreteAddress arch -> RA.ConcreteAddress arch -> B.ByteString -> m (B.ConcreteBlock arch)
-  , rcBlockCallback :: Maybe (MC.ArchSegmentOff arch -> ST RealWorld ())
-  -- ^ A callback called for each discovered block; the argument
-  -- is the address of the discovered block
   , rcFunctionCallback :: Maybe (Int, MBL.LoadedBinary arch binFmt -> MC.ArchSegmentOff arch -> R.BlockInfo arch -> IO ())
   -- ^ A callback called for each discovered function.  The
   -- arguments are the address of the discovered function and the

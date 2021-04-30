@@ -65,7 +65,6 @@ config analysis = R.RenovateConfig
   , R.rcArchInfo      = const X86.x86_64_linux_info
   , R.rcAssembler     = assemble
   , R.rcDisassembler  = disassemble
-  , R.rcBlockCallback = Nothing
   , R.rcFunctionCallback = Nothing
   , R.rcAnalysis      = analysis
   , R.rcUpdateSymbolTable = True

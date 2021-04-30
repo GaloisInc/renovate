@@ -30,7 +30,6 @@ config analysis = R.RenovateConfig
   , R.rcArchInfo = const MA32.arm_linux_info
   , R.rcAssembler = ISA.assemble
   , R.rcDisassembler = ISA.disassemble
-  , R.rcBlockCallback = Nothing
   , R.rcFunctionCallback = Nothing
   , R.rcAnalysis = analysis
   , R.rcUpdateSymbolTable = True
