@@ -17,6 +17,7 @@ module Renovate.Arch.X86_64.Internal (
   makeInstr,
   rawBytes,
   toFlexInst,
+  toFlexInstF,
   fromFlexInst,
   Instruction(..),
   AnnotatedOperand(..),
@@ -218,6 +219,10 @@ instrOperands (RawBytes _) = []
 toFlexInst :: Instruction tp a -> Maybe D.InstructionInstance
 toFlexInst (XI ii) = Just (fmap aoOperand ii)
 toFlexInst (RawBytes _) = Nothing
+
+toFlexInstF :: Instruction tp a -> Maybe (D.InstructionInstanceF (AnnotatedOperand a))
+toFlexInstF (XI ii) = Just ii
+toFlexInstF (RawBytes _) = Nothing
 
 -- | Wrap a flexdis86 instruction with our wrapper that fixes some
 -- operand types and hides the flexdis type from the rest of the code.

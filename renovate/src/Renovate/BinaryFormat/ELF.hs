@@ -48,6 +48,7 @@ module Renovate.BinaryFormat.ELF (
   riOriginalTextSize,
   riNewTextSize,
   riIncompleteBlocks,
+  riIncompleteFunctions,
   riRedirectionDiagnostics,
   riBlockRecoveryDiagnostics,
   riDiscoveredBlocks,

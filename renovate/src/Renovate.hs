@@ -85,6 +85,7 @@ module Renovate
   -- * Addresses
   RCA.SymbolicAddress,
   RCA.ConcreteAddress,
+  RCA.stableAddress,
   RCA.absoluteAddress,
   RCA.concreteFromSegmentOff,
   RCA.concreteAsSegmentOff,
@@ -149,6 +150,7 @@ module Renovate
   E.riOriginalTextSize,
   E.riNewTextSize,
   E.riIncompleteBlocks,
+  E.riIncompleteFunctions,
   E.riDiscoveredBlocks,
   E.riInstrumentedBytes,
   E.riBlockMapping,

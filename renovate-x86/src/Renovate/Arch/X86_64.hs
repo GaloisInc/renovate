@@ -19,6 +19,7 @@ module Renovate.Arch.X86_64 (
   instrOpcode,
   instrOperands,
   toFlexInst,
+  toFlexInstF,
   fromFlexInst,
   annotateInstr,
   annotateInstrWith,
