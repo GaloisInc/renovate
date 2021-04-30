@@ -149,6 +149,7 @@ module Renovate
   E.riOriginalTextSize,
   E.riNewTextSize,
   E.riIncompleteBlocks,
+  E.riIncompleteFunctions,
   E.riDiscoveredBlocks,
   E.riInstrumentedBytes,
   E.riBlockMapping,
