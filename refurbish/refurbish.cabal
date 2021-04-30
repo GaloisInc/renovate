@@ -17,6 +17,7 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Refurbish.Docker
+                       Refurbish.QEMU
                        Refurbish.Tutorial
   build-depends: base,
                  crucible,
