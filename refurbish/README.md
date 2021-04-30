@@ -58,10 +58,10 @@ from `refurbish-run <prog>` when `<prog>` is for a different arch than
 the host system. Examples from trying to run PPC binaries on an x86_64
 system:
 
-    $ stack exec refurbish-run tests/binaries/float_min.noopt.nostdlib.ppc64.exe
+    $ cabal run refurbish-run -- tests/binaries/float_min.noopt.nostdlib.ppc64.exe
     refurbish-run: fd:15: hGetContents: invalid argument (invalid byte sequence)
 
-    $ stack exec refurbish-run tests/binaries/float_min.opt.nostdlib.ppc64.exe
+    $ cabal run refurbish-run -- tests/binaries/float_min.opt.nostdlib.ppc64.exe
     /tmp/float_min.opt.nostdlib.ppc64.exe: 1: /tmp/float_min.opt.nostdlib.ppc64.exe: Syntax error: "(" unexpected
 
 After installing `qemu-user` everything works.
@@ -80,7 +80,7 @@ and `stderr`, respectively, and the return code is returned locally.
 
 As a contrived example,
 
-    stack exec -- refurbish-run /bin/ls -la /
+    cabal run -- refurbish-run /bin/ls -la /
 
 lists the contents of the root directory in the Docker container.
 
@@ -88,4 +88,4 @@ A more realistic example is to use `refurbish-run` to run a PPC binary
 on an x86_64 machine. For example, to run a PPC binary from the SFE
 project:
 
-    stack exec -- refurbish-run tests/binaries/float_min.opt.nostdlib.ppc64.exe
+    cabal run -- refurbish-run tests/binaries/float_min.opt.nostdlib.ppc64.exe
