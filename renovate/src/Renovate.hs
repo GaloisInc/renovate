@@ -85,6 +85,7 @@ module Renovate
   -- * Addresses
   RCA.SymbolicAddress,
   RCA.ConcreteAddress,
+  RCA.stableAddress,
   RCA.absoluteAddress,
   RCA.concreteFromSegmentOff,
   RCA.concreteAsSegmentOff,

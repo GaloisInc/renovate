@@ -5,6 +5,7 @@
 module Renovate.Core.Address (
   SymbolicAddress(..),
   ConcreteAddress,
+  stableAddress,
   concreteFromSegmentOff,
   concreteFromAbsolute,
   concreteAsSegmentOff,
@@ -39,6 +40,9 @@ import qualified Data.Macaw.CFG as MM
 data SymbolicAddress arch = SymbolicAddress Word64
                           | StableAddress (ConcreteAddress arch)
                           deriving (Eq, Ord)
+
+stableAddress :: ConcreteAddress arch -> SymbolicAddress arch
+stableAddress = StableAddress
 
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (SymbolicAddress arch)
 
