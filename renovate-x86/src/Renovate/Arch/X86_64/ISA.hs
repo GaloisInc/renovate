@@ -26,7 +26,6 @@ import qualified Data.ByteString.Lazy as LB
 import qualified Data.Functor.Identity as I
 import           Data.Int ( Int32 )
 import qualified Data.List.NonEmpty as DLN
-import           Data.Maybe
 import           Data.Parameterized.NatRepr
 import           Data.Parameterized.Some
 import qualified Data.Text.Prettyprint.Doc as PD
@@ -35,7 +34,6 @@ import           Data.Word ( Word8, Word64 )
 
 import qualified Data.Macaw.Discovery as MD
 import qualified Data.Macaw.Memory as MM
-import qualified Data.Macaw.Types as MT
 import qualified Data.Macaw.X86 as X86
 import qualified Flexdis86 as D
 
@@ -107,149 +105,7 @@ isa = R.ISA
   , R.isaSymbolizeAddresses = x64SymbolizeAddresses
   , R.isaConcretizeAddresses = x64ConcretizeAddresses
   , R.isaPrettyInstruction = show . PD.pretty
-  , R.isaMove = x86Move
-  , R.isaMoveImmediate = x86MoveImmediate
-  , R.isaLoad = x86Load
-  , R.isaStore = x86Store
-  , R.isaStoreImmediate = x86StoreImmediate
-  , R.isaAddImmediate = x86AddImmediate
-  , R.isaSubtractImmediate = x86SubtractImmediate
   }
-
-x86StackAddress :: R.InstructionArchRepr X86.X86_64 tp
-                -> R.StackAddress X86.X86_64 tp
-                -> (Some MT.TypeRepr)
-                -> Value tp
-x86StackAddress repr addr (Some tp) =
-  case repr of
-    X86Repr -> do
-      let (D.QWordReg base_reg) = toFlexValue (R.saBase addr)
-      let x86_addr = D.Addr_64 D.SS
-            (Just base_reg)
-            Nothing
-            (D.Disp32 $ D.Imm32Concrete $ fromIntegral $ R.saOffset addr)
-      case tp of
-        MT.BVTypeRepr w
-          | Just Refl <- testEquality w (knownNat   @8)  -> Value (D.Mem8   x86_addr)
-          | Just Refl <- testEquality w (knownNat  @16)  -> Value (D.Mem16  x86_addr)
-          | Just Refl <- testEquality w (knownNat  @32)  -> Value (D.Mem32  x86_addr)
-          | Just Refl <- testEquality w (knownNat  @64)  -> Value (D.Mem64  x86_addr)
-          | Just Refl <- testEquality w (knownNat @128)  -> Value (D.Mem128 x86_addr)
-        MT.FloatTypeRepr MT.SingleFloatRepr -> Value (D.Mem128 x86_addr)
-        MT.FloatTypeRepr MT.DoubleFloatRepr -> Value (D.Mem128 x86_addr)
-        _  -> error $ "unexpected move type: " ++ show tp
-
-x86MovName :: Some MT.TypeRepr -> String
-x86MovName (Some tp) = case tp of
-  MT.BVTypeRepr{} -> "mov"
-  MT.FloatTypeRepr MT.SingleFloatRepr -> "movss"
-  MT.FloatTypeRepr MT.DoubleFloatRepr -> "movsd"
-  _ -> error $ "unexpected move type: " ++ show tp
-
-x86YMMToXMM :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
-             . Some MT.TypeRepr
-            -> Value tp
-            -> Value tp
-x86YMMToXMM (Some tp) val
-  | MT.FloatTypeRepr{} <- tp
-  , Value (D.YMMReg reg) <- val =
-    Value (D.XMMReg $ D.xmmReg $ D.ymmRegNo reg)
-  | otherwise =
-    val
-
-x86MakeMovInstr
-  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
-   . Some MT.TypeRepr
-  -> R.InstructionArchRepr X86.X86_64 tp
-  -> Value tp
-  -> Value tp
-  -> Instruction tp (R.Relocation X86.X86_64)
-x86MakeMovInstr tp repr dest src =
-  noAddr $ makeInstr repr (x86MovName tp) $ map (toFlexValue . x86YMMToXMM tp) [dest, src]
-
-x86Move
-  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
-   . Some MT.TypeRepr
-  -> R.InstructionArchRepr X86.X86_64 tp
-  -> Value tp
-  -> Value tp
-  -> Instruction tp (R.Relocation X86.X86_64)
-x86Move = x86MakeMovInstr
-
-x86MoveImmediate
-  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
-   . Some MT.TypeRepr
-  -> R.InstructionArchRepr X86.X86_64 tp
-  -> Value tp
-  -> Integer
-  -> Instruction tp (R.Relocation X86.X86_64)
-x86MoveImmediate tp repr dest_reg imm =
-  case repr of
-    X86Repr ->
-      x86MakeMovInstr tp repr dest_reg (Value (D.QWordImm $ D.UImm64Concrete $ fromIntegral imm))
-
-x86Load
-  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
-   . Some MT.TypeRepr
-  -> R.InstructionArchRepr X86.X86_64 tp
-  -> Value tp
-  -> R.StackAddress X86.X86_64 tp
-  -> Instruction tp (R.Relocation X86.X86_64)
-x86Load tp repr reg addr =
-  case repr of
-    X86Repr ->
-      x86MakeMovInstr tp repr reg (x86StackAddress repr addr tp)
-
-x86Store
-  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
-   . Some MT.TypeRepr
-  -> R.InstructionArchRepr X86.X86_64 tp
-  -> R.StackAddress X86.X86_64 tp
-  -> Value tp
-  -> Instruction tp (R.Relocation X86.X86_64)
-x86Store tp repr addr reg =
-  case repr of
-    X86Repr ->
-      x86MakeMovInstr tp repr (x86StackAddress repr addr tp) reg
-
-x86StoreImmediate
-  :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
-   . Some MT.TypeRepr
-  -> R.InstructionArchRepr X86.X86_64 tp
-  -> R.StackAddress X86.X86_64 tp
-  -> Integer
-  -> Instruction tp (R.Relocation X86.X86_64)
-x86StoreImmediate tp repr addr imm =
-  case repr of
-    X86Repr ->
-      x86MakeMovInstr tp repr (x86StackAddress repr addr tp) (Value (D.QWordImm $ D.UImm64Concrete $ fromIntegral imm))
-
-x86AddImmediate :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
-                 . Value tp
-                -> Integer
-                -> [Instruction tp (R.Relocation X86.X86_64)]
-x86AddImmediate v = x86OpSPImmediate (valueRepr v) $ B.pack [0x4c, 0x01, 0xd4]
-
-x86SubtractImmediate :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
-                      . Value tp
-                     -> Integer
-                     -> [Instruction tp (R.Relocation X86.X86_64)]
-x86SubtractImmediate v = x86OpSPImmediate (valueRepr v) $ B.pack [0x4c, 0x29, 0xd4]
-
--- x86OpImmediate :: String -> Value -> Integer -> Instruction (R.Relocation X86.X86_64)
--- x86OpImmediate op reg imm =
---   noAddr $ makeInstr op [reg, D.DWordImm $ D.Imm32Concrete $ fromIntegral imm]
-x86OpSPImmediate :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
-                  . R.InstructionArchRepr X86.X86_64 tp
-                 -> B.ByteString
-                 -> Integer
-                 -> [Instruction tp (R.Relocation X86.X86_64)]
-x86OpSPImmediate repr op_bytes imm = do
-  let tmp_reg = D.QWordReg D.R10
-  map noAddr $
-    [makeInstr repr "mov" [tmp_reg, D.QWordImm $ D.UImm64Concrete (fromIntegral imm)]]
-    ++ (map (fromFlexInst repr) $
-        mapMaybe D.disInstruction $ D.disassembleBuffer op_bytes)
 
 -- | Simple adapter for 'x64JumpTypeRaw' with the right type to be used in an
 -- ISA.
