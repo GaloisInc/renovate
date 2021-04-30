@@ -28,7 +28,7 @@ import qualified Prettyprinter as PD
 import qualified Prettyprinter.Render.Text as PDT
 import qualified System.Directory as SD
 import qualified System.Exit as E
-import           System.FilePath ( (</>), (<.>) )
+import           System.FilePath ( (</>), (<.>), takeFileName )
 import           System.FilePath.Glob ( namesMatching )
 import qualified System.IO as IO
 import qualified System.IO.Temp as TMP
@@ -237,9 +237,14 @@ testRewriter (UseDockerRunner useDocker) verbose mRunner hdlAlloc strat exePath 
         argLists <- readTestArguments exePath
         F.forM_ argLists $ \argList -> do
           let origTarget = pwd </> exePath
-          origres <- executor runner [(origTarget, origTarget)] (origTarget : argList)
+              chmodExec f = SD.setPermissions f . SD.setOwnerExecutable True =<< SD.getPermissions f
+              dockerTgtO = "/tmp" </> takeFileName exePath
+          chmodExec origTarget
+          origres <- executor runner [(origTarget, dockerTgtO)] (dockerTgtO : argList)
           let newTarget = texe
-          modres <- executor runner [(newTarget, newTarget)] (newTarget : argList)
+              dockerTgtN = "/tmp" </> takeFileName texe
+          chmodExec newTarget
+          modres <- executor runner [(newTarget, dockerTgtN)] (dockerTgtN : argList)
           assertions origres modres
   where
     executor | useDocker = RD.runInContainer
