@@ -79,8 +79,8 @@ ppc64Inject env _ (InjectedAddr addr) sb = do
 -- | Instead of making sure the original and rewritten have the same behavior,
 -- we want to make sure that the original binary fails and the new binary exits
 -- with 0.
-injectionEquality :: (E.ExitCode, E.ExitCode) -> (String, String) -> (String, String) -> IO ()
-injectionEquality (origRC, modRC) _ _ = do
+injectionEquality :: (E.ExitCode, String, String) -> (E.ExitCode, String, String) -> IO ()
+injectionEquality (origRC, _, _) (modRC, _, _) = do
   case origRC of
     E.ExitSuccess -> T.assertFailure "Base binary succeeded"
     E.ExitFailure _ -> T.assertEqual "Expected the rewritten binary to succeed" E.ExitSuccess modRC

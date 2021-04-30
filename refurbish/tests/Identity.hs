@@ -17,8 +17,8 @@ analysis =
                       , R.arRewrite = R.identity
                       }
 
-allOutputEqual :: (E.ExitCode, E.ExitCode) -> (String, String) -> (String, String) -> IO ()
-allOutputEqual (origRC, modRC) (origOut, modOut) (origErr, modErr) = do
+allOutputEqual :: (E.ExitCode, String, String) -> (E.ExitCode, String, String) -> IO ()
+allOutputEqual (origRC, origOut, origErr) (modRC, modOut, modErr) = do
   T.assertEqual "Stdout" origOut modOut
   T.assertEqual "Stderr" origErr modErr
   T.assertEqual "Exit code" origRC modRC

@@ -209,7 +209,7 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
              -> C.HandleAllocator
              -> R.LayoutStrategy
              -> FilePath
-             -> ((E.ExitCode, E.ExitCode) -> (String, String) -> (String, String) -> IO ())
+             -> ((E.ExitCode, String, String) -> (E.ExitCode, String, String) -> IO ())
              -> R.RenovateConfig arch (E.ElfHeaderInfo w) (R.AnalyzeAndRewrite lm) (Const ())
              -> E.ElfHeaderInfo w
              -> MBL.LoadedBinary arch (E.ElfHeaderInfo w)
@@ -237,10 +237,10 @@ testRewriter (UseDockerRunner useDocker) verbose mRunner hdlAlloc strat exePath 
         argLists <- readTestArguments exePath
         F.forM_ argLists $ \argList -> do
           let origTarget = pwd </> exePath
-          (origRC, origOut, origErr) <- executor runner [(origTarget, origTarget)] (origTarget : argList)
+          origres <- executor runner [(origTarget, origTarget)] (origTarget : argList)
           let newTarget = texe
-          (modRC, modOut, modErr) <- executor runner [(newTarget, newTarget)] (newTarget : argList)
-          assertions (origRC, modRC) (origOut, modOut) (origErr, modErr)
+          modres <- executor runner [(newTarget, newTarget)] (newTarget : argList)
+          assertions origres modres
   where
     executor | useDocker = RD.runInContainer
              | otherwise = runWithoutContainer
