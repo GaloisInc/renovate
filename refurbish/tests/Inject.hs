@@ -1,9 +1,13 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+
 module Inject (
   injectionAnalysis,
   ppc64Inject,
@@ -15,9 +19,10 @@ import qualified Data.Foldable as F
 import           Data.Functor.Const ( Const(..) )
 import qualified Data.List.NonEmpty as DLN
 import           Data.Parameterized.Classes
+import           Data.Parameterized.Context ( pattern Empty, pattern (:>) )
 import           Data.Parameterized.Some ( Some(..) )
 import qualified System.Exit as E
-import qualified Test.Tasty.HUnit as T
+import           Test.Tasty.Checklist
 
 import qualified Data.Macaw.BinaryLoader as MBL
 import           Data.Macaw.BinaryLoader.X86 ()
@@ -80,7 +85,17 @@ ppc64Inject env _ (InjectedAddr addr) sb = do
 -- we want to make sure that the original binary fails and the new binary exits
 -- with 0.
 injectionEquality :: (E.ExitCode, String, String) -> (E.ExitCode, String, String) -> IO ()
-injectionEquality (origRC, _, _) (modRC, _, _) = do
-  case origRC of
-    E.ExitSuccess -> T.assertFailure "Base binary succeeded"
-    E.ExitFailure _ -> T.assertEqual "Expected the rewritten binary to succeed" E.ExitSuccess modRC
+injectionEquality origRes modRes =
+  let origRC ((v, _, _), _) = v
+      modRC (_, (v, _, _)) = v
+      modErr (_, (_, _, s)) = s
+  in withChecklist "injection execution results" $
+     (origRes, modRes) `checkValues`
+     (Empty
+      :> Val "original binary fails"      ((E.ExitSuccess ==) . origRC) False
+      :> Val "rewritten binary succeeds"  modRC  E.ExitSuccess
+      :> Val "rewritten binary no errors" modErr ""
+     )
+
+
+instance TestShow E.ExitCode where testShow = show

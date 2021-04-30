@@ -1,11 +1,16 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+
 module Identity (
   analysis,
   allOutputEqual
   ) where
 
 import           Data.Functor.Const ( Const(..) )
+import           Data.Parameterized.Context ( pattern Empty, pattern (:>) )
 import qualified System.Exit as E
-import qualified Test.Tasty.HUnit as T
+import           Test.Tasty.Checklist
 
 import qualified Renovate as R
 
@@ -18,7 +23,16 @@ analysis =
                       }
 
 allOutputEqual :: (E.ExitCode, String, String) -> (E.ExitCode, String, String) -> IO ()
-allOutputEqual (origRC, origOut, origErr) (modRC, modOut, modErr) = do
-  T.assertEqual "Stdout" origOut modOut
-  T.assertEqual "Stderr" origErr modErr
-  T.assertEqual "Exit code" origRC modRC
+allOutputEqual origRes modRes =
+  let rc (v, _, _) = v
+      out (_, s, _) = s
+      err (_, _, s) = s
+  in withChecklist "equal results" $
+     modRes `checkValues`
+     (Empty
+     :> Val "result code is the same" rc  (rc origRes)
+     :> Val "stdout is the same"      out (out origRes)
+     :> Val "stderr is the same"      err (err origRes)
+     )
+
+instance TestShow E.ExitCode where testShow = show
