@@ -2,12 +2,14 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 module Main ( main ) where
 
+import           Control.Concurrent.MVar
 import           Control.DeepSeq ( force )
 import qualified Control.Exception as X
 import qualified Data.ByteString as BS
@@ -15,7 +17,10 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ElfEdit as E
 import qualified Data.Foldable as F
 import           Data.Functor.Const ( Const(..) )
+import           Data.Functor.Contravariant ( (>$<) )
+import           Data.Functor.Contravariant.Divisible ( chosen )
 import           Data.Proxy ( Proxy(..) )
+import qualified Data.Text.IO as TIO
 import           Data.Typeable ( Typeable )
 import           GHC.TypeLits
 import qualified Lumberjack as LJ
@@ -61,6 +66,16 @@ instance TO.IsOption UseDockerRunner where
   optionName = pure "use-docker-runner"
   optionHelp = pure "Use the docker runner for each test binary"
 
+data VerboseOutput = VerboseOutput Bool
+  deriving (Eq, Ord, Show)
+
+instance TO.IsOption VerboseOutput where
+  defaultValue = VerboseOutput False
+  parseValue = fmap VerboseOutput . TO.safeReadBool
+  optionName = pure "verbose-output"
+  optionHelp = pure "Show verbose output during test runs"
+  optionCLParser = TO.flagCLParser Nothing (VerboseOutput True)
+
 main :: IO ()
 main = do
   eqemu <- RD.initializeQemuRunner
@@ -75,18 +90,26 @@ main = do
   hdlAlloc <- C.newHandleAllocator
   let injection = [ ("tests/injection-base/injection-base.ppc64.exe", "tests/injection-base/ppc64-exit.bin")]
   T.defaultMainWithIngredients ingredients $ do
-    T.askOption $ \useDocker -> do
+    T.askOption $ \useDocker ->
+      T.askOption $ \verbose -> do
+      let callTest :: (UseDockerRunner -> VerboseOutput -> Maybe RD.Runner -> C.HandleAllocator
+                       -> R.LayoutStrategy -> a -> T.TestTree)
+                   -> R.LayoutStrategy -> a -> T.TestTree
+          callTest f = f useDocker verbose mRunner hdlAlloc
       T.testGroup "RefurbishTests" [
-        rewritingTests useDocker mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline) exes,
-        rewritingTests useDocker mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.WholeFunctionTrampoline) exes,
-        rewritingTests useDocker mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.AlwaysTrampoline) exes,
-        rewritingTests useDocker mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.LoopGrouping R.AlwaysTrampoline) exes,
-        rewritingTests useDocker mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.FunctionGrouping R.WholeFunctionTrampoline) exes,
-        codeInjectionTests useDocker mRunner hdlAlloc (R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline) injection,
-        codeInjectionTests useDocker mRunner hdlAlloc (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.AlwaysTrampoline) injection
+        callTest rewritingTests (R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline) exes,
+        callTest rewritingTests (R.LayoutStrategy R.Parallel R.BlockGrouping R.WholeFunctionTrampoline) exes,
+        callTest rewritingTests (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.AlwaysTrampoline) exes,
+        callTest rewritingTests (R.LayoutStrategy (R.Compact R.SortedOrder) R.LoopGrouping R.AlwaysTrampoline) exes,
+        callTest rewritingTests (R.LayoutStrategy (R.Compact R.SortedOrder) R.FunctionGrouping R.WholeFunctionTrampoline) exes,
+        callTest codeInjectionTests (R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline) injection,
+        callTest codeInjectionTests (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.AlwaysTrampoline) injection
         ]
   where
-    ingredients = T.includingOptions [ TO.Option (Proxy @UseDockerRunner) ] : T.defaultIngredients
+    ingredients = T.includingOptions [ TO.Option (Proxy @UseDockerRunner)
+                                     , TO.Option (Proxy @VerboseOutput)
+                                     ] : T.defaultIngredients
+
 
 -- | Generate a set of tests for the code injection API
 --
@@ -94,26 +117,28 @@ main = do
 -- a non-zero exit code and use the code injection API to insert a call to a
 -- function that instead makes it exit with 0.
 codeInjectionTests :: UseDockerRunner
+                   -> VerboseOutput
                    -> Maybe RD.Runner
                    -> C.HandleAllocator
                    -> R.LayoutStrategy
                    -> [(FilePath, FilePath)]
                    -> T.TestTree
-codeInjectionTests useDocker mRunner hdlAlloc strat exes =
-  T.testGroup ("Injecting " ++ show strat) (map (toCodeInjectionTest useDocker mRunner hdlAlloc strat) exes)
+codeInjectionTests useDocker verbose mRunner hdlAlloc strat exes =
+  T.testGroup ("Injecting " ++ show strat) (map (toCodeInjectionTest useDocker verbose mRunner hdlAlloc strat) exes)
 
 toCodeInjectionTest :: UseDockerRunner
+                    -> VerboseOutput
                     -> Maybe RD.Runner
                     -> C.HandleAllocator
                     -> R.LayoutStrategy
                     -> (FilePath, FilePath)
                     -> T.TestTree
-toCodeInjectionTest useDocker mRunner hdlAlloc strat (exePath, injectCodePath) = T.testCase exePath $ do
+toCodeInjectionTest useDocker verbose mRunner hdlAlloc strat (exePath, injectCodePath) = T.testCase exePath $ do
   ic <- BS.readFile injectCodePath
   let injAnalysis = RP.config64 (RTIn.injectionAnalysis ic RTIn.ppc64Inject)
   let configs = [ (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr injAnalysis)
                 ]
-  withELF exePath configs (testRewriter useDocker mRunner hdlAlloc strat exePath RTIn.injectionEquality)
+  withELF exePath configs (testRewriter useDocker verbose mRunner hdlAlloc strat exePath RTIn.injectionEquality)
 
 
 -- | Generate a set of rewriting tests
@@ -121,33 +146,53 @@ toCodeInjectionTest useDocker mRunner hdlAlloc strat (exePath, injectCodePath) =
 -- If the runner is not 'Nothing', each test will use the runner to validate
 -- that the executable still runs correctly
 rewritingTests :: UseDockerRunner
+               -> VerboseOutput
                -> Maybe RD.Runner
                -> C.HandleAllocator
                -> R.LayoutStrategy
                -> [FilePath]
                -> T.TestTree
-rewritingTests useDocker mRunner hdlAlloc strat exes =
+rewritingTests useDocker verbose mRunner hdlAlloc strat exes =
   T.testGroup ("Rewriting " ++ show strat)
-              (map (toRewritingTest useDocker mRunner hdlAlloc strat) exes)
+              (map (toRewritingTest useDocker verbose mRunner hdlAlloc strat) exes)
 
 toRewritingTest :: UseDockerRunner
+                -> VerboseOutput
                 -> Maybe RD.Runner
                 -> C.HandleAllocator
                 -> R.LayoutStrategy
                 -> FilePath
                 -> T.TestTree
-toRewritingTest useDocker mRunner hdlAlloc strat exePath = T.testCase exePath $ do
+toRewritingTest useDocker verbose mRunner hdlAlloc strat exePath = T.testCase exePath $ do
   let configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 RTId.analysis))
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 RTId.analysis))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config RTId.analysis))
                 , (R.ARM, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RA.config RTId.analysis))
                 ]
 
-  withELF exePath configs (testRewriter useDocker mRunner hdlAlloc strat exePath RTId.allOutputEqual)
+  withELF exePath configs (testRewriter useDocker verbose mRunner hdlAlloc strat exePath RTId.allOutputEqual)
 
-simpleConsoleLogger :: LJ.LogAction IO R.Diagnostic
-simpleConsoleLogger = LJ.LogAction $ \msg -> do
-  PDT.putDoc (PD.pretty msg)
+
+-- | If verbose output, then log messages are always written to stdout.
+-- If not verbose, they are only written if an exception is thrown
+-- (i.e. the test fails).
+withLogger :: VerboseOutput -> (LJ.LogAction IO (Either LJ.LogMessage R.Diagnostic) -> IO a) -> IO a
+withLogger (VerboseOutput verbose) k =
+  if verbose
+  then k $ chosen
+       (LJ.cvtLogMessageToANSITermText >$< LJ.LogAction TIO.putStrLn)
+       (LJ.LogAction $ PDT.putDoc . (<> PD.line) . PD.pretty)
+  else do mv <- newMVar []
+          let ld = LJ.LogAction $ \msg -> modifyMVar_ mv (return . (Right (PD.pretty msg <> PD.line) :))
+              lm = LJ.LogAction $ \msg -> modifyMVar_ mv (return . (Left (LJ.cvtLogMessageToANSITermText msg) :))
+              l = chosen lm ld
+          k l `X.catch`
+            (\e -> do putStrLn ""
+                      m <- reverse <$> readMVar mv
+                      mapM_ (either TIO.putStrLn PDT.putDoc) m
+                      putStrLn ""
+                      X.throwIO (e :: X.SomeException))
+
 
 testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , E.ElfWidthConstraints w
@@ -158,6 +203,7 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , MBL.BinaryLoader arch (E.ElfHeaderInfo w)
                 )
              => UseDockerRunner
+             -> VerboseOutput
              -> Maybe RD.Runner
              -> C.HandleAllocator
              -> R.LayoutStrategy
@@ -167,8 +213,10 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
              -> E.ElfHeaderInfo w
              -> MBL.LoadedBinary arch (E.ElfHeaderInfo w)
              -> IO ()
-testRewriter (UseDockerRunner useDocker) mRunner hdlAlloc strat exePath assertions rc e loadedBinary = do
-  (e', _, _, _) <- R.rewriteElf simpleConsoleLogger rc hdlAlloc e loadedBinary strat
+testRewriter (UseDockerRunner useDocker) verbose mRunner hdlAlloc strat exePath assertions rc e loadedBinary =
+  withLogger verbose $ \l -> do
+  (e', _, _, _) <- LJ.logFunctionCall (Left >$< l) "rewriteElf" $
+                   R.rewriteElf (Right >$< l) rc hdlAlloc e loadedBinary strat
   let !bs = force (E.renderElf e')
   T.assertBool "Invalid ELF length" (LBS.length bs > 0)
   -- If we have a runner available, compare the output of the original

@@ -7,7 +7,17 @@ The tests include both rewriting (it should be testing multiple layouts, too) an
 - We support multiple architectures (including architectures that the rewriter will not be running on)
 - If the rewriter is broken, it will produce binaries with unpredictable behavior (most errors lead to quick crashes, but dangerous behaviors are entirely possible)
 
-To make testing binaries for many different architectures both possible and safe, we use a combination of QEMU and Docker.  We use QEMU in /user mode/ to let us run non-native binaries (which we say are for the /target/ architecture) on the /host/ architecture (i.e., the architecture of a developer machine).  User mode emulation differs from the standard mode of QEMU in that it does not require a filesystem image or operating system kernel for the target architecture.  Instead, it uses the QEMU core to dynamically translate binaries of the target architecture to the host architecture.  We run the rewritten binaries (via QEMU) inside of a Docker container to provide isolation, in case the rewritten binary is broken and has unpredictable effects.
+To make testing binaries for many different architectures both possible and safe, we use a combination of QEMU and Docker.
+
+** QEMU
+
+We use QEMU in /user mode/ to let us run non-native binaries (which we say are for the /target/ architecture) on the /host/ architecture (i.e., the architecture of a developer machine).  User mode emulation differs from the standard mode of QEMU in that it does not require a filesystem image or operating system kernel for the target architecture.  Instead, it uses the QEMU core to dynamically translate binaries of the target architecture to the host architecture.
+
+** Docker
+
+We run the rewritten binaries (via QEMU) inside of a Docker container to provide isolation, in case the rewritten binary is broken and has unpredictable effects.
+
+** Overall
 
 This strategy has a number of important benefits:
 

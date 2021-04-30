@@ -27,7 +27,6 @@ import           Data.Word ( Word8, Word64 )
 
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Macaw.Discovery as MD
-import qualified Data.Macaw.Types as MT
 import qualified Data.Parameterized.Classes as PC
 import           Data.Parameterized.Some ( Some(..) )
 
@@ -189,66 +188,8 @@ data ISA arch = ISA
     -- ^ Make the given number of bytes of padding instructions.
     -- The semantics of the instruction stream should either be
     -- no-ops or halts (i.e., not meant to be executed).
-  , isaMakeSymbolicJump
-      :: forall tp
-       . RA.SymbolicAddress arch
-      -> RCI.InstructionArchRepr arch tp
-      -> [RCI.Instruction arch tp (RCR.Relocation arch)]
-  -- ^ Make an unconditional jump that takes execution to the given symbolic
-  -- target.
-  , isaMakeSymbolicCall
-      :: forall tp
-       . RCI.InstructionArchRepr arch tp
-      -> RA.SymbolicAddress arch
-      -> RCI.Instruction arch tp (RCR.Relocation arch)
-  -- ^ Make an call that takes execution to the given symbolic target.
   , isaPrettyInstruction :: forall t tp. RCI.Instruction arch tp t -> String
   -- ^ Pretty print an instruction for diagnostic purposes
-  , isaMove
-      :: forall tp
-       . Some MT.TypeRepr
-      -> RCI.InstructionArchRepr arch tp
-      -> RCI.RegisterType arch tp
-      -> RCI.RegisterType arch tp
-      -> RCI.Instruction arch tp (RCR.Relocation arch)
-  , isaMoveImmediate
-      :: forall tp
-       . Some MT.TypeRepr
-      -> RCI.InstructionArchRepr arch tp
-      -> RCI.RegisterType arch tp
-      -> Integer
-      -> RCI.Instruction arch tp (RCR.Relocation arch)
-  , isaLoad
-      :: forall tp
-       . Some MT.TypeRepr
-      -> RCI.InstructionArchRepr arch tp
-      -> RCI.RegisterType arch tp
-      -> StackAddress arch tp
-      -> RCI.Instruction arch tp (RCR.Relocation arch)
-  , isaStore
-      :: forall tp
-       . Some MT.TypeRepr
-      -> RCI.InstructionArchRepr arch tp
-      -> StackAddress arch tp
-      -> RCI.RegisterType arch tp
-      -> RCI.Instruction arch tp (RCR.Relocation arch)
-  , isaStoreImmediate
-      :: forall tp
-       . Some MT.TypeRepr
-      -> RCI.InstructionArchRepr arch tp
-      -> StackAddress arch tp
-      -> Integer
-      -> RCI.Instruction arch tp (RCR.Relocation arch)
-  , isaAddImmediate
-      :: forall tp
-       . RCI.RegisterType arch tp
-      -> Integer
-      -> [RCI.Instruction arch tp (RCR.Relocation arch)]
-  , isaSubtractImmediate
-      :: forall tp
-       . RCI.RegisterType arch tp
-      -> Integer
-      -> [RCI.Instruction arch tp (RCR.Relocation arch)]
   }
 
 data StackAddress arch (tp :: RCI.InstructionArchReprKind arch) = StackAddress
