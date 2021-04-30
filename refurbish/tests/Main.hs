@@ -17,7 +17,10 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ElfEdit as E
 import qualified Data.Foldable as F
 import           Data.Functor.Const ( Const(..) )
+import           Data.Functor.Contravariant ( (>$<) )
+import           Data.Functor.Contravariant.Divisible ( chosen )
 import           Data.Proxy ( Proxy(..) )
+import qualified Data.Text.IO as TIO
 import           Data.Typeable ( Typeable )
 import           GHC.TypeLits
 import qualified Lumberjack as LJ
@@ -173,14 +176,22 @@ toRewritingTest useDocker verbose mRunner hdlAlloc strat exePath = T.testCase ex
 -- | If verbose output, then log messages are always written to stdout.
 -- If not verbose, they are only written if an exception is thrown
 -- (i.e. the test fails).
-withLogger :: VerboseOutput -> (LJ.LogAction IO R.Diagnostic -> IO a) -> IO a
+withLogger :: VerboseOutput -> (LJ.LogAction IO (Either LJ.LogMessage R.Diagnostic) -> IO a) -> IO a
 withLogger (VerboseOutput verbose) k =
   if verbose
-  then k $ LJ.LogAction $ \msg -> PDT.putDoc (PD.pretty msg)
+  then k $ chosen
+       (LJ.cvtLogMessageToANSITermText >$< LJ.LogAction TIO.putStrLn)
+       (LJ.LogAction $ PDT.putDoc . (<> PD.line) . PD.pretty)
   else do mv <- newMVar []
-          let l = LJ.LogAction $ \msg -> modifyMVar_ mv (return . (PD.pretty msg :))
+          let ld = LJ.LogAction $ \msg -> modifyMVar_ mv (return . (Right (PD.pretty msg <> PD.line) :))
+              lm = LJ.LogAction $ \msg -> modifyMVar_ mv (return . (Left (LJ.cvtLogMessageToANSITermText msg) :))
+              l = chosen lm ld
           k l `X.catch`
-            (\e -> readMVar mv >>= PDT.putDoc . PD.vsep . ("":) . reverse >> X.throwIO (e :: X.SomeException))
+            (\e -> do putStrLn ""
+                      m <- reverse <$> readMVar mv
+                      mapM_ (either TIO.putStrLn PDT.putDoc) m
+                      putStrLn ""
+                      X.throwIO (e :: X.SomeException))
 
 
 testRewriter :: ( w ~ MM.ArchAddrWidth arch
@@ -204,7 +215,8 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
              -> IO ()
 testRewriter (UseDockerRunner useDocker) verbose mRunner hdlAlloc strat exePath assertions rc e loadedBinary =
   withLogger verbose $ \l -> do
-  (e', _, _, _) <- R.rewriteElf l rc hdlAlloc e loadedBinary strat
+  (e', _, _, _) <- LJ.logFunctionCall (Left >$< l) "rewriteElf" $
+                   R.rewriteElf (Right >$< l) rc hdlAlloc e loadedBinary strat
   let !bs = force (E.renderElf e')
   T.assertBool "Invalid ELF length" (LBS.length bs > 0)
   -- If we have a runner available, compare the output of the original

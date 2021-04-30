@@ -103,6 +103,7 @@ test-suite refurbish-tests
   other-modules: Inject
                  Identity
   build-depends: base,
+                 contravariant,
                  crucible,
                  deepseq,
                  bytestring,
@@ -111,6 +112,7 @@ test-suite refurbish-tests
                  prettyprinter,
                  tasty,
                  tasty-hunit,
+                 text,
                  filemanip,
                  filepath,
                  directory >= 1 && < 2,
