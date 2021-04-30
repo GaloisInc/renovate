@@ -5,8 +5,11 @@ module Refurbish.Docker (
   initializeQemuRunner
   ) where
 
+import qualified Refurbish.QEMU as Q
 import qualified System.Exit as E
+import           System.FilePath ( takeFileName )
 import qualified System.Process as P
+
 
 qemuRunnerName :: String
 qemuRunnerName = "refurbish-qemu-runner"
@@ -50,12 +53,19 @@ newtype Runner = Runner {
 
 -- | An implementation of the 'Runner' newtype.
 runner :: [(FilePath, FilePath)] -> [String] -> IO (E.ExitCode, String, String)
-runner mapping cmdline =
-  P.readProcessWithExitCode "docker" dargs ""
+runner mapping cmdline = do
+  q <- Q.qemulator localExe
+  P.readProcessWithExitCode "docker" (dargs q) ""
   where
+    cmdName = takeFileName $ head cmdline
+    localExe = case filter ((cmdName ==) . takeFileName . snd) mapping of
+                 [] -> error "Cannot determine file being executed"
+                 (a:[]) -> fst a
+                 _ -> error "Cannot uniquely determine file being executed"
     argMap = [["-v", src ++ ":" ++ dst ++ ":Z"] | (src, dst) <- mapping]
-    dargs = concat [ ["run", "--init", "--rm", "--privileged"]
-                   , concat argMap
-                   , [qemuRunnerName]
-                   , cmdline
-                   ]
+    dargs q = concat [ ["run", "--init", "--rm", "--privileged"]
+                     , concat argMap
+                     , [qemuRunnerName]
+                     , [q]
+                     , cmdline
+                     ]
