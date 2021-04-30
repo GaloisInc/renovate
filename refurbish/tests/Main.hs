@@ -56,10 +56,11 @@ data UseDockerRunner = UseDockerRunner Bool
   deriving (Eq, Ord, Show)
 
 instance TO.IsOption UseDockerRunner where
-  defaultValue = UseDockerRunner True
+  defaultValue = UseDockerRunner False
   parseValue = fmap UseDockerRunner . TO.safeReadBool
   optionName = pure "use-docker-runner"
   optionHelp = pure "Use the docker runner for each test binary"
+  optionCLParser = TO.flagCLParser Nothing (UseDockerRunner True)
 
 main :: IO ()
 main = do
