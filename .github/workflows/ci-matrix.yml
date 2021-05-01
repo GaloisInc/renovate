@@ -80,5 +80,5 @@ jobs:
       run: |
         sudo apt update
         sudo apt install qemu-user-binfmt qemu-user
-        cabal v2-test pkg:refurbish --test-options='--no-docker-runner=True'
+        cabal v2-test pkg:refurbish --test-options='--no-docker-runner'
 
