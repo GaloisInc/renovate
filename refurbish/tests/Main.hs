@@ -13,6 +13,7 @@ module Main ( main ) where
 import           Control.Concurrent.MVar
 import           Control.DeepSeq ( force )
 import qualified Control.Exception as X
+import           Control.Monad ( when )
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.ElfEdit as E
@@ -21,6 +22,7 @@ import           Data.Functor.Const ( Const(..) )
 import           Data.Functor.Contravariant ( (>$<) )
 import           Data.Functor.Contravariant.Divisible ( chosen )
 import qualified Data.List as L
+import           Data.Maybe ( fromMaybe )
 import           Data.Proxy ( Proxy(..) )
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TIO
@@ -33,6 +35,7 @@ import qualified Lumberjack as LJ
 import qualified Prettyprinter as PD
 import qualified Prettyprinter.Render.Text as PDT
 import qualified System.Directory as SD
+import           System.Environment ( lookupEnv )
 import qualified System.Exit as E
 import           System.FilePath ( (</>), replaceFileName, takeFileName )
 import qualified System.IO as IO
@@ -115,10 +118,11 @@ main = do
   rewriteSweets <- TS.findSugar rewriteCube
   injectionSweets <- TS.findSugar injectionCube
   hdlAlloc <- C.newHandleAllocator
+  lvl <- fromMaybe "0" <$> lookupEnv "CI_TEST_LEVEL"
   rewriteTests <- TS.withSugarGroups rewriteSweets
-                  Sachet (mkRewriteTests hdlAlloc)
+                  Sachet (mkRewriteTests lvl hdlAlloc)
   injectionTests <- TS.withSugarGroups injectionSweets
-                    Sachet (mkInjectionTests hdlAlloc)
+                    Sachet (mkInjectionTests lvl hdlAlloc)
   T.defaultMainWithIngredients ingredients $ do
     T.askOption $ \useDocker ->
       T.askOption $ \verbose ->
@@ -157,25 +161,47 @@ strategies = [ R.LayoutStrategy allocator grouping trampoline
                              ]
              ]
 
-mkRewriteTests :: C.HandleAllocator -> TS.Sweets -> Natural -> TS.Expectation
+mkRewriteTests :: String -> C.HandleAllocator
+               -> TS.Sweets -> Natural -> TS.Expectation
                -> IO [Sweetener]
-mkRewriteTests hdlAlloc _sweets _testNum expect = return $
+mkRewriteTests lvl hdlAlloc _sweets _testNum expect =
   if lookup "opt" (TS.expParamsMatch expect) == Just (TS.Assumed "noopt")
-  then []  -- let the opt=opt test suffice for this .exe
+  then return []  -- let the opt=opt test suffice for this .exe
   else let exe = TS.expectedFile expect
            argf = lookup "arguments" $ TS.associated expect
-       in (Sweetener . toRewritingTest hdlAlloc exe argf) <$> strategies
+           longtest = fromMaybe True
+                      ((`elem` [ TS.Explicit "glibc"
+                               , TS.Explicit "stdlib"
+                               ]) <$>
+                        lookup "lib" (TS.expParamsMatch expect))
+           strats = if lvl == "0"
+                    then [cycle strategies !! length (show expect)] -- semi-random entry
+                    else strategies
+       in do when (lvl == "0") $
+               putStrLn "*** Minimal test set run; set CI_TEST_LEVEL=1 or =2 for more tests"
+             if lvl /= "2" && longtest
+               then
+               do putStrLn "*** Longer running test skipped; set CI_TEST_LEVEL=1 env var to enable"
+                  return []
+               else return $ (Sweetener . toRewritingTest hdlAlloc exe argf) <$> strats
 
-mkInjectionTests :: C.HandleAllocator -> TS.Sweets -> Natural -> TS.Expectation
+mkInjectionTests :: String -> C.HandleAllocator
+                 -> TS.Sweets -> Natural -> TS.Expectation
                  -> IO [Sweetener]
-mkInjectionTests hdlAlloc _sweets _testNum expect = return $
+mkInjectionTests lvl hdlAlloc _sweets _testNum expect =
   case lookup "cpu" (TS.expParamsMatch expect) of
     Just (TS.Explicit cpu) ->
       let exe = TS.expectedFile expect
           inj = replaceFileName exe $ cpu <> "-exit.bin"
           argf = lookup "arguments" $ TS.associated expect
-      in (Sweetener . toCodeInjectionTest hdlAlloc exe inj argf <$> strategies)
-    _ -> []
+          strats = if lvl == "0"
+                   then [cycle strategies !! length (show expect)] -- semi-random entry
+                   else strategies
+      in do when (lvl == "0") $
+               putStrLn "*** Minimal test set run; set CI_TEST_LEVEL=1 or =2 for more tests"
+            -- n.b. currently no very long running tests needing level 2 differentiation
+            return (Sweetener . toCodeInjectionTest hdlAlloc exe inj argf <$> strats)
+    _ -> return []
 
 ----------------------------------------------------------------------
 
