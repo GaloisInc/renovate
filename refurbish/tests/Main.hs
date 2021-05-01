@@ -20,11 +20,13 @@ import qualified Data.Foldable as F
 import           Data.Functor.Const ( Const(..) )
 import           Data.Functor.Contravariant ( (>$<) )
 import           Data.Functor.Contravariant.Divisible ( chosen )
+import qualified Data.List as L
 import           Data.Proxy ( Proxy(..) )
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TIO
 import           Data.Typeable ( Typeable )
 import           Data.Void ( Void )
+import           GHC.Natural ( Natural )
 import           GHC.TypeLits
 import           Lumberjack ( (|#) )
 import qualified Lumberjack as LJ
@@ -32,14 +34,14 @@ import qualified Prettyprinter as PD
 import qualified Prettyprinter.Render.Text as PDT
 import qualified System.Directory as SD
 import qualified System.Exit as E
-import           System.FilePath ( (</>), (<.>), takeFileName )
-import           System.FilePath.Glob ( namesMatching )
+import           System.FilePath ( (</>), replaceFileName, takeFileName )
 import qualified System.IO as IO
 import qualified System.IO.Temp as TMP
 import qualified System.Process as SP
 import qualified Test.Tasty as T
 import qualified Test.Tasty.HUnit as T
 import qualified Test.Tasty.Options as TO
+import qualified Test.Tasty.Sugar as TS
 import           Text.Read ( readMaybe )
 
 import qualified Data.Macaw.CFG as MM
@@ -82,36 +84,100 @@ instance TO.IsOption VerboseOutput where
   optionHelp = pure "Show verbose output during test runs"
   optionCLParser = TO.flagCLParser Nothing (VerboseOutput True)
 
+
+rewriteCube :: TS.CUBE
+rewriteCube =
+  TS.mkCUBE { TS.inputDir = "tests/binaries"
+            , TS.rootName = "*.c"
+            , TS.expectedSuffix = "exe"
+            , TS.validParams =
+                [ ("cpu", Just [ "aarch32", "x86_64", "ppc64" ])
+                , ("lib", Just [ "glibc", "musl", "stdlib", "nostdlib" ] )
+                , ("opt", Just [ "opt", "noopt" ])
+                ]
+            , TS.associatedNames = [ ("arguments", "args") ]
+            }
+
+injectionCube :: TS.CUBE
+injectionCube =
+  TS.mkCUBE { TS.inputDir = "tests/injection-base"
+            , TS.rootName = "*.c"
+            , TS.expectedSuffix = "exe"
+            , TS.validParams =
+                [ ("cpu", Just [ "aarch32", "x86_64", "ppc64" ])
+                ]
+            , TS.associatedNames = [ ("arguments", "args") ]
+            }
+
+
 main :: IO ()
 main = do
-  exes <- namesMatching "tests/binaries/*.exe"
+  rewriteSweets <- TS.findSugar rewriteCube
+  injectionSweets <- TS.findSugar injectionCube
   hdlAlloc <- C.newHandleAllocator
+  rewriteTests <- TS.withSugarGroups rewriteSweets
+                  Sachet (mkRewriteTests hdlAlloc)
+  injectionTests <- TS.withSugarGroups injectionSweets
+                    Sachet (mkInjectionTests hdlAlloc)
   T.defaultMainWithIngredients ingredients $ do
     T.askOption $ \useDocker ->
       T.askOption $ \verbose ->
-      withExecutor verbose useDocker $ mkTests hdlAlloc exes
+      withExecutor verbose useDocker $
+      \e -> T.testGroup "Refurbish Tests"
+            [ T.testGroup "Rewriting" $ sweeten e <$> rewriteTests
+            , T.testGroup "Injection" $ sweeten e <$> injectionTests
+            ]
   where
-    ingredients = T.includingOptions [ TO.Option (Proxy @UseDockerRunner)
-                                     , TO.Option (Proxy @VerboseOutput)
-                                     ] : T.defaultIngredients
+    ingredients = T.includingOptions (TO.Option (Proxy @UseDockerRunner)
+                                      : TO.Option (Proxy @VerboseOutput)
+                                       : TS.sugarOptions)
+                  : TS.sugarIngredients [rewriteCube, injectionCube]
+                  <> T.defaultIngredients
 
-mkTests :: C.HandleAllocator -> [FilePath] -> IO (Logger, Executor) -> T.TestTree
-mkTests hdlAlloc exes executor =
-      let callTest :: (IO (Logger, Executor) -> C.HandleAllocator -> R.LayoutStrategy -> a -> T.TestTree)
-                   -> R.LayoutStrategy -> a -> T.TestTree
-          callTest f = f executor hdlAlloc
-          injection = [ ("tests/injection-base/injection-base.ppc64.exe"
-                        , "tests/injection-base/ppc64-exit.bin")
-                      ]
-      in T.testGroup "RefurbishTests" [
-        callTest rewritingTests (R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline) exes,
-        callTest rewritingTests (R.LayoutStrategy R.Parallel R.BlockGrouping R.WholeFunctionTrampoline) exes,
-        callTest rewritingTests (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.AlwaysTrampoline) exes,
-        callTest rewritingTests (R.LayoutStrategy (R.Compact R.SortedOrder) R.LoopGrouping R.AlwaysTrampoline) exes,
-        callTest rewritingTests (R.LayoutStrategy (R.Compact R.SortedOrder) R.FunctionGrouping R.WholeFunctionTrampoline) exes,
-        callTest codeInjectionTests (R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline) injection,
-        callTest codeInjectionTests (R.LayoutStrategy (R.Compact R.SortedOrder) R.BlockGrouping R.AlwaysTrampoline) injection
-        ]
+----------------------------------------------------------------------
+
+data Sweetener = Sweetener (IO (Logger, Executor) -> T.TestTree)
+               | Sachet String [Sweetener]
+
+sweeten :: IO (Logger, Executor) -> Sweetener -> T.TestTree
+sweeten mkExecutor (Sweetener s) = s mkExecutor
+sweeten mkExecutor (Sachet nm s) = T.testGroup nm (sweeten mkExecutor <$> s)
+
+strategies :: [R.LayoutStrategy]
+strategies = [ R.LayoutStrategy allocator grouping trampoline
+             | allocator <- [ R.Parallel
+                            , R.Compact R.SortedOrder
+                            ]
+             , grouping <- [ R.BlockGrouping
+                           , R.LoopGrouping
+                           , R.FunctionGrouping
+                           ]
+             , trampoline <- [ R.WholeFunctionTrampoline
+                             , R.AlwaysTrampoline
+                             ]
+             ]
+
+mkRewriteTests :: C.HandleAllocator -> TS.Sweets -> Natural -> TS.Expectation
+               -> IO [Sweetener]
+mkRewriteTests hdlAlloc _sweets _testNum expect = return $
+  if lookup "opt" (TS.expParamsMatch expect) == Just (TS.Assumed "noopt")
+  then []  -- let the opt=opt test suffice for this .exe
+  else let exe = TS.expectedFile expect
+           argf = lookup "arguments" $ TS.associated expect
+       in (Sweetener . toRewritingTest hdlAlloc exe argf) <$> strategies
+
+mkInjectionTests :: C.HandleAllocator -> TS.Sweets -> Natural -> TS.Expectation
+                 -> IO [Sweetener]
+mkInjectionTests hdlAlloc _sweets _testNum expect = return $
+  case lookup "cpu" (TS.expParamsMatch expect) of
+    Just (TS.Explicit cpu) ->
+      let exe = TS.expectedFile expect
+          inj = replaceFileName exe $ cpu <> "-exit.bin"
+          argf = lookup "arguments" $ TS.associated expect
+      in (Sweetener . toCodeInjectionTest hdlAlloc exe inj argf <$> strategies)
+    _ -> []
+
+----------------------------------------------------------------------
 
 
 -- | Generate a set of tests for the code injection API
@@ -119,53 +185,53 @@ mkTests hdlAlloc exes executor =
 -- Right now, the one test is pretty simple: take a binary that just exits with
 -- a non-zero exit code and use the code injection API to insert a call to a
 -- function that instead makes it exit with 0.
-codeInjectionTests :: IO (Logger, Executor)
-                   -> C.HandleAllocator
-                   -> R.LayoutStrategy
-                   -> [(FilePath, FilePath)]
-                   -> T.TestTree
-codeInjectionTests mkExecutor hdlAlloc strat exes =
-  T.testGroup ("Injecting " ++ show strat) (map (toCodeInjectionTest mkExecutor hdlAlloc strat) exes)
 
-toCodeInjectionTest :: IO (Logger, Executor)
-                    -> C.HandleAllocator
+toCodeInjectionTest :: C.HandleAllocator
+                    -> FilePath
+                    -> FilePath
+                    -> Maybe FilePath
                     -> R.LayoutStrategy
-                    -> (FilePath, FilePath)
+                    -> IO (Logger, Executor)
                     -> T.TestTree
-toCodeInjectionTest mkExecutor hdlAlloc strat (exePath, injectCodePath) = T.testCase exePath $ do
+toCodeInjectionTest hdlAlloc exePath injectCodePath argfPath strat mkExecutor =
+  T.testCaseSteps (L.intercalate ", " [ takeFileName exePath
+                                      , show (R.allocator strat)
+                                      , show (R.grouping strat)
+                                      , show (R.trampolines strat)
+                                      ]) $ \step -> do
   ic <- BS.readFile injectCodePath
   let injAnalysis = RP.config64 (RTIn.injectionAnalysis ic RTIn.ppc64Inject)
   let configs = [ (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr injAnalysis)
                 ]
-  withELF exePath configs (testRewriter mkExecutor hdlAlloc strat exePath RTIn.injectionEquality)
+  withELF exePath configs
+    (testRewriter mkExecutor step hdlAlloc strat exePath argfPath RTIn.injectionEquality)
 
 
 -- | Generate a set of rewriting tests
 --
 -- If the runner is not 'Nothing', each test will use the runner to validate
 -- that the executable still runs correctly
-rewritingTests :: IO (Logger, Executor)
-               -> C.HandleAllocator
-               -> R.LayoutStrategy
-               -> [FilePath]
-               -> T.TestTree
-rewritingTests mkExecutor hdlAlloc strat exes =
-  T.testGroup ("Rewriting " ++ show strat)
-              (map (toRewritingTest mkExecutor hdlAlloc strat) exes)
 
-toRewritingTest :: IO (Logger, Executor)
-                -> C.HandleAllocator
-                -> R.LayoutStrategy
+toRewritingTest :: C.HandleAllocator
                 -> FilePath
+                -> Maybe FilePath
+                -> R.LayoutStrategy
+                -> IO (Logger, Executor)
                 -> T.TestTree
-toRewritingTest mkExecutor hdlAlloc strat exePath = T.testCase exePath $ do
+toRewritingTest hdlAlloc exePath argfPath strat mkExecutor =
+  T.testCaseSteps (L.intercalate ", " [ takeFileName exePath
+                                      , show (R.allocator strat)
+                                      , show (R.grouping strat)
+                                      , show (R.trampolines strat)
+                                      ]) $ \step -> do
   let configs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 RTId.analysis))
                 , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 RTId.analysis))
                 , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config RTId.analysis))
                 , (R.ARM, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RA.config RTId.analysis))
                 ]
 
-  withELF exePath configs (testRewriter mkExecutor hdlAlloc strat exePath RTId.allOutputEqual)
+  withELF exePath configs
+    (testRewriter mkExecutor step hdlAlloc strat exePath argfPath RTId.allOutputEqual)
 
 
 testRewriter :: ( w ~ MM.ArchAddrWidth arch
@@ -177,18 +243,21 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , MBL.BinaryLoader arch (E.ElfHeaderInfo w)
                 )
              => IO (Logger, Executor)
+             -> (String -> IO ())
              -> C.HandleAllocator
              -> R.LayoutStrategy
              -> FilePath
+             -> Maybe FilePath
              -> ((E.ExitCode, String, String) -> (E.ExitCode, String, String) -> IO ())
              -> R.RenovateConfig arch (E.ElfHeaderInfo w) (R.AnalyzeAndRewrite lm) (Const ())
              -> E.ElfHeaderInfo w
              -> MBL.LoadedBinary arch (E.ElfHeaderInfo w)
              -> IO ()
-testRewriter mkExecutor hdlAlloc strat exePath assertions rc e loadedBinary = do
+testRewriter mkExecutor step hdlAlloc strat exePath argfPath assertions rc e loadedBinary = do
   (logger, executor) <- mkExecutor
   withLogger logger $ \l -> do
     let lm = Left >$< l
+    step "rewrite executable"
     (e', _, _, _) <- LJ.logFunctionCall lm "rewriteElf" $
                      R.rewriteElf (Right >$< l) rc hdlAlloc e loadedBinary strat
     let !bs = force (E.renderElf e')
@@ -202,10 +271,12 @@ testRewriter mkExecutor hdlAlloc strat exePath assertions rc e loadedBinary = do
       -- We have to close the handle so that it can be executed inside of the container
       IO.hClose thdl
       pwd <- SD.getCurrentDirectory
-      argLists <- readTestArguments exePath
+      argLists <- readTestArguments argfPath
       F.forM_ argLists $ \argList -> do
         let orig = pwd </> exePath
+        step "execute original"
         origres <- LJ.logFunctionCall lm "run original exe" $ executor orig argList
+        step "execute rewritten"
         modres <- LJ.logFunctionCall lm "run rewritten exe" $ executor texe argList
         assertions origres modres
 
@@ -263,22 +334,22 @@ withExecutor verbose (UseDockerRunner useDocker) k =
          )
 
 
--- | Given a test executable, read the list of argument lists for a test executable
+-- | Read the list of argument lists for a test executable
 --
--- The executable will be run with each of the argument lists.  For a test
--- executable named "foo.exe", the argument list file is "foo.exe.args".  If the
--- file does not exist, the executable will be run with no arguments.  If the
--- file contains the empty list (of argument lists), the executable will be
--- rewritten but never run.
-readTestArguments :: FilePath -> IO [[String]]
-readTestArguments exePath = do
-  mContents <- X.try (readFile (exePath <.> "args"))
-  case mContents of
+-- The executable will be run with each of the argument lists.  If the
+-- file does not exist or cannot be parsed, the executable will be run
+-- with no arguments.  If the file contains the empty list (of
+-- argument lists), the executable will be rewritten but never run.
+readTestArguments :: Maybe FilePath -> IO [[String]]
+readTestArguments = \case
+  Nothing -> return [[]]
+  Just argFile ->
+    X.try (readFile argFile) >>= \case
     Left (_ :: X.IOException) -> return [[]]
     Right contents ->
       case readMaybe contents of
         Just cs -> return cs
-        Nothing -> T.assertFailure ("Unparsable argument contents: " ++ contents)
+        Nothing -> T.assertFailure ("Unparseable argument contents: " ++ contents)
 
 
 ----------------------------------------------------------------------
