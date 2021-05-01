@@ -1,4 +1,7 @@
 import           Control.Monad
+import           Data.Functor.Contravariant ( (>$<) )
+import qualified Data.Text.IO as TIO
+import qualified Lumberjack as LJ
 import qualified System.Directory as SD
 import qualified System.Environment as SE
 import qualified System.Exit as SE
@@ -25,6 +28,7 @@ getRunner = do
 
 runExe :: RD.Runner -> FilePath -> [String] -> IO b
 runExe runner exe args = do
+  let logger = LJ.cvtLogMessageToANSITermText >$< LJ.LogAction (TIO.hPutStrLn IO.stderr)
   exeExists <- SD.doesFileExist exe
   when (not exeExists) $
     usage $ Just (printf "No such executable: %s" exe)
@@ -32,7 +36,7 @@ runExe runner exe args = do
   -- The name of the executable mapped into the container
   let containerPath = "/tmp" </> SF.takeFileName exe
   (origExit, origOut, origErr) <-
-    RD.runInContainer runner [(localPath, containerPath)]
+    RD.runInContainer runner logger [(localPath, containerPath)]
       (containerPath : args)
   IO.hPutStr IO.stdout origOut
   IO.hPutStr IO.stderr origErr

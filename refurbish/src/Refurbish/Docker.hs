@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 -- | Utilities for running executables (via qemu) in a docker container
 module Refurbish.Docker (
   Runner,
@@ -5,6 +6,10 @@ module Refurbish.Docker (
   initializeQemuRunner
   ) where
 
+import qualified Data.List as L
+import qualified Data.Text as T
+import           Lumberjack ( (|#) )
+import qualified Lumberjack as LJ
 import qualified Refurbish.QEMU as Q
 import qualified System.Exit as E
 import           System.FilePath ( takeFileName )
@@ -46,16 +51,22 @@ initializeQemuRunner = do
 --
 -- Returns the exit code, stdout, and stderr.
 newtype Runner = Runner {
-  runInContainer :: [(FilePath, FilePath)]
+  runInContainer :: LJ.LogAction IO LJ.LogMessage
+                 -> [(FilePath, FilePath)]
                  -> [String]
                  -> IO (E.ExitCode, String, String)
   }
 
 -- | An implementation of the 'Runner' newtype.
-runner :: [(FilePath, FilePath)] -> [String] -> IO (E.ExitCode, String, String)
-runner mapping cmdline = do
+runner :: LJ.LogAction IO LJ.LogMessage
+       -> [(FilePath, FilePath)] -> [String] -> IO (E.ExitCode, String, String)
+runner logger mapping cmdline = do
   q <- Q.qemulator localExe
-  P.readProcessWithExitCode "docker" (dargs q) ""
+  let da = dargs q
+  LJ.writeLog logger |# "running: docker " <> (T.pack $ L.intercalate " " da)
+  r <- P.readProcessWithExitCode "docker" da ""
+  LJ.writeLog logger |# "  --> " <> LJ.tshow r
+  return r
   where
     cmdName = takeFileName $ head cmdline
     localExe = case filter ((cmdName ==) . takeFileName . snd) mapping of
