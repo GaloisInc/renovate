@@ -24,6 +24,9 @@ jobs:
 
     name: GHC ${{ matrix.ghc }} on ${{ matrix.os }} renovate
 
+    env:
+      CI_TEST_LEVEL: "2"
+
     steps:
     - uses: actions/checkout@v2
       with:
