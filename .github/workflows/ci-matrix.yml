@@ -15,6 +15,13 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+
+    env:
+      LANG: en_US.UTF-8
+      LANGUAGE: en_US:en
+      LC_ALL: en_US.UTF-8
+      TZ: America/Los_Angeles
+
     strategy:
       fail-fast: false
       matrix:
