@@ -21,6 +21,7 @@ jobs:
       LANGUAGE: en_US:en
       LC_ALL: en_US.UTF-8
       TZ: America/Los_Angeles
+      CI_TEST_LEVEL: "2"
 
     strategy:
       fail-fast: false
@@ -30,9 +31,6 @@ jobs:
         os: [self-hosted]
 
     name: GHC ${{ matrix.ghc }} on ${{ matrix.os }} renovate
-
-    env:
-      CI_TEST_LEVEL: "2"
 
     steps:
     - uses: actions/checkout@v2
