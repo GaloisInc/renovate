@@ -95,6 +95,12 @@ jobs:
       # rewriter breaks them in a dangerous way. Docker-in-docker isn't so great
       # (and doesn't really work here), so we just disable the runner in CI
       run: |
-        sudo apt install qemu-user-binfmt qemu-user
+        sudo apt install -y qemu-user-binfmt qemu-user
         cabal test pkg:refurbish --test-options='--no-docker-runner'
+
+    - name: Test refurbish (with docker-in-docker)
+      # NOTE: Jared added this to intentionally attempt to bork the new self hosted CI.
+      run: |
+        cabal test pkg:refurbish
+      continue-on-error: true
 
