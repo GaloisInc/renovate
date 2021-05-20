@@ -23,16 +23,16 @@ module Renovate.Recovery (
   isIncompleteBlockAddress,
   isIncompleteFunction,
   isIncompleteBlock,
-  numBlockRegions,
-  Diagnostic(..)
+  numBlockRegions
   ) where
 
 import qualified Control.Lens as L
 import           Control.Monad ( guard )
 import qualified Control.Monad.Catch as C
 import           Control.Monad.IO.Class ( MonadIO )
+import           Control.Monad.IO.Class ( liftIO )
 import qualified Control.Monad.IO.Unlift as MIU
-import qualified Control.Monad.Identity as I
+import qualified Control.Monad.Reader as CMR
 import qualified Data.ByteString as B
 import           Data.Either ( partitionEithers )
 import qualified Data.Foldable as F
@@ -42,7 +42,6 @@ import qualified Data.Map as M
 import           Data.Maybe ( catMaybes, fromMaybe, isJust, mapMaybe )
 import           Data.Proxy ( Proxy(..) )
 import qualified Data.Set as S
-import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.Text.Encoding.Error as T
 import qualified Data.Traversable as T
@@ -66,8 +65,9 @@ import qualified What4.ProgramLoc as C
 
 import           Renovate.Core.Address
 import           Renovate.Core.BasicBlock
+import qualified Renovate.Core.Diagnostic as RCD
+import qualified Renovate.Core.Exception as RCE
 import qualified Renovate.Core.Instruction as RCI
-import           Renovate.Diagnostic
 import           Renovate.ISA
 import           Renovate.Recovery.Overlap
 import           Renovate.Recovery.SymbolMap ( SymbolMap, toMacawSymbolMap )
@@ -127,10 +127,7 @@ data BlockInfo arch = BlockInfo
   , biOverlap          :: BlockRegions arch
   -- ^ A structure that lets us determine which blocks in the program overlap
   -- other blocks in the program (so that we can avoid ever trying to rewrite them)
-  , biTranslationError :: [(ConcreteAddress arch, T.Text)]
-  -- ^ Translation errors reported by macaw
-  , biClassifyFailure :: [ConcreteAddress arch]
-  -- ^ The addresses of blocks for which macaw was unable to determine the terminator type
+  , biDiscoveryInfo :: MC.DiscoveryState arch
   }
 
 isIncompleteBlockAddress :: BlockInfo arch -> ConcreteAddress arch -> Bool
@@ -270,9 +267,6 @@ blockInfo recovery mem textAddrRange di = do
 
   let cfgPairs = M.fromList (catMaybes mcfgs)
 
-  let (transErrs, classifyFailures) =
-        F.foldl' collectDiscoveryFailures ([], []) (M.elems (di L.^. MC.funInfo))
-
   return BlockInfo { biBlocks = blocks
                    , biFunctionEntries = mapMaybe (concreteFromSegmentOff mem) funcEntries
                    , biFunctions = funcBlocks
@@ -280,8 +274,7 @@ blockInfo recovery mem textAddrRange di = do
                    , biCFG = M.map fst cfgPairs
                    , biRegCFG = M.map snd cfgPairs
                    , biOverlap = blockRegions mem di
-                   , biTranslationError = transErrs
-                   , biClassifyFailure = classifyFailures
+                   , biDiscoveryInfo = di
                    }
   where
     validFuncs = M.elems (di L.^. MC.funInfo)
@@ -292,18 +285,6 @@ blockInfo recovery mem textAddrRange di = do
                        | (segOff, val) <- M.toList (di L.^. MC.funInfo)
                        , Just concAddr <- return (concreteFromSegmentOff mem segOff)
                        ]
-    collectDiscoveryFailures acc (PU.Some dfi) =
-      F.foldl' collectBlockDiscoveryFailures acc (M.toList (dfi L.^. MC.parsedBlocks))
-    collectBlockDiscoveryFailures :: forall ids
-                                   . ([(ConcreteAddress arch, T.Text)], [ConcreteAddress arch])
-                                  -> (MC.ArchSegmentOff arch, MC.ParsedBlock arch ids)
-                                  -> ([(ConcreteAddress arch, T.Text)], [ConcreteAddress arch])
-    collectBlockDiscoveryFailures acc@(te, ce) (bSegOff, pb) =
-      let Just baddr = concreteFromSegmentOff mem bSegOff
-      in case MC.pblockTermStmt pb of
-           MC.ClassifyFailure {} -> (te, baddr : ce)
-           MC.ParsedTranslateError msg -> ((baddr, msg) : te, ce)
-           _ -> acc
 
 data Recovery arch =
   Recovery { recoveryISA :: ISA arch
@@ -314,6 +295,22 @@ data Recovery arch =
            , recoveryFuncCallback :: Maybe (Int, MC.ArchSegmentOff arch -> BlockInfo arch -> IO ())
            , recoveryRefinement :: Maybe MR.RefinementConfig
            }
+
+reportDiscoveryFailures
+  :: (MC.MemWidth (MC.ArchAddrWidth arch))
+  => LJ.LogAction IO (RCD.Diagnostic l)
+  -> PU.Some (MC.DiscoveryFunInfo arch)
+  -> IO ()
+reportDiscoveryFailures logAction (PU.Some dfi) =
+  mapM_ reportBlockDiscoveryFailures (M.toList (dfi L.^. MC.parsedBlocks))
+  where
+    reportBlockDiscoveryFailures (addr, pb) =
+      case MC.pblockTermStmt pb of
+        MC.ClassifyFailure _ msgs ->
+          LJ.writeLog logAction (RCD.RecoveryDiagnostic (RCD.ClassificationFailure addr msgs))
+        MC.ParsedTranslateError msg ->
+          LJ.writeLog logAction (RCD.RecoveryDiagnostic (RCD.TranslationError addr msg))
+        _ -> return ()
 
 -- | Use macaw to discover code in a binary
 --
@@ -333,14 +330,16 @@ data Recovery arch =
 -- that attempts to make code relocatable (the symbolization phase) fails badly
 -- in this case.  To avoid these failures, we constrain our code recovery to the
 -- text section.
-recoverBlocks :: (MS.SymArchConstraints arch, 16 <= MC.ArchAddrWidth arch)
-              => Recovery arch
-              -> MBL.LoadedBinary arch binFmt
-              -> SymbolMap arch
-              -> NEL.NonEmpty (MC.MemSegmentOff (MC.ArchAddrWidth arch))
-              -> (ConcreteAddress arch, ConcreteAddress arch)
-              -> IO (BlockInfo arch)
-recoverBlocks recovery loadedBinary symmap entries textAddrRange = do
+recoverBlocks
+  :: (MS.SymArchConstraints arch, 16 <= MC.ArchAddrWidth arch)
+  => LJ.LogAction IO (RCD.Diagnostic lm)
+  -> Recovery arch
+  -> MBL.LoadedBinary arch binFmt
+  -> SymbolMap arch
+  -> NEL.NonEmpty (MC.MemSegmentOff (MC.ArchAddrWidth arch))
+  -> (ConcreteAddress arch, ConcreteAddress arch)
+  -> IO (BlockInfo arch)
+recoverBlocks logAction recovery loadedBinary symmap entries textAddrRange = do
   let mem = MBL.memoryImage loadedBinary
   sam <- toMacawSymbolMap mem symmap
   di <- cfgFromAddrsWith recovery mem textAddrRange sam (F.toList entries)
@@ -349,41 +348,56 @@ recoverBlocks recovery loadedBinary symmap entries textAddrRange = do
     Nothing -> return di
     Just refineCfg -> do
       rc <- MR.defaultRefinementContext refineCfg loadedBinary
-      refineDiscoveryInfo rc di
-  blockInfo recovery mem textAddrRange di'
+      refineDiscoveryInfo logAction rc di
+  binfo <- blockInfo recovery mem textAddrRange di'
 
-newtype RefineM arch a = RefineM { unRefineM :: I.IdentityT IO a }
+  mapM_ (reportDiscoveryFailures logAction) (M.elems (biDiscoveryInfo binfo L.^. MC.funInfo))
+
+  return binfo
+
+newtype RefineM arch a = RefineM { unRefineM :: CMR.ReaderT (LJ.LogAction (RefineM arch) (MR.RefinementLog arch)) IO a }
   deriving ( Functor
            , Applicative
            , Monad
            , MonadIO
            , MIU.MonadUnliftIO
            , C.MonadThrow
+           , CMR.MonadReader (LJ.LogAction (RefineM arch) (MR.RefinementLog arch))
            )
 
-runRefineM :: RefineM arch a -> IO a
-runRefineM = I.runIdentityT . unRefineM
+refineLog :: (MC.MemWidth (MC.ArchAddrWidth arch))
+          => LJ.LogAction IO (RCD.Diagnostic lm)
+          -> LJ.LogAction (RefineM arch) (MR.RefinementLog arch)
+refineLog logAction =
+  LJ.LogAction $ \msg -> do
+    liftIO (LJ.writeLog logAction (RCD.RecoveryDiagnostic (RCD.RefinementLog msg)))
 
-nullLogger :: LJ.LogAction (RefineM arch) msg
-nullLogger = LJ.LogAction { LJ.writeLog = \_ -> return () }
+runRefineM
+  :: forall lm arch a
+   . (MC.MemWidth (MC.ArchAddrWidth arch))
+  => LJ.LogAction IO (RCD.Diagnostic lm)
+  -> RefineM arch a
+  -> IO a
+runRefineM logAction a = CMR.runReaderT (unRefineM a) (refineLog logAction)
 
 instance LJ.HasLog (MR.RefinementLog arch) (RefineM arch) where
-  getLogAction = return nullLogger
+  getLogAction = CMR.ask
 
-refineDiscoveryInfo :: forall arch
+refineDiscoveryInfo :: forall arch lm
                      . ( 16 <= MC.ArchAddrWidth arch
                        , MS.SymArchConstraints arch
                        )
-                    => MR.RefinementContext arch
+                    => LJ.LogAction IO (RCD.Diagnostic lm)
+                    -> MR.RefinementContext arch
                     -> MC.DiscoveryState arch
                     -> IO (MC.DiscoveryState arch)
-refineDiscoveryInfo rc = go mempty
+refineDiscoveryInfo logAction rc = go mempty
   where
     go findings0 s0 = do
       -- NOTE: We are currently throwing away all of the diagnostics from
       -- macaw-refinement.  We could collect them in an @MVar (Seq msg)@ or
       -- similar if we wanted them
-      (s1, findings1) <- runRefineM @arch $ MR.refineDiscovery rc findings0 s0
+      (s1, findings1) <- runRefineM @_ @arch logAction $ MR.refineDiscovery rc findings0 s0
       case findings0 == findings1 of
         True -> return s1
         False -> go findings1 s1
@@ -469,11 +483,11 @@ buildBlock disBlock asm1 mem blockStarts (funcAddr, (PU.Some pb))
   | isIncompleteBlock pb = return (Left funcAddr)
   | Just concAddr <- concreteFromSegmentOff mem segAddr = do
       case MC.addrContentsAfter mem (MC.segoffAddr segAddr) of
-        Left err -> C.throwM (MemoryError err)
+        Left err -> C.throwM (RCE.MemoryError segAddr err)
         Right [MC.ByteRegion bs] -> do
           let stopAddr = blockStopAddress blockStarts pb concAddr
           case disBlock pb concAddr stopAddr bs of
-            Left err -> C.throwM (EmptyBlock concAddr err)
+            Left err -> C.throwM (RCE.EmptyBlock concAddr err)
             Right bb ->
               -- If we can't re-assemble all of the instructions we have found,
               -- pretend we never saw this block.  Note that the caller will have to
@@ -486,7 +500,7 @@ buildBlock disBlock asm1 mem blockStarts (funcAddr, (PU.Some pb))
                 case all (canAssemble asm1) insns of
                   True -> return (Right bb)
                   False -> return (Left funcAddr)
-        _ -> C.throwM (NoByteRegionAtAddress (MC.segoffAddr segAddr))
+        _ -> C.throwM (RCE.NoByteRegionAtAddress (MC.segoffAddr segAddr))
   | otherwise = return (Left funcAddr)
   where
     segAddr = MC.pblockAddr pb

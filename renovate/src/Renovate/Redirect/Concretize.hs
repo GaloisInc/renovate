@@ -14,6 +14,7 @@ module Renovate.Redirect.Concretize (
   ) where
 
 import           Control.Exception ( assert )
+import qualified Control.Monad.Catch as X
 import           Control.Monad.IO.Class ( MonadIO )
 import qualified Control.Monad.State as S
 import qualified Data.ByteString as BS
@@ -25,7 +26,6 @@ import qualified Data.Map as Map
 import           Data.Maybe ( fromMaybe, maybeToList )
 import           Data.Monoid ( Sum(Sum) )
 import qualified Data.Traversable as T
-import           Data.Typeable ( Typeable )
 import           Data.Word ( Word64 )
 
 import           Renovate.Core.Address
@@ -90,17 +90,18 @@ concreteAddressMap layout =
 -- Note that blocks have to be laid out in order; using M.toList is
 -- sufficient to sort by original address, which maintains the order
 -- invariant.
-concretize :: (MonadIO m, T.Traversable t, Typeable arch, MC.MemWidth (MC.ArchAddrWidth arch))
-           => RCL.LayoutStrategy
-           -> ConcreteAddress arch
-           -- ^ The start address of the concretized (instrumented) blocks
-           -> t (RCL.WithProvenance SymbolicBlock arch)
-           -> t (SymbolicAddress arch, BS.ByteString)
-           -> t (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch)
-           -> BlockInfo arch
-           -> RewriterT arch m ( RCL.Layout ConcretizedBlock InjectConcreteInstructions arch
-                               , M.Map (SymbolicAddress arch) (ConcreteAddress arch)
-                               )
+concretize
+  :: (T.Traversable t, MC.MemWidth (MC.ArchAddrWidth arch), MonadIO m, X.MonadThrow m)
+  => RCL.LayoutStrategy
+  -> ConcreteAddress arch
+  -- ^ The start address of the concretized (instrumented) blocks
+  -> t (RCL.WithProvenance SymbolicBlock arch)
+  -> t (SymbolicAddress arch, BS.ByteString)
+  -> t (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch)
+  -> BlockInfo arch
+  -> RedirectT lm arch m ( RCL.Layout ConcretizedBlock InjectConcreteInstructions arch
+                         , M.Map (SymbolicAddress arch) (ConcreteAddress arch)
+                         )
 concretize strat startAddr blocks injectedCode injectedInstructions blockInfo = do
   -- First, build up a mapping of symbolic address to new concrete
   -- address
@@ -162,7 +163,7 @@ concretizeInjectedInstructions
   :: (Monad m)
   => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
   -> (SymbolicAddress arch, ConcreteAddress arch, RRW.InjectSymbolicInstructions arch)
-  -> RewriterT arch m (SymbolicAddress arch, ConcreteAddress arch, InjectConcreteInstructions arch)
+  -> RedirectT lm arch m (SymbolicAddress arch, ConcreteAddress arch, InjectConcreteInstructions arch)
 concretizeInjectedInstructions symToConcAddrs (symAddr, concAddr, RRW.InjectSymbolicInstructions repr insns) = do
   let conc = T.traverse (concretizeAddresses symToConcAddrs) insns
   concInstrsWithSizes <- S.evalStateT conc concAddr
@@ -183,10 +184,11 @@ concretizeInjectedInstructions symToConcAddrs (symAddr, concAddr, RRW.InjectSymb
 --
 -- NOTE: The implementation of concretization MUST match the logic used to
 -- compute block sizes in 'symbolicBlockSize' in Renovate.BasicBlock.
-concretizeJumps :: (Monad m)
-                => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
-                -> RCL.WithProvenance AddressAssignedBlock arch
-                -> RewriterT arch m (RCL.WithProvenance ConcretizedBlock arch)
+concretizeJumps
+  :: (Monad m)
+  => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
+  -> RCL.WithProvenance AddressAssignedBlock arch
+  -> RedirectT lm arch m (RCL.WithProvenance ConcretizedBlock arch)
 concretizeJumps symToConcAddrs wp
   | RCL.changed status = withSymbolicInstructions sb $ \repr symInsns -> do
     -- Concretize all of the instructions (including jumps)
@@ -248,11 +250,11 @@ concretizeJumps symToConcAddrs wp
     maxSize = lbSize aab
     status = RCL.rewriteStatus wp
 
-concretizeAddresses :: forall m arch tp
-                     . (Monad m, MC.MemWidth (MC.ArchAddrWidth arch))
+concretizeAddresses :: forall lm arch tp m
+                     . (MC.MemWidth (MC.ArchAddrWidth arch), Monad m)
                     => M.Map (SymbolicAddress arch) (ConcreteAddress arch)
                     -> RCI.Instruction arch tp (RCR.Relocation arch)
-                    -> S.StateT (ConcreteAddress arch) (RewriterT arch m) (DLN.NonEmpty (RCI.Instruction arch tp ()), Sum Word64)
+                    -> S.StateT (ConcreteAddress arch) (RedirectT lm arch m) (DLN.NonEmpty (RCI.Instruction arch tp ()), Sum Word64)
 concretizeAddresses symToConcAddrs instr = do
   insnAddr <- S.get
   isa <- S.lift askISA

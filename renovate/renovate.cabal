@@ -40,10 +40,12 @@ library
                        Renovate.Config
                        Renovate.Core.Address
                        Renovate.Core.BasicBlock
+                       Renovate.Core.Chunk
+                       Renovate.Core.Diagnostic
+                       Renovate.Core.Exception
                        Renovate.Core.Instruction
                        Renovate.Core.Layout
                        Renovate.Core.Relocation
-                       Renovate.Diagnostic
                        Renovate.Metrics
                        Renovate.Redirect
                        Renovate.Redirect.Concretize
@@ -56,10 +58,8 @@ library
                        Renovate.BinaryFormat.ELF
                        Renovate.BinaryFormat.ELF.Common
                        Renovate.BinaryFormat.ELF.BSS
-                       Renovate.BinaryFormat.ELF.Exceptions
                        Renovate.BinaryFormat.ELF.InitialSizes
                        Renovate.BinaryFormat.ELF.Rewriter
-                       Renovate.BinaryFormat.ELF.Rewriter.Env
                        Renovate.ISA
                        Renovate.Panic
                        Renovate.Recovery

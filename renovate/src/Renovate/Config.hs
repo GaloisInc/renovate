@@ -16,7 +16,6 @@ module Renovate.Config (
   RewriterAnalysisEnv(..),
   AnalyzeOnly(..),
   AnalyzeAndRewrite(..),
-  ModifiedInstructions(..),
   RenovateConfig(..),
   SomeConfig(..),
   compose,
@@ -27,9 +26,7 @@ module Renovate.Config (
 import qualified Control.Monad.Catch as C
 import qualified Data.ByteString as B
 import           Data.Kind ( Type )
-import qualified Data.List.NonEmpty as DLN
 import           Data.Map.Strict ( Map )
-import           Data.Typeable ( Typeable )
 import           Data.Word ( Word64 )
 
 import qualified Data.Parameterized.NatRepr as NR
@@ -46,7 +43,6 @@ import qualified Renovate.ABI as ABI
 import qualified Renovate.Core.Address as RA
 import qualified Renovate.Core.BasicBlock as B
 import qualified Renovate.Core.Instruction as RCI
-import qualified Renovate.Core.Relocation as RCR
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as R
 import qualified Renovate.Rewrite as RW
@@ -67,7 +63,6 @@ import qualified Renovate.Rewrite as RW
 --   existential).
 data SomeConfig callbacks (b :: Type -> Type) = forall arch binFmt
                   . ( MS.SymArchConstraints arch
-                    , Typeable arch
                     , MBL.BinaryLoader arch binFmt
                     , ISA.ArchConstraints arch
                     )
@@ -146,21 +141,6 @@ class HasSymbolicBlockMap env where
 data AnalyzeOnly arch binFmt b =
   AnalyzeOnly { aoAnalyze :: forall env . (HasAnalysisEnv env) => env arch binFmt -> IO (b arch) }
 
--- | This wraps the return value of the caller-provided instrumentor
---
--- We need an existential wrapper to associate the block arch repr with the
--- result (and also hide it from the return value).  This allows callers to
--- change the type of instructions in a block, but still forces them to stick to
--- one instruction set in each block.
---
--- Note that we avoid having the caller return an entire 'B.SymbolicBlock' to
--- prevent metadata from changing.
-data ModifiedInstructions arch where
-  ModifiedInstructions :: ( RCI.InstructionConstraints arch tp )
-                       => RCI.InstructionArchRepr arch tp
-                       -> DLN.NonEmpty (RCI.Instruction arch tp (RCR.Relocation arch))
-                       -> ModifiedInstructions arch
-
 -- | The configuration for a combined analysis and rewriting pass
 --
 -- This has additional callbacks that are run in 'RW.RewriteM' to enable setup
@@ -179,7 +159,7 @@ data AnalyzeAndRewrite lm arch binFmt b =
                                 -> b arch
                                 -> rewriterState arch
                                 -> B.SymbolicBlock arch
-                                -> RW.RewriteM lm arch (Maybe (ModifiedInstructions arch))
+                                -> RW.RewriteM lm arch (Maybe (B.ModifiedInstructions arch))
                     }
 
 -- | The configuration required for a run of the binary rewriter.
@@ -241,20 +221,20 @@ data RenovateConfig arch binFmt callbacks (b :: Type -> Type) = RenovateConfig
 -- other.
 compose :: forall m arch
          . (Monad m)
-        => [B.SymbolicBlock arch -> m (Maybe (ModifiedInstructions arch))]
-        -> (B.SymbolicBlock arch -> m (Maybe (ModifiedInstructions arch)))
+        => [B.SymbolicBlock arch -> m (Maybe (B.ModifiedInstructions arch))]
+        -> (B.SymbolicBlock arch -> m (Maybe (B.ModifiedInstructions arch)))
 compose funcs = go funcs
   where
-    go :: [B.SymbolicBlock arch -> m (Maybe (ModifiedInstructions arch))]
+    go :: [B.SymbolicBlock arch -> m (Maybe (B.ModifiedInstructions arch))]
       -> B.SymbolicBlock arch
-      -> m (Maybe (ModifiedInstructions arch))
+      -> m (Maybe (B.ModifiedInstructions arch))
     go [] b =
       B.withSymbolicInstructions b $ \repr insns ->
-        return $! Just (ModifiedInstructions repr insns)
+        return $! Just (B.ModifiedInstructions repr insns)
     go (f:fs) b = do
       mb_is <- f b
       case mb_is of
-        Just (ModifiedInstructions repr' is') ->
+        Just (B.ModifiedInstructions repr' is') ->
           let b' = B.symbolicBlock (B.symbolicBlockOriginalAddress b)
                                    (B.symbolicBlockSymbolicAddress b)
                                    is'
@@ -266,12 +246,12 @@ compose funcs = go funcs
 
 -- | An identity rewriter (i.e., a rewriter that makes no changes, but forces
 -- everything to be redirected).
-identity :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe (ModifiedInstructions arch))
+identity :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe (B.ModifiedInstructions arch))
 identity _ _ _ sb =
   B.withSymbolicInstructions sb $ \repr insns ->
-    return $! Just (ModifiedInstructions repr insns)
+    return $! Just (B.ModifiedInstructions repr insns)
 
 -- | A basic block rewriter that leaves a block untouched, preventing the
 -- rewriter from trying to relocate it.
-nop :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe (ModifiedInstructions arch))
+nop :: env arch binFmt -> b arch -> rewriterState arch -> B.SymbolicBlock arch -> RW.RewriteM lm arch (Maybe (B.ModifiedInstructions arch))
 nop _ _ _ _ = return Nothing

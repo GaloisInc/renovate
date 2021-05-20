@@ -10,19 +10,22 @@ module Renovate.BinaryFormat.ELF.BSS (
   ) where
 
 import qualified Control.Lens as L
+import           Control.Monad ( unless )
 import qualified Control.Monad.State.Strict as S
 import qualified Data.ByteString as B
 import qualified Data.ElfEdit as E
-import           Data.Semigroup
 import qualified Data.Foldable as F
 import qualified Data.List as L
 import qualified Data.Macaw.CFG as MM
 import           Data.Maybe ( catMaybes )
+import           Data.Semigroup
 import qualified Data.Sequence as Seq
 import qualified Data.Traversable as T
 import           Data.Word ( Word16 )
+import           GHC.Stack ( HasCallStack )
 
 import           Renovate.BinaryFormat.ELF.Rewriter
+import qualified Renovate.Panic as RP
 
 import           Prelude
 
@@ -80,12 +83,14 @@ sequential (a : rest@(b : _)) = a + 1 == b && sequential rest
 -- NOTE: This currently works based on section numbers rather than addresses
 expandPreBSSDataSection :: ( w ~ MM.ArchAddrWidth arch
                            , E.ElfWidthConstraints w
+                           , HasCallStack
                            )
                         => [E.ElfSection (E.ElfWordType w)]
                         -> E.Elf w
                         -> ElfRewriter lm arch (E.Elf w)
 expandPreBSSDataSection (L.sortOn E.elfSectionIndex -> nobitsSections) e0 = do
-  assertM (sequential (map E.elfSectionIndex nobitsSections))
+  unless (sequential (map E.elfSectionIndex nobitsSections)) $ do
+    RP.panic RP.ELFWriting "expandPreBSSDataSection" []
   case nobitsSections of
     [] -> return e0
     firstBss : _ -> do

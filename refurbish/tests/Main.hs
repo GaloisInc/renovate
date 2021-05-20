@@ -26,7 +26,6 @@ import           Data.Maybe ( fromMaybe )
 import           Data.Proxy ( Proxy(..) )
 import qualified Data.Text as Text
 import qualified Data.Text.IO as TIO
-import           Data.Typeable ( Typeable )
 import           Data.Void ( Void )
 import           GHC.Natural ( Natural )
 import           GHC.TypeLits
@@ -259,12 +258,10 @@ toRewritingTest hdlAlloc exePath argfPath strat mkExecutor =
   withELF exePath configs
     (testRewriter mkExecutor step hdlAlloc strat exePath argfPath RTId.allOutputEqual)
 
-
 testRewriter :: ( w ~ MM.ArchAddrWidth arch
                 , E.ElfWidthConstraints w
                 , MS.SymArchConstraints arch
                 , R.ArchConstraints arch
-                , Typeable arch
                 , 16 <= w
                 , MBL.BinaryLoader arch (E.ElfHeaderInfo w)
                 )
@@ -275,7 +272,7 @@ testRewriter :: ( w ~ MM.ArchAddrWidth arch
              -> FilePath
              -> Maybe FilePath
              -> ((E.ExitCode, String, String) -> (E.ExitCode, String, String) -> IO ())
-             -> R.RenovateConfig arch (E.ElfHeaderInfo w) (R.AnalyzeAndRewrite lm) (Const ())
+             -> R.RenovateConfig arch (E.ElfHeaderInfo w) (R.AnalyzeAndRewrite Void) (Const ())
              -> E.ElfHeaderInfo w
              -> MBL.LoadedBinary arch (E.ElfHeaderInfo w)
              -> IO ()
@@ -284,7 +281,7 @@ testRewriter mkExecutor step hdlAlloc strat exePath argfPath assertions rc e loa
   withLogger logger $ \l -> do
     let lm = Left >$< l
     step "rewrite executable"
-    (e', _, _, _) <- LJ.logFunctionCall lm "rewriteElf" $
+    (e', _, _) <- LJ.logFunctionCall lm "rewriteElf" $
                      R.rewriteElf (Right >$< l) rc hdlAlloc e loadedBinary strat
     let !bs = force (E.renderElf e')
     T.assertBool "Invalid ELF length" (LBS.length bs > 0)
@@ -305,7 +302,6 @@ testRewriter mkExecutor step hdlAlloc strat exePath argfPath assertions rc e loa
         step "execute rewritten"
         modres <- LJ.logFunctionCall lm "run rewritten exe" $ executor texe argList
         assertions origres modres
-
 
 type Executor = (FilePath -> [String] -> IO (E.ExitCode, String, String))
 
@@ -386,7 +382,6 @@ withELF :: FilePath
         -> (forall arch . ( MS.SymArchConstraints arch
                           , MBL.BinaryLoader arch (E.ElfHeaderInfo (MM.ArchAddrWidth arch))
                           , 16 <= MM.ArchAddrWidth arch
-                          , Typeable arch
                           , E.ElfWidthConstraints (MM.ArchAddrWidth arch)
                           , R.ArchConstraints arch
                           ) =>
@@ -433,5 +428,5 @@ withLogger logger k =
                                          putStrLn ""
                                          X.throwIO (e :: X.SomeException))
 
-type LogWriter = LJ.LogAction IO (Either LJ.LogMessage R.Diagnostic)
+type LogWriter = LJ.LogAction IO (Either LJ.LogMessage (R.Diagnostic Void))
 newtype Logger = TestLogger (Maybe (MVar [Either Text.Text (PD.Doc Void)]), LogWriter)

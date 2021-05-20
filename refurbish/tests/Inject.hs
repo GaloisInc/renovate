@@ -21,6 +21,7 @@ import qualified Data.List.NonEmpty as DLN
 import           Data.Parameterized.Classes
 import           Data.Parameterized.Context ( pattern Empty, pattern (:>) )
 import           Data.Parameterized.Some ( Some(..) )
+import           Data.Void ( Void )
 import qualified System.Exit as E
 import           Test.Tasty.Checklist
 
@@ -33,8 +34,8 @@ import qualified Renovate as R
 import qualified Renovate.Arch.PPC as RP
 
 injectionAnalysis :: BS.ByteString
-                  -> (forall env . (R.HasAnalysisEnv env) => env arch binFmt -> Const () arch -> InjectedAddr arch -> R.SymbolicBlock arch -> R.RewriteM lm arch (Maybe (R.ModifiedInstructions arch)))
-                  -> R.AnalyzeAndRewrite lm arch binFmt (Const ())
+                  -> (forall env . (R.HasAnalysisEnv env) => env arch binFmt -> Const () arch -> InjectedAddr arch -> R.SymbolicBlock arch -> R.RewriteM Void arch (Maybe (R.ModifiedInstructions arch)))
+                  -> R.AnalyzeAndRewrite Void arch binFmt (Const ())
 injectionAnalysis injCode injRewrite =
   R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
                       , R.arAnalyze = \_ _ -> return (Const ())
@@ -44,7 +45,7 @@ injectionAnalysis injCode injRewrite =
 
 data InjectedAddr arch = InjectedAddr (R.SymbolicAddress arch)
 
-injectPreRewrite :: (R.HasAnalysisEnv env) => BS.ByteString -> env arch binFmt -> b arch -> R.RewriteM lm arch (InjectedAddr arch)
+injectPreRewrite :: (R.HasAnalysisEnv env) => BS.ByteString -> env arch binFmt -> b arch -> R.RewriteM Void arch (InjectedAddr arch)
 injectPreRewrite injCode _ _ = do
   InjectedAddr <$> R.injectFunction "newExit" injCode
 
@@ -58,13 +59,13 @@ prepend l nel =
 -- | This rewriter is PPC64-specific because it has to generate machine instructions
 --
 -- We'll need to add one per architecture
-ppc64Inject :: forall env binFmt b lm
+ppc64Inject :: forall env binFmt b
              . (R.HasAnalysisEnv env)
             => env RP.PPC64 binFmt
             -> b RP.PPC64
             -> InjectedAddr RP.PPC64
             -> R.SymbolicBlock RP.PPC64
-            -> R.RewriteM lm RP.PPC64 (Maybe (R.ModifiedInstructions RP.PPC64))
+            -> R.RewriteM Void RP.PPC64 (Maybe (R.ModifiedInstructions RP.PPC64))
 ppc64Inject env _ (InjectedAddr addr) sb = do
   R.withSymbolicInstructions sb $ \repr insns -> do
     case testEquality repr RP.PPCRepr of

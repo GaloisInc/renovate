@@ -5,14 +5,17 @@
 -- external API.
 module Renovate.Redirect.Internal ( redirectOriginalBlocks ) where
 
+
+import           Control.Monad.IO.Class ( MonadIO )
 import qualified Data.Traversable as T
 
 import           Prelude
 
 import           Renovate.Core.BasicBlock
+import qualified Renovate.Core.Diagnostic as RCD
+import           Renovate.Core.Layout
 import           Renovate.ISA
 import           Renovate.Redirect.Monad
-import           Renovate.Core.Layout
 
 -- | Overwrite the entry points of each original block with a pointer
 -- to the instrumented block, if possible.
@@ -22,9 +25,10 @@ import           Renovate.Core.Layout
 -- blocks.  We will generate a diagnostic for each one.
 --
 -- This is a low level helper mostly exposed for testing
-redirectOriginalBlocks :: (Monad m, T.Traversable t)
-                       => t (WithProvenance ConcretizedBlock arch)
-                       -> RewriterT arch m (t (WithProvenance ConcretizedBlock arch))
+redirectOriginalBlocks
+  :: (T.Traversable t, MonadIO m)
+  => t (WithProvenance ConcretizedBlock arch)
+  -> RedirectT lm arch m (t (WithProvenance ConcretizedBlock arch))
 redirectOriginalBlocks = T.traverse redirectBlock
 
 -- | Given an original 'ConcreteBlock' (in the 'WithProvenance' wrapper) and an
@@ -36,9 +40,10 @@ redirectOriginalBlocks = T.traverse redirectBlock
 --
 -- Note that the address of the jump instruction is the address of the
 -- original block (since it will be the first instruction).
-redirectBlock :: (Monad m)
-              => WithProvenance ConcretizedBlock arch
-              -> RewriterT arch m (WithProvenance ConcretizedBlock arch)
+redirectBlock
+  :: (MonadIO m)
+  => WithProvenance ConcretizedBlock arch
+  -> RedirectT lm arch m (WithProvenance ConcretizedBlock arch)
 redirectBlock input =
   case rewriteStatus input of
     Modified ->
@@ -51,14 +56,13 @@ redirectBlock input =
 
           isa <- askISA
           let origBlockSize = blockSize isa cb
-              jmpInsns = isaMakeRelativeJumpTo isa addr (concretizedBlockAddress instrBlock) repr
-              jmpSize = instructionStreamSize isa jmpInsns
+          let jmpInsns = isaMakeRelativeJumpTo isa addr (concretizedBlockAddress instrBlock) repr
+          let jmpSize = instructionStreamSize isa jmpInsns
           -- FIXME: Can we do this check at a higher level and earlier? It would
           -- probably fit very well in the top-level redirect loop
           case origBlockSize < jmpSize of
             True -> do
-              recordUnrelocatableSize
-              logDiagnostic $ BlockTooSmallForRedirection isa jmpSize cb instrBlock
+              logDiagnostic (RCD.RedirectionDiagnostic (RCD.InsufficientBlockSize isa (fromIntegral jmpSize) cb instrBlock))
               return input
             False -> do
               let origBlock' = ConcreteBlock { concreteBlockInstructions = jmpInsns

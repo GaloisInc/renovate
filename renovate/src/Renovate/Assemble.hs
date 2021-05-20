@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
@@ -11,14 +10,11 @@
 -- | Convert collections of basic blocks (specifically 'ConcreteBlock's) to
 -- contiguous regions of bytes.
 module Renovate.Assemble
-( assembleBlocks,
-  BlockAssemblyException(..)
+( assembleBlocks
 ) where
 
-import           Control.Applicative
-import           Control.Exception ( assert )
 import qualified Control.Lens as L
-import           Control.Monad ( unless )
+import           Control.Monad ( unless, when )
 import qualified Control.Monad.Catch as C
 import qualified Control.Monad.State.Strict as St
 import qualified Data.ByteString as B
@@ -27,9 +23,7 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Foldable as F
 import qualified Data.List as L
 import           Data.Semigroup ( sconcat )
-import           Data.Word ( Word64 )
 import           GHC.Stack ( HasCallStack )
-import qualified Prettyprinter as PP
 
 import           Prelude
 
@@ -37,59 +31,19 @@ import qualified Data.Macaw.CFG as MM
 
 import           Renovate.Core.Address
 import           Renovate.Core.BasicBlock
+import qualified Renovate.Core.Chunk as RCC
+import qualified Renovate.Core.Exception as RCE
 import qualified Renovate.Core.Instruction as RCI
 import           Renovate.ISA
+import qualified Renovate.Panic as RP
+import qualified Renovate.Redirect as RR
 import qualified Renovate.Redirect.Concretize as RRC
-
-data BlockAssemblyException where
-  -- A discontiguous block was starting with the given concrete block
-  DiscontiguousBlocks         :: forall arch
-                               . (MM.MemWidth (MM.ArchAddrWidth arch))
-                              => Chunk arch
-                              -> ConcreteAddress arch
-                              -> BlockAssemblyException
-
-  UnexpectedMemoryContents    :: forall w
-                               . (MM.MemWidth w)
-                              => MM.MemSegmentOff w -> BlockAssemblyException
-
-  AssemblyError               :: C.SomeException -> BlockAssemblyException
-
-  BlockOverlappingRedirection :: forall arch
-                               . (MM.MemWidth (MM.ArchAddrWidth arch)) => Chunk arch -> BlockAssemblyException
-
-  OverlayBlockNotContained    :: forall arch
-                               . (MM.MemWidth (MM.ArchAddrWidth arch)) => Chunk arch -> Chunk arch -> BlockAssemblyException
-
-deriving instance Show BlockAssemblyException
-
-instance PP.Pretty BlockAssemblyException where
-  pretty (DiscontiguousBlocks cb nextAddr) =
-    PP.pretty "DiscontiguousBlocks:" PP.<+> PP.pretty cb PP.<+> PP.pretty "/" PP.<+> PP.pretty nextAddr
-  pretty (UnexpectedMemoryContents seg) =
-    PP.pretty "UnexpectedMemoryContents:" PP.<+> PP.pretty (show seg)
-  pretty (AssemblyError e) = PP.pretty $ "AssemblyError: " ++ show e
-  pretty (BlockOverlappingRedirection cb) =
-    PP.pretty "BlockOverlappingRedirection:" PP.<+> PP.pretty cb
-  pretty (OverlayBlockNotContained orig overlay) =
-    PP.vsep [ PP.pretty "OverlayBlockNotContained:"
-            , PP.indent 2 (PP.pretty "Base block:")
-            , PP.indent 4 (PP.pretty orig)
-            , PP.indent 2 (PP.pretty "Overlay block:")
-            , PP.indent 4 (PP.pretty overlay)
-            ]
-
-instance (MM.MemWidth (MM.ArchAddrWidth arch)) => PP.Pretty (Chunk arch) where
-  pretty (BlockChunk b) = PP.pretty b
-  pretty (RawChunk addr bs) = PP.pretty addr PP.<> PP.pretty "@" PP.<> PP.pretty (B.length bs)
-
-instance C.Exception BlockAssemblyException
 
 instructionBlockChunk
   :: (SymbolicAddress arch, ConcreteAddress arch, RRC.InjectConcreteInstructions arch)
-  -> Chunk arch
+  -> RCC.Chunk arch
 instructionBlockChunk (_symAddr, concAddr, RRC.InjectConcreteInstructions repr insns) =
-  BlockChunk (concretizedBlock concAddr insns repr)
+  RCC.BlockChunk (concretizedBlock concAddr insns repr)
 
 -- | Given a list of basic blocks and the original text section, create two new
 -- text sections.  The first contains all of the basic blocks that are laid out
@@ -105,24 +59,23 @@ instructionBlockChunk (_symAddr, concAddr, RRC.InjectConcreteInstructions repr i
 assembleBlocks :: (HasCallStack, C.MonadThrow m, MM.MemWidth (MM.ArchAddrWidth arch))
                => MM.Memory (MM.ArchAddrWidth arch)
                -> ISA arch
-               -> ConcreteAddress arch
-               -- ^ The address of the start of the text section
-               -> ConcreteAddress arch
-               -- ^ The address of the end of the text section
+               -> (ConcreteAddress arch, ConcreteAddress arch)
+               -- ^ The extents of the text section
                -> B.ByteString
                -- ^ The original text section contents
                -> ConcreteAddress arch
                -- ^ The address to start laying out extra blocks at
                -> (forall m' tp . (C.MonadThrow m') => RCI.Instruction arch tp () -> m' B.ByteString)
                -- ^ A function to assemble a single instruction to bytes
-               -> [ConcretizedBlock arch]
-               -> [(SymbolicAddress arch, ConcreteAddress arch, B.ByteString)]
-               -> [(SymbolicAddress arch, ConcreteAddress arch, RRC.InjectConcreteInstructions arch)]
+               -> RR.RedirectionResult arch
                -> m (B.ByteString, B.ByteString)
-assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble blocks injectedCode injectedInsns = do
+assembleBlocks mem isa (absStartAddr, absEndAddr) origTextBytes extraAddr assemble rr = do
   s1 <- St.execStateT (unA assembleDriver) s0
   return (fromBuilder (asTextSection s1), fromBuilder (asExtraText s1))
   where
+    blocks = RR.rrRedirectedBlocks rr
+    injectedCode = RR.rrInjectedBlocks rr
+    injectedInsns = RR.rrInjectedInstructions rr
     s0 = AssembleState { asTextStart        = absStartAddr
                        , asTextEnd          = absEndAddr
                        , asTextAddr         = absStartAddr
@@ -132,48 +85,52 @@ assembleBlocks mem isa absStartAddr absEndAddr origTextBytes extraAddr assemble 
                        , asExtraAddr        = extraAddr
                        , asExtraText        = mempty
                        , asAssemble         = assemble
-                       , _asOrigChunks      = L.sortOn chunkAddress filteredBlocks
-                       , _asAllocatedChunks = L.sortOn chunkAddress allocatedBlocks
+                       , _asOrigChunks      = L.sortOn RCC.chunkAddress filteredBlocks
+                       , _asAllocatedChunks = L.sortOn RCC.chunkAddress allocatedBlocks
                        , asISA              = isa
                        , asMemory           = mem
                        }
     -- Split the inputs block list into 2 lists. One for blocks that fit in the
     -- original address space and one for the newly allocated blocks.
     --
-    -- We mix basic blocks and raw injected code using the 'Chunk' abstraction
+    -- We mix basic blocks and raw injected code using the 'RCC.Chunk' abstraction
     -- below.  Most of the code here doesn't really need to know anything
     -- besides the address and size of each chunk (and how to turn a chunk into
     -- a bytestring).
-    allCode = concat [ map BlockChunk blocks
-                     , [ RawChunk addr bytes | (_, addr, bytes) <- injectedCode ]
+    allCode = concat [ map RCC.BlockChunk blocks
+                     , [ RCC.RawChunk addr bytes | (_, addr, bytes) <- injectedCode ]
                      , map instructionBlockChunk injectedInsns
                      ]
     (origBlocks, allocatedBlocks) = foldr go ([],[]) allCode
     filteredBlocks = filter inText origBlocks
-    inText c = absoluteAddress absStartAddr <= absoluteAddress (chunkAddress c) &&
-               absoluteAddress (chunkAddress c) < absoluteAddress absEndAddr
+    inText c = absoluteAddress absStartAddr <= absoluteAddress (RCC.chunkAddress c) &&
+               absoluteAddress (RCC.chunkAddress c) < absoluteAddress absEndAddr
     -- NOTE: This test (using resolveAbsoluteAddr) is depending on the fact that
     -- resolveAbsoluteAddr will fail for any address that is not in the macaw
     -- Memory (which our new code will not be)
-    go c (origAcc, allocatedAcc) = case MM.resolveAbsoluteAddr mem (absoluteAddress (chunkAddress c)) of
+    go c (origAcc, allocatedAcc) = case MM.resolveAbsoluteAddr mem (absoluteAddress (RCC.chunkAddress c)) of
       Nothing -> (origAcc, c:allocatedAcc)
       Just _  -> (c:origAcc, allocatedAcc)
 
 -- | Process all the input blocks. First, look at each block that will be in the
 -- original address space of the binary. Then look at each block that will be
 -- newly allocated.
-assembleDriver :: forall m arch . (C.MonadThrow m, MM.MemWidth (MM.ArchAddrWidth arch)) => Assembler arch m ()
+assembleDriver
+  :: forall m arch
+   . (C.MonadThrow m, MM.MemWidth (MM.ArchAddrWidth arch), HasCallStack)
+  => Assembler arch m ()
 assembleDriver = do
   textStart <- St.gets asTextStart
   textEnd <- St.gets asTextEnd
 
-  let inText b = chunkAddress b >= textStart && chunkAddress b < textEnd
+  let inText b = RCC.chunkAddress b >= textStart && RCC.chunkAddress b < textEnd
 
       loopOrig = do
         mb <- takeNextOrigBlock
         case mb of
           Just b -> do
-            assertM (inText b)
+            unless (inText b) $ do
+              RP.panic RP.Assemble "assembleDriver" ["Expected this block address to be within the text section: " ++ show (RCC.chunkAddress b)]
             assembleAsText b
             loopOrig
           Nothing -> do
@@ -187,7 +144,8 @@ assembleDriver = do
         mb <- takeNextAllocatedChunk
         case mb of
           Just b -> do
-            assertM (not (inText b))
+            when (inText b) $ do
+              RP.panic RP.Assemble "assembleDriver" ["Expected this block address to not be in the text section: " ++ show (RCC.chunkAddress b)]
             assembleAsExtra b
             loopAllocated
           Nothing -> return ()
@@ -196,29 +154,30 @@ assembleDriver = do
 
   -- double check that nobody else put something on the "to-assemble" list
   -- behind our backs
-  L.use asOrigChunks      >>= assertM . null
-  L.use asAllocatedChunks >>= assertM . null
+  origChunks <- L.use asOrigChunks
+  unless (null origChunks) $ do
+    RP.panic RP.Assemble "assembleDriver" ["Expected there to be no original chunks left"]
+  allocChunks <- L.use asAllocatedChunks
+  unless (null allocChunks) $ do
+    RP.panic RP.Assemble "assembleDriver" ["Expected there to be no allocated chunks left"]
 
 -- | Code in the extra section never overlaps, so we can just perform some basic
 -- consistency check sand then append it.
 assembleAsExtra :: (HasCallStack, C.MonadThrow m, MM.MemWidth (MM.ArchAddrWidth arch))
-                => Chunk arch
+                => RCC.Chunk arch
                 -> Assembler arch m ()
 assembleAsExtra b = do
   padToBlockStartExtra b
   nextExtraAddr <- St.gets asExtraAddr
   -- traceM $ "nextExtraAddr = " ++ show nextExtraAddr
-  -- traceM $ "b = " ++ show (chunkAddress b)
-  unless (nextExtraAddr == chunkAddress b) $ do
-    C.throwM (DiscontiguousBlocks b nextExtraAddr)
+  -- traceM $ "b = " ++ show (RCC.chunkAddress b)
+  unless (nextExtraAddr == RCC.chunkAddress b) $ do
+    C.throwM (RCE.DiscontiguousBlocks b nextExtraAddr)
   bytes <- assembleBlock b
   let bsize = B.length bytes
   St.modify' $ \s -> s { asExtraAddr = asExtraAddr s `addressAddOffset` fromIntegral bsize
                        , asExtraText = asExtraText s <> B.byteString bytes
                        }
-
-assertM :: (HasCallStack, Applicative m) => Bool -> m ()
-assertM b = assert b (pure ())
 
 -- | A block in the text section may be overlapped by some number of blocks
 -- following it.  In that case, we need to include the non-overlapped prefix of
@@ -228,7 +187,7 @@ assertM b = assert b (pure ())
 -- some slack space after the last overlapping block where no other blocks could
 -- fit).
 assembleAsText :: (HasCallStack, C.MonadThrow m, MM.MemWidth (MM.ArchAddrWidth arch))
-               => Chunk arch
+               => RCC.Chunk arch
                -> Assembler arch m ()
 assembleAsText c = do
   -- If there is a gap between the next layout address and the start of this
@@ -259,16 +218,17 @@ blockEndAddress isa b =
 --
 -- There may be space after the last block that will be filled with traps.
 checkedOverlappingAssemble :: (HasCallStack, C.MonadThrow m, MM.MemWidth (MM.ArchAddrWidth arch))
-                           => Chunk arch
-                           -> [Chunk arch]
+                           => RCC.Chunk arch
+                           -> [RCC.Chunk arch]
                            -> Assembler arch m ()
 checkedOverlappingAssemble c overlays = do
   case c of
-    RawChunk {} ->
+    RCC.RawChunk {} ->
       -- RawChunks represent new code that the caller has injected.  This code
       -- should *never* overlap any other code in the binary
-      assertM (null overlays)
-    BlockChunk b -> do
+      unless (null overlays) $ do
+        RP.panic RP.Assemble "checkedOverlappingAssemble" ["Expected there to be no overlays overlapping this chunk: " ++ show (RCC.chunkAddress c)]
+    RCC.BlockChunk b -> do
       isa <- St.gets asISA
       let blockEnd = blockEndAddress isa b
       -- Assert that the overlays (i.e., blocks that overlay this current block
@@ -281,14 +241,18 @@ checkedOverlappingAssemble c overlays = do
       -- original binary.
       F.forM_ overlays $ \overlay -> do
         case overlay of
-          RawChunk {} -> assertM False
-          BlockChunk overlayBlock -> do
+          RCC.RawChunk {} ->
+            RP.panic RP.Assemble "checkedOverlappingAssemble" ["RawChunks cannot be overlaid blocks"]
+          RCC.BlockChunk overlayBlock -> do
             let overlayEnd = blockEndAddress isa overlayBlock
-            assertM (concretizedBlockAddress overlayBlock > concretizedBlockAddress b)
-            assertM (overlayEnd == blockEnd)
+            unless (concretizedBlockAddress overlayBlock > concretizedBlockAddress b) $ do
+              RP.panic RP.Assemble "checkedOverlappingAssemble" [""]
+            unless (overlayEnd == blockEnd) $ do
+              RP.panic RP.Assemble "checkedOverlappingAssemble" [""]
             bytesB <- bytesFor b
             bytesOverlay <- bytesFor overlayBlock
-            assertM (bytesOverlay `B.isSuffixOf` bytesB)
+            unless (bytesOverlay `B.isSuffixOf` bytesB) $ do
+              RP.panic RP.Assemble "checkedOverlappingAssemble" [""]
   bytes <- assembleBlock c
   appendTextBytes bytes
 
@@ -309,35 +273,35 @@ appendTextBytes bs = do
 -- be assembled.
 lookupOverlappingBlocks :: forall arch m
                          . (HasCallStack, C.MonadThrow m, MM.MemWidth (MM.ArchAddrWidth arch))
-                        => Chunk arch
-                        -> Assembler arch m [Chunk arch]
+                        => RCC.Chunk arch
+                        -> Assembler arch m [RCC.Chunk arch]
 lookupOverlappingBlocks b = do
   isa <- St.gets asISA
-  let sz = chunkSize isa b
-      blockEnd  = chunkAddress b `addressAddOffset` fromIntegral sz
+  let sz = RCC.chunkSize isa b
+      blockEnd  = RCC.chunkAddress b `addressAddOffset` fromIntegral sz
   go isa blockEnd
   where
     -- Look up the next block and see if it overlaps the current block @b@.
     -- Stop looking when we find a block that clearly does not overlap.
-    go :: ISA arch -> ConcreteAddress arch -> Assembler arch m [Chunk arch]
+    go :: ISA arch -> ConcreteAddress arch -> Assembler arch m [RCC.Chunk arch]
     go isa blockEnd = do
       mb' <- takeNextOrigBlock
       case mb' of
         Nothing -> return []
         Just b' -> do
-          let bsize = fromIntegral (chunkSize isa b')
+          let bsize = fromIntegral (RCC.chunkSize isa b')
           case () of
-            _ | chunkAddress b' >= blockEnd -> do
+            _ | RCC.chunkAddress b' >= blockEnd -> do
                   -- If the next block comes after the current block, just put
                   -- it back and return
                   asOrigChunks L.%= (b':)
                   return []
-              | (chunkAddress b' `addressAddOffset` bsize) > blockEnd ->
+              | (RCC.chunkAddress b' `addressAddOffset` bsize) > blockEnd ->
                 -- We want to assert that, if any blocks overlap, they all end
                 -- at the same instruction.  If that isn't the case, it kind of
                 -- indicates an inconsistent set of blocks coming from macaw or
                 -- the rewriter.
-                  C.throwM (OverlayBlockNotContained b b')
+                  C.throwM (RCE.OverlayBlockNotContained b b')
               | otherwise -> do
                   (b':) <$> go isa blockEnd
 
@@ -348,7 +312,7 @@ lookupOverlappingBlocks b = do
 -- This covers cases where the previous block was followed by data (that was not
 -- recognized as instructions by the analysis).  We have to preserve such data.
 padToBlockStart :: (HasCallStack, Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
-                => Chunk arch
+                => RCC.Chunk arch
                 -> Assembler arch m ()
 padToBlockStart b = do
   nextAddr  <- St.gets asTextAddr
@@ -356,8 +320,9 @@ padToBlockStart b = do
   -- endAddr   <- St.gets asTextEnd
   -- Only do padding when the basic block is in the .text
   -- when (startAddr <= basicBlockAddress b && basicBlockAddress b <= endAddr) $ do
-  assertM (nextAddr <= chunkAddress b)
-  case nextAddr == chunkAddress b of
+  unless (nextAddr <= RCC.chunkAddress b) $ do
+    RP.panic RP.Assemble "padToBlockStart" [""]
+  case nextAddr == RCC.chunkAddress b of
     True -> return ()
     False -> do
       -- traceM "generating padding"
@@ -367,28 +332,31 @@ padToBlockStart b = do
       -- traceM $ "endAddr   = " ++ show endAddr
       origTextBytes <- St.gets asOrigTextBytes
       textStart     <- St.gets asTextStart
-      let gapSize  = fromIntegral (chunkAddress b `addressDiff` nextAddr)
-          idx      = fromIntegral (nextAddr `addressDiff` textStart)
-          gapBytes = B.take gapSize (B.drop idx origTextBytes)
+      let gapSize  = fromIntegral (RCC.chunkAddress b `addressDiff` nextAddr)
+      let idx      = fromIntegral (nextAddr `addressDiff` textStart)
+      let gapBytes = B.take gapSize (B.drop idx origTextBytes)
       -- traceM $ "gapSize = " ++ show gapSize
       -- traceM ""
-      assertM (B.length gapBytes == gapSize)
+      unless (B.length gapBytes == gapSize) $ do
+        RP.panic RP.Assemble "padToBlockStart" [""]
       St.modify' $ \s -> s { asTextAddr    = asTextAddr s `addressAddOffset` fromIntegral gapSize
                            , asTextSection = asTextSection s <> B.byteString gapBytes
                            }
 
 padToBlockStartExtra :: (HasCallStack, Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
-                     => Chunk arch
+                     => RCC.Chunk arch
                      -> Assembler arch m ()
 padToBlockStartExtra b = do
   nextExtraAddr <- St.gets asExtraAddr
-  assertM (nextExtraAddr <= chunkAddress b)
-  case nextExtraAddr == chunkAddress b of
+  unless (nextExtraAddr <= RCC.chunkAddress b) $ do
+    RP.panic RP.Assemble "padToBlockStartExtra" [""]
+  case nextExtraAddr == RCC.chunkAddress b of
     True -> return ()
     False -> do
-      let gapSize  = fromIntegral (chunkAddress b `addressDiff` nextExtraAddr)
-          gapBytes = B.replicate gapSize 0
-      assertM (B.length gapBytes == gapSize)
+      let gapSize  = fromIntegral (RCC.chunkAddress b `addressDiff` nextExtraAddr)
+      let gapBytes = B.replicate gapSize 0
+      unless (B.length gapBytes == gapSize) $ do
+        RP.panic RP.Assemble "padToBlockStartExtra" [""]
       St.modify' $ \s -> s { asExtraAddr = asExtraAddr s `addressAddOffset` fromIntegral gapSize
                            , asExtraText = asExtraText s <> B.byteString gapBytes
                            }
@@ -403,8 +371,8 @@ padLastBlock = do
   nextAddr      <- St.gets asTextAddr
   textStart     <- St.gets asTextStart
   let idx          = fromIntegral (nextAddr `addressDiff` textStart)
-      leftOversLen = B.length origTextBytes - idx
-      leftOvers    = B.take leftOversLen (B.drop idx origTextBytes)
+  let leftOversLen = B.length origTextBytes - idx
+  let leftOvers    = B.take leftOversLen (B.drop idx origTextBytes)
   -- traceM $ "padLastBlock = " ++ show (B.length origTextBytes - idx)
   if leftOversLen > 0
      then do
@@ -418,19 +386,19 @@ bytesFor b = do
   withConcretizedInstructions b $ \_repr insns -> do
     asm1 <- St.gets asAssemble
     case mapM asm1 insns of
-      Left err -> C.throwM (AssemblyError err)
+      Left err -> C.throwM (RCE.AssemblyError b err)
       Right strs -> return (sconcat strs)
 
-assembleBlock :: (HasCallStack, C.MonadThrow m) => Chunk arch -> Assembler arch m B.ByteString
+assembleBlock :: (HasCallStack, C.MonadThrow m) => RCC.Chunk arch -> Assembler arch m B.ByteString
 assembleBlock c =
   case c of
-    BlockChunk b -> bytesFor b
-    RawChunk _ b -> return b
+    RCC.BlockChunk b -> bytesFor b
+    RCC.RawChunk _ b -> return b
 
 -- | Helper function for taking the next block.
 takeNextChunkWith :: (Monad m)
-                  => L.Lens' (AssembleState arch) [Chunk arch]
-                  -> Assembler arch m (Maybe (Chunk arch))
+                  => L.Lens' (AssembleState arch) [RCC.Chunk arch]
+                  -> Assembler arch m (Maybe (RCC.Chunk arch))
 takeNextChunkWith f = do
   bs <- L.use f
   case bs of
@@ -441,12 +409,12 @@ takeNextChunkWith f = do
 
 -- | Grabs the next block from the orginal block set (original in the sense that
 -- these blocks have addresses in the original address space).
-takeNextOrigBlock :: (Monad m) => Assembler arch m (Maybe (Chunk arch))
+takeNextOrigBlock :: (Monad m) => Assembler arch m (Maybe (RCC.Chunk arch))
 takeNextOrigBlock = takeNextChunkWith asOrigChunks
 
 -- | Grabs the next block from the allocated block set (allocated in the sense that
 -- these blocks DO NOT have addresses in the original address space).
-takeNextAllocatedChunk :: (Monad m) => Assembler arch m (Maybe (Chunk arch))
+takeNextAllocatedChunk :: (Monad m) => Assembler arch m (Maybe (RCC.Chunk arch))
 takeNextAllocatedChunk = takeNextChunkWith asAllocatedChunks
 
 newtype Assembler arch m a = Assembler { unA :: St.StateT (AssembleState arch) m a }
@@ -456,22 +424,6 @@ newtype Assembler arch m a = Assembler { unA :: St.StateT (AssembleState arch) m
                                        C.MonadThrow,
                                        St.MonadState (AssembleState arch) )
 
-data Chunk arch = BlockChunk (ConcretizedBlock arch)
-                | RawChunk (ConcreteAddress arch) B.ByteString
-
-deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (Chunk arch)
-
-chunkAddress :: Chunk arch -> ConcreteAddress arch
-chunkAddress c =
-  case c of
-    BlockChunk b -> concretizedBlockAddress b
-    RawChunk addr _ -> addr
-
-chunkSize :: ISA arch -> Chunk arch -> Word64
-chunkSize isa c =
-  case c of
-    BlockChunk b -> blockSize isa b
-    RawChunk _ b -> fromIntegral (B.length b)
 
 data AssembleState arch =
   AssembleState { asTextStart :: ConcreteAddress arch
@@ -494,11 +446,11 @@ data AssembleState arch =
                 -- expected to be contiguous.
                 , asAssemble :: forall tp . RCI.Instruction arch tp () -> Either C.SomeException B.ByteString
                 -- ^ The assembler to turn instructions into bytes
-                , _asOrigChunks :: [Chunk arch]
+                , _asOrigChunks :: [RCC.Chunk arch]
                 -- ^ The blocks remaining to process. These must be ordered by
                 -- address and will go into the original address space of the
                 -- binary.
-                , _asAllocatedChunks :: [Chunk arch]
+                , _asAllocatedChunks :: [RCC.Chunk arch]
                 -- ^ The blocks remaining to process. These must be ordered by
                 -- address but their addresses are outside the range of the
                 -- original binary and must be allocated in a new part of the
@@ -511,10 +463,10 @@ data AssembleState arch =
                 -- ^ The macaw memory object
                 }
 
-asOrigChunks :: L.Lens' (AssembleState arch) [Chunk arch]
+asOrigChunks :: L.Lens' (AssembleState arch) [RCC.Chunk arch]
 asOrigChunks = L.lens _asOrigChunks (\as bs -> as { _asOrigChunks = bs })
 
-asAllocatedChunks :: L.Lens' (AssembleState arch) [Chunk arch]
+asAllocatedChunks :: L.Lens' (AssembleState arch) [RCC.Chunk arch]
 asAllocatedChunks = L.lens _asAllocatedChunks (\as bs -> as { _asAllocatedChunks = bs })
 
 fromBuilder :: B.Builder -> B.ByteString

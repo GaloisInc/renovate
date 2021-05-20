@@ -12,6 +12,7 @@ import qualified Data.ByteString as B
 import qualified Data.Foldable as F
 import qualified Data.Map as M
 import qualified Data.Set as S
+import           Data.Void ( Void )
 import           Data.Word ( Word64 )
 import qualified Lumberjack as LJ
 import qualified Prettyprinter as PD
@@ -128,8 +129,9 @@ testBlockRecovery :: ( w ~ MM.ArchAddrWidth arch
                   -> MBL.LoadedBinary arch binFmt
                   -> T.Assertion
 testBlockRecovery hdlAlloc rc elf loadedBinary = do
-  let logger = LJ.LogAction $ putStrLn . show . PD.pretty
-  ((TestCfg status msgs), _) <- R.analyzeElf logger rc hdlAlloc elf loadedBinary
+  let logger :: LJ.LogAction IO (R.Diagnostic Void)
+      logger = LJ.LogAction $ putStrLn . show . PD.pretty
+  TestCfg status msgs <- R.analyzeElf logger rc hdlAlloc elf loadedBinary
   T.assertBool (unlines ("Analysis Failed:" : msgs)) status
 
 withELF :: FilePath -> (E.SomeElf E.ElfHeaderInfo -> IO ()) -> IO ()
