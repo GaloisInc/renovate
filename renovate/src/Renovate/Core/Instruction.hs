@@ -41,9 +41,9 @@ type family RegisterType arch :: InstructionArchReprKind arch -> Type
 
 -- | Constraints common to all instructions.
 --
--- All 'Instruction' instances must be 'Show'able and 'Typeable'.  They are
--- combined for convenience and to reduce noise in type signatures, since those
--- constraints are not very interesting.
+-- All 'Instruction' instances must be 'Show'able.  They are combined for
+-- convenience and to reduce noise in type signatures, since those constraints
+-- are not very interesting.
 type InstructionConstraints arch (tp :: InstructionArchReprKind arch) =
   ( PP.Pretty (Instruction arch tp ())
   , Show (Instruction arch tp ())

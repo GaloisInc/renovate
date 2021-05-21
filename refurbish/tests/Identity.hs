@@ -9,12 +9,13 @@ module Identity (
 
 import           Data.Functor.Const ( Const(..) )
 import           Data.Parameterized.Context ( pattern Empty, pattern (:>) )
+import           Data.Void ( Void )
 import qualified System.Exit as E
 import           Test.Tasty.Checklist
 
 import qualified Renovate as R
 
-analysis :: R.AnalyzeAndRewrite lm arch binFmt (Const ())
+analysis :: R.AnalyzeAndRewrite Void arch binFmt (Const ())
 analysis =
   R.AnalyzeAndRewrite { R.arPreAnalyze = \_ -> return (Const ())
                       , R.arAnalyze = \_ _ -> return (Const ())

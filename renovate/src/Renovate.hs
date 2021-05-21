@@ -30,7 +30,7 @@ module Renovate
   RCL.CompactOrdering(..),
   C.AnalyzeOnly(..),
   C.AnalyzeAndRewrite(..),
-  C.ModifiedInstructions(..),
+  B.ModifiedInstructions(..),
   C.HasAnalysisEnv(..),
   C.HasSymbolicBlockMap(..),
   C.RenovateConfig(..),
@@ -125,50 +125,20 @@ module Renovate
   ISA.NoModifiableTarget,
   ISA.StackAddress(..),
   -- * Results
-  RW.RewriteInfo(..),
-  RW.RewriteSite(..),
-  E.SomeConcreteBlocks(..),
-  E.SomeConcretizedBlocks(..),
-  E.RewriterInfo,
-  E.RewriterEnv,
+  RRe.BlockMapping(..),
+  RRe.RedirectionResult(..),
+  E.RewriterInfo(..),
   E.SectionInfo(..),
-  E.riSmallBlockCount,
-  E.riReusedByteCount,
-  E.riUnrelocatableTerm,
-  E.riInstrumentationSites,
-  E.riLogMsgs,
-  E.riInitialBytes,
-  E.riAppendedSegments,
-  E.riRedirectionDiagnostics,
-  E.riBlockRecoveryDiagnostics,
-  E.riRecoveredBlocks,
-  E.riEntryPointAddress,
-  E.riSectionBaseAddress,
-  E.riOverwrittenRegions,
-  E.reSegmentMaximumSize,
-  E.reSegmentVirtualAddress,
-  E.riOriginalTextSize,
-  E.riNewTextSize,
-  E.riIncompleteBlocks,
-  E.riIncompleteFunctions,
-  E.riDiscoveredBlocks,
-  E.riInstrumentedBytes,
-  E.riBlockMapping,
-  E.riBackwardBlockMapping,
-  E.riOutputBlocks,
-  E.riRewritePairs,
-  E.riFunctionBlocks,
-  E.riSections,
-  E.riTranslationErrors,
-  E.riClassifyFailures,
-  E.riSymbolicToConcreteMap,
-  D.Diagnostic(..),
-  D.Diagnostics(..),
   RCL.RewritePair(..),
   -- * Constraints
   ISA.ArchConstraints,
+  -- * Diagnostics
+  Diagnostic.Diagnostic(..),
+  Diagnostic.ELFDiagnostic(..),
+  Diagnostic.RedirectionDiagnostic(..),
+  Diagnostic.RecoveryDiagnostic(..),
   -- * Exceptions
-  A.BlockAssemblyException(..)
+  RCE.RenovateException(..)
 )
 where
 
@@ -176,14 +146,15 @@ import qualified Renovate.ABI as ABI
 import qualified Renovate.Arch as Arch
 import qualified Renovate.Core.Address as RCA
 import qualified Renovate.Core.BasicBlock as B
+import qualified Renovate.Core.Diagnostic as Diagnostic
+import qualified Renovate.Core.Exception as RCE
 import qualified Renovate.Core.Instruction as RCI
 import qualified Renovate.Core.Layout as RCL
 import qualified Renovate.Core.Relocation as RCR
 import qualified Renovate.Analysis.FunctionRecovery as FR
 import qualified Renovate.Config as C
-import qualified Renovate.Diagnostic as D
 import qualified Renovate.BinaryFormat.ELF as E
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Rewrite as RW
+import qualified Renovate.Redirect as RRe
 import qualified Renovate.Recovery as Recovery
-import qualified Renovate.Assemble as A

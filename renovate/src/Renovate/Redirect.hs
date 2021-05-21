@@ -3,48 +3,52 @@
 -- | This module is the entry point for binary code redirection
 module Renovate.Redirect (
   redirect,
-  ConcreteBlock,
-  SymbolicBlock,
-  ConcreteAddress,
-  SymbolicAddress,
+  BlockMapping(..),
+  RedirectionResult(..),
   -- * Rewriter Monad
-  RM.runRewriterT,
-  RM.Diagnostic(..),
-  RM.RewriterResult(..),
+  RM.runRedirectT,
   RM.RewriterState(..),
-  RM.RewriterStats(..),
   RM.SectionInfo(..),
   RM.SymbolMap,
-  RM.NewSymbolsMap,
-  RM.emptyRewriterStats
+  RM.NewSymbolsMap
   ) where
 
-import           Control.Monad ( when )
-import           Control.Monad.Trans ( MonadIO, lift )
+import qualified Control.Monad.Catch as X
+import           Control.Monad.Trans ( MonadIO )
 import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import qualified Data.List as L
 import qualified Data.Map as M
 import           Data.Ord ( comparing )
-import           Data.Parameterized.Some ( Some(..) )
-import qualified Data.Traversable as T
-import           Data.Typeable ( Typeable )
 
 import           Prelude
 
 import qualified Data.Macaw.CFG as MM
 
-import           Renovate.Core.Address
-import           Renovate.Core.BasicBlock
-import qualified Renovate.Config as RC
-import           Renovate.ISA
-import           Renovate.Recovery ( BlockInfo, isIncompleteBlockAddress, biFunctions, biOverlap )
-import           Renovate.Recovery.Overlap ( disjoint )
-import           Renovate.Redirect.Concretize
+import           Renovate.Core.Address as RCA
+import           Renovate.Core.BasicBlock as RCB
 import qualified Renovate.Core.Layout as RCL
+import           Renovate.Recovery ( BlockInfo )
+import           Renovate.Redirect.Concretize
 import           Renovate.Redirect.Internal
 import qualified Renovate.Redirect.Monad as RM
-import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions, getInjectedInstructions )
+import           Renovate.Rewrite ( InjectSymbolicInstructions )
+import           Renovate.Recovery.SymbolMap ( NewSymbolsMap )
+
+data BlockMapping arch =
+  BlockMapping { forwardBlockMapping :: M.Map (ConcreteAddress arch) (ConcreteAddress arch)
+               , backwardBlockMapping :: M.Map (ConcreteAddress arch) (ConcreteAddress arch)
+               }
+
+data RedirectionResult arch =
+  RedirectionResult { rrRedirectedBlocks :: [ConcretizedBlock arch]
+                    , rrInjectedBlocks :: [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)]
+                    , rrInjectedInstructions :: [(SymbolicAddress arch, ConcreteAddress arch, InjectConcreteInstructions arch)]
+                    , rrConcretizedBlocks :: [RCL.WithProvenance ConcretizedBlock arch]
+                    , rrSymbolicToConcreteMap ::M.Map (SymbolicAddress arch) (ConcreteAddress arch)
+                    , rrBlockMapping :: BlockMapping arch
+                    , rrNewSymbolsMap :: NewSymbolsMap arch
+                    }
 
 -- | Given a list of basic blocks with instructions of type @i@ with
 -- annotation @a@ (which is fixed by the 'ISA' choice), rewrite the
@@ -59,83 +63,48 @@ import           Renovate.Rewrite ( HasInjectedFunctions, getInjectedFunctions, 
 -- The function runs in an arbitrary 'Monad' to allow instrumentors to
 -- carry around their own state.
 --
-redirect :: (MonadIO m, HasInjectedFunctions m arch, Typeable arch, MM.MemWidth (MM.ArchAddrWidth arch))
-         => ISA arch
-         -- ^ Information about the ISA in use
-         -> BlockInfo arch
-         -- ^ Information about all recovered blocks
-         -> (ConcreteAddress arch, ConcreteAddress arch)
-         -- ^ start of text section, end of the text section
-         -> (SymbolicBlock arch -> m (Maybe (RC.ModifiedInstructions arch)))
-         -- ^ Instrumentor
-         -> MM.Memory (MM.ArchAddrWidth arch)
-         -- ^ The memory space
-         -> RCL.LayoutStrategy
-         -> ConcreteAddress arch
-         -- ^ The start address for the copied blocks
-         -> [(ConcreteBlock arch, SymbolicBlock arch)]
-         -- ^ Symbolized basic blocks
-         -> RM.RewriterT arch m ( [ConcretizedBlock arch]
-                                , [(SymbolicAddress arch, ConcreteAddress arch, BS.ByteString)]
-                                , [(SymbolicAddress arch, ConcreteAddress arch, InjectConcreteInstructions arch)]
-                                , [RCL.WithProvenance ConcretizedBlock arch]
-                                , M.Map (SymbolicAddress arch) (ConcreteAddress arch)
-                                )
-redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr baseSymBlocks = do
-  -- traceM (show (PD.vcat (map PD.pretty (L.sortOn (basicBlockAddress . fst) (F.toList baseSymBlocks)))))
-  RM.recordSection "text" (RM.SectionInfo textStart textEnd)
-  RM.recordFunctionBlocks (map concreteBlockAddress . fst <$> biFunctions blockInfo)
-  transformedBlocks <- T.forM baseSymBlocks $ \(cb, sb) -> do
-    let bsz :: Int
-        bsz = withConcreteInstructions cb $ \_repr concreteInsns ->
-          sum (fmap (fromIntegral . isaInstructionSize isa) concreteInsns)
-    RM.recordDiscoveredBlock (concreteBlockAddress cb) bsz
-    -- We only want to instrument blocks that:
-    --
-    -- 1. Live in the .text
-    -- 2. Do not rely on their location (e.g. via PIC jumps)
-    -- 3. Do not reside in incomplete functions (where unknown control flow might break our assumptions)
-    -- 4. Do not overlap other blocks (which are hard for us to rewrite)
-    --
-    -- Also, see Note [PIC Jump Tables]
-    case and [ textStart <= concreteBlockAddress cb
-             , concreteBlockAddress cb < textEnd
-             , isRelocatableTerminatorType (terminatorType isa mem cb)
-             , not (isIncompleteBlockAddress blockInfo (concreteBlockAddress cb))
-             , disjoint isa (biOverlap blockInfo) cb
-             ] of
-     True ->  do
-       maybeMod <- lift $ instrumentor sb
-       case maybeMod of
-         Just (RC.ModifiedInstructions repr' insns') -> do
-           RM.recordInstrumentedBytes bsz
-           let sb' = symbolicBlock (symbolicBlockOriginalAddress sb)
-                                   (symbolicBlockSymbolicAddress sb)
-                                   insns'
-                                   repr'
-                                   (symbolicBlockSymbolicSuccessor sb)
-                                   (symbolicBlockDiscoveryBlock sb)
-           return $! RCL.WithProvenance cb sb' RCL.Modified
-         Nothing      ->
-           return $! RCL.WithProvenance cb sb RCL.Unmodified
-     False -> do
-       when (not (isRelocatableTerminatorType (terminatorType isa mem cb))) $ do
-         RM.recordUnrelocatableTermBlock
-       when (isIncompleteBlockAddress blockInfo (concreteBlockAddress cb)) $ do
-         RM.recordIncompleteBlock
-       return $! RCL.WithProvenance cb sb RCL.Immutable
-  injectedCode <- lift getInjectedFunctions
-  injectedInstructions <- lift getInjectedInstructions
+redirect
+  :: ( MM.MemWidth (MM.ArchAddrWidth arch)
+     , MonadIO m
+     , X.MonadThrow m
+     )
+  => BlockInfo arch
+  -- ^ Information about all recovered blocks
+  -> RCL.LayoutStrategy
+  -> ConcreteAddress arch
+  -- ^ The start address for the copied blocks
+  -> [RCL.WithProvenance SymbolicBlock arch]
+  -- ^ Basic blocks transformed by the client-provided instrumentor
+  -> [(RCA.SymbolicAddress arch, BS.ByteString)]
+  -- ^ Code injected at symbolic addresses as raw bytes
+  -> [(RCA.SymbolicAddress arch, InjectSymbolicInstructions arch)]
+  -- ^ Code injected at symbolic addresses as high-level instructions to be assembled
+  -> RM.RedirectT lm arch m (RedirectionResult arch)
+redirect blockInfo strat layoutAddr transformedBlocks injectedCode injectedInstructions = do
   (layout, symToConcAddrs) <- concretize strat layoutAddr transformedBlocks injectedCode injectedInstructions blockInfo
   let concretizedBlocks = RCL.programBlockLayout layout
   let paddingBlocks = RCL.layoutPaddingBlocks layout
   let injectedBlocks = RCL.injectedBlockLayout layout
   let injectedInsns = RCL.injectedInstructionLayout layout
-  RM.recordBlockMap (toBlockMapping concretizedBlocks)
   redirectedBlocks <- redirectOriginalBlocks concretizedBlocks
-  RM.recordBackwardBlockMap (toBackwardBlockMapping redirectedBlocks)
+
+  let forwardMap = M.fromList (toBlockMapping concretizedBlocks)
+  let reverseMap = toBackwardBlockMapping redirectedBlocks
+
   let sortedBlocks = L.sortBy (comparing concretizedBlockAddress) (fmap concretizePadding paddingBlocks ++ concatMap unPair (F.toList redirectedBlocks))
-  return (sortedBlocks, injectedBlocks, injectedInsns, concretizedBlocks, symToConcAddrs)
+  let blockMapping = BlockMapping { forwardBlockMapping = forwardMap
+                                  , backwardBlockMapping = reverseMap
+                                  }
+
+  nsm <- RM.getNewSymbolsMap
+  return RedirectionResult { rrRedirectedBlocks = sortedBlocks
+                           , rrInjectedBlocks = injectedBlocks
+                           , rrInjectedInstructions = injectedInsns
+                           , rrConcretizedBlocks = concretizedBlocks
+                           , rrSymbolicToConcreteMap = symToConcAddrs
+                           , rrBlockMapping = blockMapping
+                           , rrNewSymbolsMap = nsm
+                           }
   where
     concretizePadding :: PaddingBlock arch -> ConcretizedBlock arch
     concretizePadding pb =
@@ -153,6 +122,7 @@ redirect isa blockInfo (textStart, textEnd) instrumentor mem strat layoutAddr ba
         RCL.Unmodified  -> [toConcretized (RCL.originalBlock wp)]
         RCL.Immutable   -> [toConcretized (RCL.originalBlock wp)]
         RCL.Subsumed    -> [                                  RCL.withoutProvenance wp]
+
 
 toBlockMapping :: [RCL.WithProvenance ConcretizedBlock arch] -> [(ConcreteAddress arch, ConcreteAddress arch)]
 toBlockMapping wps =
@@ -172,13 +142,6 @@ toBackwardBlockMapping ps = M.fromList
   , (new, old) <- [(caddr, caddr) | status /= RCL.Subsumed]
                ++ [(saddr, caddr) | RCL.changed status]
   ]
-
-isRelocatableTerminatorType :: Some (JumpType arch) -> Bool
-isRelocatableTerminatorType jt =
-  case jt of
-    Some (IndirectJump {}) -> False
-    Some (NotInstrumentable {}) -> False
-    _ -> True
 
 {- Note [Redirection]
 

@@ -12,6 +12,7 @@ A typical analysis looks something like:
 >>> :set -XDataKinds
 >>> :set -XTypeApplications
 >>> import           Data.Functor.Const ( Const(..) )
+>>> import           Data.Void ( Void )
 >>> import qualified Lumberjack as LJ
 >>> import qualified Prettyprinter as PD
 >>> import qualified Prettyprinter.Render.Text as PDT
@@ -45,7 +46,7 @@ analysisConfigs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.c
 :}
 
 >>> :{
-simpleConsoleLogger :: LJ.LogAction IO R.Diagnostic
+simpleConsoleLogger :: LJ.LogAction IO (R.Diagnostic Void)
 simpleConsoleLogger = LJ.LogAction $ \msg -> do
   PDT.putDoc (PD.pretty msg)
 :}
@@ -55,8 +56,7 @@ myAnalyzeElf :: E.SomeElf E.ElfHeaderInfo -> IO Int
 myAnalyzeElf someElf = do
   fha <- FH.newHandleAllocator
   R.withElfConfig someElf analysisConfigs $ \config e loadedBinary -> do
-    (res, diags) <- R.analyzeElf simpleConsoleLogger config fha e loadedBinary
-    print diags
+    res <- R.analyzeElf simpleConsoleLogger config fha e loadedBinary
     return (getConst res)
 :}
 
@@ -90,7 +90,7 @@ An example rewriter looks something like:
 -- 'R.RewriteM' monad.  This can be useful for e.g., allocating fresh global
 -- variables that need to be referenced in the analysis phase.  The pre-analysis
 -- has access to the analysis environment.
-myPreAnalysis :: (R.HasAnalysisEnv env) => env arch binFmt -> R.RewriteM lm arch (Const () arch)
+myPreAnalysis :: (R.HasAnalysisEnv env) => env arch binFmt -> R.RewriteM Void arch (Const () arch)
 myPreAnalysis _ = return (Const ())
 :}
 
@@ -114,7 +114,7 @@ newtype RewriteState arch = RewriteState (R.SymbolicAddress arch)
 -- | The pre-rewriting phase runs in the 'R.RewriteM' monad and has access to
 -- the analysis results.  It can also be useful for allocating fresh global
 -- variables.
-myPreRewriter :: (R.HasAnalysisEnv env) => env arch binFmt -> Const Int arch -> R.RewriteM lm arch (RewriteState arch)
+myPreRewriter :: (R.HasAnalysisEnv env) => env arch binFmt -> Const Int arch -> R.RewriteM Void arch (RewriteState arch)
 myPreRewriter env nBlocks = do
   let fn = BS.pack (replicate (getConst nBlocks) 0xF4)
   addr <- R.injectFunction "rawData" fn
@@ -131,14 +131,14 @@ myRewriter :: (R.HasAnalysisEnv env)
            -> Const Int arch
            -> RewriteState arch
            -> R.SymbolicBlock arch
-           -> R.RewriteM lm arch (Maybe (R.ModifiedInstructions arch))
+           -> R.RewriteM Void arch (Maybe (R.ModifiedInstructions arch))
 myRewriter env nBlocks (RewriteState newFuncAddr) symBlock =
   R.withSymbolicInstructions symBlock $ \repr insns ->
     return (Just (R.ModifiedInstructions repr insns))
 :}
 
 >>> :{
-analysis :: R.AnalyzeAndRewrite lm arch binFmt (Const Int)
+analysis :: R.AnalyzeAndRewrite Void arch binFmt (Const Int)
 analysis = R.AnalyzeAndRewrite { R.arPreAnalyze = myPreAnalysis
                                , R.arAnalyze = myAnalysis
                                , R.arPreRewrite = myPreRewriter
@@ -147,7 +147,7 @@ analysis = R.AnalyzeAndRewrite { R.arPreAnalyze = myPreAnalysis
 :}
 
 >>> :{
-analysisConfigs :: [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite lm) (Const Int))]
+analysisConfigs :: [(R.Architecture, R.SomeConfig (R.AnalyzeAndRewrite Void) (Const Int))]
 analysisConfigs = [ (R.PPC32, R.SomeConfig (NR.knownNat @32) MBL.Elf32Repr (RP.config32 analysis))
                   , (R.PPC64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RP.config64 analysis))
                   , (R.X86_64, R.SomeConfig (NR.knownNat @64) MBL.Elf64Repr (RX.config analysis))
@@ -160,9 +160,9 @@ myAnalyzeElf someElf = do
   fha <- FH.newHandleAllocator
   R.withElfConfig someElf analysisConfigs $ \config e loadedBinary -> do
     let strat = R.LayoutStrategy R.Parallel R.BlockGrouping R.AlwaysTrampoline
-    (newElf, res, ri, _) <- R.rewriteElf simpleConsoleLogger config fha e loadedBinary strat
+    (newElf, res, ri) <- R.rewriteElf simpleConsoleLogger config fha e loadedBinary strat
     print (getConst res)
-    print (ri ^. R.riBlockMapping)
+    print (R.forwardBlockMapping (R.rrBlockMapping (R.riRedirectionResult ri)))
     return (getConst res)
 :}
 

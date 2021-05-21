@@ -11,6 +11,7 @@ data RenovatePanic = Layout
                    | Concretize
                    | Symbolize
                    | ELFWriting
+                   | Assemble
   deriving (Show)
 
 instance P.PanicComponent RenovatePanic where

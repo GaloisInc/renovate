@@ -9,19 +9,17 @@ module Renovate.Redirect.LayoutBlocks (
   layoutBlocks
   ) where
 
-import           Control.Exception ( Exception, SomeException(SomeException), assert )
 import           Control.Monad ( (>=>) )
+import qualified Control.Monad.Catch as X
 import           Control.Monad.IO.Class ( MonadIO, liftIO )
-import           Control.Monad.State ( gets )
 import           Control.Monad.ST ( ST, runST )
+import qualified Control.Monad.State as CMS
 import qualified Data.ByteString as BS
 import qualified Data.Foldable as F
 import qualified Data.Functor.Compose as C
 import qualified Data.Heap as H
 import qualified Data.List as L
 import qualified Data.List.NonEmpty as DLN
-import qualified Data.Macaw.CFG as MC
-import           Data.Map ( Map )
 import qualified Data.Map.Strict as M
 import           Data.Monoid ( Any(Any) )
 import           Data.Ord ( Down(..) )
@@ -29,7 +27,6 @@ import           Data.STRef
 import           Data.Set (Set)
 import qualified Data.Set as S
 import qualified Data.Traversable as T
-import           Data.Typeable ( Typeable )
 import qualified Data.UnionFind.ST as UF
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as MV
@@ -46,14 +43,14 @@ import qualified What4.ProgramLoc as W4
 
 import           Renovate.Core.Address
 import           Renovate.Core.BasicBlock as RB
+import qualified Renovate.Core.Diagnostic as RCD
+import qualified Renovate.Core.Exception as RCE
 import qualified Renovate.Core.Instruction as RCI
 import           Renovate.Core.Layout
-import qualified Renovate.Core.Layout as RCL
 import           Renovate.ISA
 import qualified Renovate.Panic as RP
 import           Renovate.Recovery ( SCFG, SymbolicCFG, getSymbolicCFG )
 import           Renovate.Redirect.Monad
-import qualified Renovate.Redirect.Monad as RRM
 import qualified Renovate.Rewrite as RRW
 
 
@@ -67,17 +64,18 @@ type AddressHeap arch = H.Heap (H.Entry (Down Int) (ConcreteAddress arch))
 --
 -- Right now, we use an inefficient encoding of jumps.  We could do
 -- better later on.
-compactLayout :: forall m t arch
-              .  (MonadIO m, T.Traversable t, Typeable arch, MM.MemWidth (MM.ArchAddrWidth arch))
-              => ConcreteAddress arch
-              -- ^ Address to begin block layout of instrumented blocks
-              -> LayoutStrategy
-              -> t (WithProvenance SymbolicBlock arch)
-              -> t (SymbolicAddress arch, BS.ByteString)
-              -> t (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch)
-              -> M.Map (ConcreteAddress arch) (SymbolicCFG arch)
-              -> RewriterT arch m (Layout AddressAssignedBlock RRW.InjectSymbolicInstructions arch)
-compactLayout startAddr strat blocks0 injectedCode injectedInstructions cfgs = do
+layoutBlocks
+  :: forall t lm arch m
+   . (T.Traversable t, MM.MemWidth (MM.ArchAddrWidth arch), MonadIO m, X.MonadThrow m)
+  => LayoutStrategy
+  -> ConcreteAddress arch
+  -- ^ Address to begin block layout of instrumented blocks
+  -> t (WithProvenance SymbolicBlock arch)
+  -> t (SymbolicAddress arch, BS.ByteString)
+  -> t (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch)
+  -> M.Map (ConcreteAddress arch) (SymbolicCFG arch)
+  -> RedirectT lm arch m (Layout AddressAssignedBlock RRW.InjectSymbolicInstructions arch)
+layoutBlocks strat startAddr blocks0 injectedCode injectedInstructions cfgs = do
   -- Augment all symbolic blocks such that fallthrough behavior is explicitly
   -- represented with symbolic unconditional jumps.
   --
@@ -204,9 +202,10 @@ compactLayout startAddr strat blocks0 injectedCode injectedInstructions cfgs = d
 -- it inserts.
 --
 -- FIXME: If we made block groups NonEmpty lists, we could remove a panic
-removeUnneededFallthroughs :: (Monad m)
-                           => [[WithProvenance SymbolicBlock arch]]
-                           -> RewriterT arch m [[WithProvenance SymbolicBlock arch]]
+removeUnneededFallthroughs
+  :: (Monad m)
+  => [[WithProvenance SymbolicBlock arch]]
+  -> RedirectT lm arch m [[WithProvenance SymbolicBlock arch]]
 removeUnneededFallthroughs = mapM removeNonTerminalFallthrough
   where
     indexSymbolicBlock sbp idx =
@@ -251,11 +250,11 @@ dropFallthroughIfContiguous idx wp
 
 -- | Group together blocks into chunks which the allocator will keep together
 -- when computing the layout.
-groupBlocks :: forall arch f m. (MM.MemWidth (MM.ArchAddrWidth arch), F.Foldable f, MonadIO m) =>
+groupBlocks :: forall lm arch f m . (MM.MemWidth (MM.ArchAddrWidth arch), F.Foldable f, MonadIO m) =>
   Grouping ->
   M.Map (ConcreteAddress arch) (SymbolicCFG arch) ->
   f (WithProvenance SymbolicBlock arch) ->
-  RewriterT arch m [[WithProvenance SymbolicBlock arch]]
+  RedirectT lm arch m [[WithProvenance SymbolicBlock arch]]
 groupBlocks BlockGrouping _cfgs blocks = return (foldMap (\block -> [[block]]) blocks)
 groupBlocks LoopGrouping cfgs_ blocks = do
   cfgs <- traverse (liftIO . getSymbolicCFG) cfgs_
@@ -268,7 +267,7 @@ groupBlocks LoopGrouping cfgs_ blocks = do
   -- loops yet, though that seems pretty preposterous to me (dmwit) right now.
   return . M.elems . groupByRep (cfgHeads cfgs) $ blocks
 groupBlocks FunctionGrouping _cfgs blocks = do
-  functions <- gets (functionBlocks . rwsStats)
+  functions <- CMS.gets rwsFunctionBlocks
   return . M.elems . groupByRep (functionHeads functions) $ blocks
 
 -- | Some grouping strategies may ask modified and immutable blocks to be
@@ -400,10 +399,11 @@ insertLookupA k fv m = C.getCompose (M.alterF (pairSelf . maybe fv pure) k m) wh
 --
 -- Every symbolic block is assumed to have been assigned an address at this
 -- point.
-assignConcreteAddress :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch))
-                      => M.Map (SymbolicInfo arch) (ConcreteAddress arch, Word64)
-                      -> WithProvenance SymbolicBlock arch
-                      -> RewriterT arch m (WithProvenance AddressAssignedBlock arch)
+assignConcreteAddress
+  :: (MM.MemWidth (MM.ArchAddrWidth arch), Monad m)
+  => M.Map (SymbolicInfo arch) (ConcreteAddress arch, Word64)
+  -> WithProvenance SymbolicBlock arch
+  -> RedirectT lm arch m (WithProvenance AddressAssignedBlock arch)
 assignConcreteAddress assignedAddrs wp
   | changed status = case M.lookup (symbolicInfo sb) assignedAddrs of
     Nothing -> error $ printf "Expected an assigned address for symbolic block %s (derived from concrete block %s)"
@@ -434,17 +434,22 @@ computeByteSize isa mem (RRW.InjectSymbolicInstructions _repr insns) =
   where
     fakeAddress = concreteFromAbsolute 0
 
-allocateSymbolicBlockAddresses :: (Monad m, MM.MemWidth (MM.ArchAddrWidth arch), F.Foldable t, Functor t)
-                               => ConcreteAddress arch
-                               -> AddressHeap arch
-                               -> [[SymbolicBlock arch]]
-                               -> t (SymbolicAddress arch, BS.ByteString)
-                               -> t (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch)
-                               -> RewriterT arch m ( AddressHeap arch
-                                                   , M.Map (SymbolicInfo arch) (ConcreteAddress arch, Word64)
-                                                   , M.Map (SymbolicAddress arch) (ConcreteAddress arch, (SymbolicAddress arch, BS.ByteString))
-                                                   , M.Map (SymbolicAddress arch) (ConcreteAddress arch, (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch))
-                                                   )
+allocateSymbolicBlockAddresses
+  :: ( MM.MemWidth (MM.ArchAddrWidth arch)
+     , F.Foldable t
+     , Functor t
+     , MonadIO m
+     )
+  => ConcreteAddress arch
+  -> AddressHeap arch
+  -> [[SymbolicBlock arch]]
+  -> t (SymbolicAddress arch, BS.ByteString)
+  -> t (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch)
+  -> RedirectT lm arch m ( AddressHeap arch
+                         , M.Map (SymbolicInfo arch) (ConcreteAddress arch, Word64)
+                         , M.Map (SymbolicAddress arch) (ConcreteAddress arch, (SymbolicAddress arch, BS.ByteString))
+                         , M.Map (SymbolicAddress arch) (ConcreteAddress arch, (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch))
+                         )
 allocateSymbolicBlockAddresses startAddr h0 blocksBySize injectedCode injectedInstructions = do
   isa <- askISA
   mem <- askMem
@@ -475,20 +480,20 @@ allocateSymbolicBlockAddresses startAddr h0 blocksBySize injectedCode injectedIn
 -- addresses both to lists of concrete blocks and also injected code (which is
 -- just a bytestring instead of a basic block).
 allocateBlockGroupAddresses
-                     :: (MM.MemWidth (MM.ArchAddrWidth arch), Monad m, Ord key)
-                     => (item -> Word64)
-                     -> (item -> key)
-                     -> (ConcreteAddress arch -> Word64 -> item -> val)
-                     -> (ConcreteAddress arch, AddressHeap arch, M.Map key val)
-                     -> [item]
-                     -> RewriterT arch m (ConcreteAddress arch, AddressHeap arch, M.Map key val)
+  :: (MM.MemWidth (MM.ArchAddrWidth arch), Ord key, MonadIO m)
+  => (item -> Word64)
+  -> (item -> key)
+  -> (ConcreteAddress arch -> Word64 -> item -> val)
+  -> (ConcreteAddress arch, AddressHeap arch, M.Map key val)
+  -> [item]
+  -> RedirectT lm arch m (ConcreteAddress arch, AddressHeap arch, M.Map key val)
 allocateBlockGroupAddresses itemSize itemKey itemVal (newTextAddr, h, m) items =
   case H.viewMin h of
     Nothing -> return allocateNewTextAddr
     Just (H.Entry (Down size) addr, h')
       | size < fromIntegral itemsSize -> return allocateNewTextAddr
       | otherwise -> do
-          recordReusedBytes size
+          logDiagnostic (RCD.RedirectionDiagnostic (RCD.ReusedBytes addr (fromIntegral size)))
           return (allocateFromHeap size addr h')
   where
     addOff = addressAddOffset
@@ -505,23 +510,26 @@ allocateBlockGroupAddresses itemSize itemKey itemVal (newTextAddr, h, m) items =
       let nextBlockStart = newTextAddr `addOff` fromIntegral itemsSize
       in (nextBlockStart, h, blockGroupMapping newTextAddr)
 
-    allocateFromHeap allocSize addr h' =
-      assert (allocSize >= fromIntegral itemsSize) $ do
+    allocateFromHeap allocSize addr h'
+      | allocSize < fromIntegral itemsSize =
+        RP.panic RP.Layout "allocateFromHeap" []
+      | otherwise =
         let addr'      = addr `addOff` fromIntegral itemsSize
             allocSize' = allocSize - fromIntegral itemsSize
-        case allocSize' of
+        in case allocSize' of
           0 -> (newTextAddr, h', blockGroupMapping addr)
           _ ->
             let h'' = H.insert (H.Entry (Down allocSize') addr') h'
             in (newTextAddr, h'', blockGroupMapping addr)
 
-buildAddressHeap :: (MM.MemWidth (MM.ArchAddrWidth arch), Monad m, Typeable arch)
-                 => TrampolineStrategy
-                 -> ConcreteAddress arch
-                 -> [WithProvenance SymbolicBlock arch]
-                 -> RewriterT arch m (AddressHeap arch, [WithProvenance SymbolicBlock arch])
+buildAddressHeap
+  :: (MM.MemWidth (MM.ArchAddrWidth arch), X.MonadThrow m)
+  => TrampolineStrategy
+  -> ConcreteAddress arch
+  -> [WithProvenance SymbolicBlock arch]
+  -> RedirectT lm arch m (AddressHeap arch, [WithProvenance SymbolicBlock arch])
 buildAddressHeap strat startAddr blocks = do
-  functionToBlocks <- gets (functionBlocks . rwsStats)
+  functionToBlocks <- CMS.gets rwsFunctionBlocks
   isa <- askISA
   let (blockToFunctions, disjointFunctions) = findRelocatableFunctionBlocks functionToBlocks
       smallBlocks = S.fromList
@@ -601,22 +609,15 @@ findRelocatedFunctions entryPointMap initBlockMap = go (S.fromList <$> initBlock
 -- converting to an 'AddressHeap'.
 type PreAddressHeap arch = M.Map (ConcreteAddress arch) Int
 
-data OverlappingFreeBlocks arch
-  = OverlappingFreeBlocks (ConcreteAddress arch) Int (ConcreteAddress arch) Int
-  deriving (Eq, Ord, Typeable)
-deriving instance MM.MemWidth (MM.ArchAddrWidth arch) => Show (OverlappingFreeBlocks arch)
-
-instance (MM.MemWidth (MM.ArchAddrWidth arch), (Typeable arch)) => Exception (OverlappingFreeBlocks arch)
-
 coalesceHeap ::
-  (Monad m, MM.MemWidth (MM.ArchAddrWidth arch), Typeable arch) =>
+  (MM.MemWidth (MM.ArchAddrWidth arch), X.MonadThrow m) =>
   PreAddressHeap arch ->
-  RewriterT arch m (AddressHeap arch)
+  RedirectT lm arch m (AddressHeap arch)
 coalesceHeap = go . M.toAscList where
   go ((addr, len):pairs@((addr', len'):rest)) = case compare nextAddr addr' of
     LT -> (H.insert (H.Entry (Down len) addr) $!) <$> go pairs
     EQ -> go ((addr, len+len'):rest)
-    GT -> throwError (SomeException (OverlappingFreeBlocks addr len addr' len'))
+    GT -> X.throwM (RCE.OverlappingFreeBlocks addr len addr' len')
     where nextAddr = addressAddOffset addr (fromIntegral len)
   go [(addr, len)] = return (H.singleton (H.Entry (Down len) addr))
   go [] = return H.empty
@@ -677,24 +678,6 @@ randomOrder seed initial = runST $ do
       j <- MWC.uniformR (i,MV.length vec-1) g
       MV.swap vec i j
       go g (i+1) vec
-
-
--- | Compute a concrete address for each 'SymbolicBlock'.
---
--- Right now, we use an inefficient encoding of jumps.  We could do
--- better later on.
-layoutBlocks :: (MonadIO m, T.Traversable t, MC.MemWidth (MC.ArchAddrWidth arch), Typeable arch)
-             => RCL.LayoutStrategy
-             -> ConcreteAddress arch
-             -- ^ Address to begin block layout of instrumented blocks
-             -> t (RCL.WithProvenance SymbolicBlock arch)
-             -> t (SymbolicAddress arch, BS.ByteString)
-             -> t (SymbolicAddress arch, RRW.InjectSymbolicInstructions arch)
-             -> Map (ConcreteAddress arch) (SymbolicCFG arch)
-             -> RRM.RewriterT arch m (RCL.Layout AddressAssignedBlock RRW.InjectSymbolicInstructions arch)
-layoutBlocks strat startAddr blocks injectedCode injectedInstructions cfgs =
-  compactLayout startAddr strat blocks injectedCode injectedInstructions cfgs
-
 
 {- Note [Design]
 

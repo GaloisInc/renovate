@@ -49,6 +49,8 @@ module Renovate.Core.BasicBlock (
   symbolicInfo,
   instructionStreamSize,
   terminatorType,
+  -- * Modified Blocks
+  ModifiedInstructions(..),
 
   -- * Pretty-printers
   prettyConcreteBlock,
@@ -425,3 +427,18 @@ prettyConcretizedBlock isa (ConcretizedBlock addr insns _repr) =
   PP.vsep [ PP.pretty addr PP.<> PP.pretty ":"
           , PP.indent 2 (PP.vsep (map (PP.pretty . RI.isaPrettyInstruction isa) (F.toList insns)))
           ]
+
+-- | This wraps the return value of the caller-provided instrumentor
+--
+-- We need an existential wrapper to associate the block arch repr with the
+-- result (and also hide it from the return value).  This allows callers to
+-- change the type of instructions in a block, but still forces them to stick to
+-- one instruction set in each block.
+--
+-- Note that we avoid having the caller return an entire 'B.SymbolicBlock' to
+-- prevent metadata from changing.
+data ModifiedInstructions arch where
+  ModifiedInstructions :: ( RCI.InstructionConstraints arch tp )
+                       => RCI.InstructionArchRepr arch tp
+                       -> DLN.NonEmpty (RCI.Instruction arch tp (RCR.Relocation arch))
+                       -> ModifiedInstructions arch

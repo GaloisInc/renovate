@@ -11,7 +11,6 @@ module Main ( main ) where
 
 import           Control.Applicative ( (<|>) )
 import qualified Control.Exception as X
-import           Control.Lens ( (^.) )
 import           Control.Monad ( when )
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
@@ -23,7 +22,6 @@ import qualified Data.List as L
 import qualified Data.Map as M
 import           Data.Maybe ( fromMaybe )
 import           Data.Monoid ((<>))
-import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Set as S
 import qualified Data.Text.IO as T
 import           Data.Word ( Word64 )
@@ -148,18 +146,12 @@ main = X.catches (O.execParser optParser >>= mainWithOptions) handlers
                        <> O.progDesc "A tool to apply a trivial rewriting to PowerPC and X86_64 binaries"
                        <> O.header "refurbish - A trivial binary rewriter"
                        )
-    handlers = [ X.Handler blockAssemblyExceptionHandler
-               , X.Handler diagnosticHandler
+    handlers = [ X.Handler renovateExceptionHandler
                ]
 
-blockAssemblyExceptionHandler :: R.BlockAssemblyException -> IO ()
-blockAssemblyExceptionHandler x = do
+renovateExceptionHandler :: R.RenovateException -> IO ()
+renovateExceptionHandler x = do
   print (PD.pretty x)
-  IO.exitFailure
-
-diagnosticHandler :: R.Diagnostic -> IO ()
-diagnosticHandler d = do
-  print (PD.pretty d)
   IO.exitFailure
 
 mainWithOptions :: Options -> IO ()
@@ -193,52 +185,53 @@ mainWithOptions o = do
     Right someElfHeader -> do
       R.withElfConfig someElfHeader configs $ \rc e loadedBinary -> do
         let rc' = rc { R.rcUpdateSymbolTable = True }
-        (e', _, ri, _env) <- R.rewriteElf simpleConsoleLogger rc' hdlAlloc e loadedBinary layout
-        printInfo o ri
+        (e', _, ri) <- R.rewriteElf simpleConsoleLogger rc' hdlAlloc e loadedBinary layout
+        printInfo o (R.rcISA rc) ri
         LBS.writeFile (oOutput o) (E.renderElf e')
         p0 <- SD.getPermissions (oOutput o)
         SD.setPermissions (oOutput o) (SD.setOwnerExecutable True p0)
-        when (oRunREPL o) (runREPL ri)
+        when (oRunREPL o) (runREPL rc ri)
 
-simpleConsoleLogger :: LJ.LogAction IO R.Diagnostic
+simpleConsoleLogger :: (PD.Pretty l) => LJ.LogAction IO (R.Diagnostic l)
 simpleConsoleLogger = LJ.LogAction $ \msg -> do
   PDT.putDoc (PD.pretty msg)
   putStrLn ""
 
-data REPLInfo =
-  REPLInfo { rewriterInfo :: Some (R.RewriterInfo ())
-           , discoveredIndex :: Maybe (SomeBlockIndex R.ConcreteBlock)
-           , outputIndex :: Maybe (SomeBlockIndex R.ConcretizedBlock)
-           , blockMapping :: BlockMapping
+data REPLInfo arch =
+  REPLInfo { rewriterInfo :: R.RewriterInfo arch
+           , discoveredIndex :: BlockIndex arch R.ConcreteBlock
+           , outputIndex :: BlockIndex arch R.ConcretizedBlock
+           , blockMapping :: R.BlockMapping arch
+           , recoveredISA :: R.ISA arch
            }
 
-data BlockMapping = forall arch. MM.MemWidth (MM.ArchAddrWidth arch) =>
-  BlockMapping (M.Map (R.ConcreteAddress arch) (R.ConcreteAddress arch))
+data BlockIndex arch b =
+  (MM.MemWidth (MM.ArchAddrWidth arch), R.ArchConstraints arch) =>
+  BlockIndex { _blockIndex :: IM.IntervalMap (R.ConcreteAddress arch) (b arch)
+             }
 
-data SomeBlockIndex b =
-  forall arch . (MM.MemWidth (MM.ArchAddrWidth arch), R.ArchConstraints arch) =>
-  SomeBlockIndex { _blockIndex :: IM.IntervalMap (R.ConcreteAddress arch) (b arch)
-                 , _blockISA :: R.ISA arch
-                 }
-
-runREPL :: MM.MemWidth (MM.ArchAddrWidth arch) => R.RewriterInfo () arch -> IO ()
-runREPL ri = H.runInputT settings' (repl hdlrs)
+runREPL
+  :: (R.ArchConstraints arch)
+  => R.RenovateConfig arch binFmt callback b
+  -> R.RewriterInfo arch
+  -> IO ()
+runREPL rc ri = H.runInputT settings' (repl hdlrs)
   where
     ws = [' ', '\t']
     settings :: H.Settings IO
     settings = H.defaultSettings
     settings' = settings { H.complete = H.completeWordWithPrev Nothing ws (completeCommands hdlrs) }
     hdlrs = commandHandlers info
-    info = REPLInfo { rewriterInfo = Some ri
-                    , discoveredIndex =
-                      case ri ^. R.riRecoveredBlocks of
-                        Nothing -> Nothing
-                        Just (R.SomeConcreteBlocks isa bs) -> Just (SomeBlockIndex (indexBlocks isa bs) isa)
-                    , outputIndex =
-                      case ri ^. R.riOutputBlocks of
-                        Nothing -> Nothing
-                        Just (R.SomeConcretizedBlocks isa bs) -> Just (SomeBlockIndex (indexBlocks isa bs) isa)
-                    , blockMapping = BlockMapping (M.fromList (ri ^. R.riBlockMapping))
+    recoveredBlocks = R.biBlocks (R.riBlockInfo ri)
+    concretized = [ concretizedBlock
+                  | rp <- R.riRewritePairs ri
+                  , Just concretizedBlock <- return (R.rpNew rp)
+                  ]
+    info = REPLInfo { rewriterInfo = ri
+                    , recoveredISA = R.rcISA rc
+                    , discoveredIndex = BlockIndex (indexBlocks (R.rcISA rc) recoveredBlocks)
+                    , outputIndex = BlockIndex (indexBlocks (R.rcISA rc) concretized)
+                    , blockMapping = R.rrBlockMapping (R.riRedirectionResult ri)
                     }
 
 data CommandHandler =
@@ -284,7 +277,7 @@ processLine (CommandHandlers hdlrs) l =
       | otherwise -> H.outputStrLn ("Invalid command: " +| cmd |+ "")
     [] -> return ()
 
-commandHandlers :: REPLInfo -> CommandHandlers
+commandHandlers :: REPLInfo arch -> CommandHandlers
 commandHandlers ri = CommandHandlers m
   where
     m = M.fromList [ (commandName c, c) | c <- cs ]
@@ -312,7 +305,7 @@ replHelp cs =
             Just cmd -> H.outputStrLn (commandDesc cmd)
         _ -> invalidArguments helpCmd
 
-replPrintDiscoveredBlock :: REPLInfo -> CommandHandler
+replPrintDiscoveredBlock :: REPLInfo arch -> CommandHandler
 replPrintDiscoveredBlock ri =
   CommandHandler { commandName = "print-discovered-block"
                  , commandDesc = "Print the (unmodified) block containing the given address from the original text section"
@@ -324,13 +317,12 @@ replPrintDiscoveredBlock ri =
         [mAddr]
           | Just (addr :: Word64) <- readMaybe mAddr ->
             case discoveredIndex ri of
-              Nothing -> H.outputStrLn "No discovered blocks"
-              Just (SomeBlockIndex idx isa) -> do
+              BlockIndex idx -> do
                 let caddr = R.concreteFromAbsolute (fromIntegral addr)
-                F.forM_ (IM.elems (IM.containing idx caddr)) $ printConcreteBlock H.outputStr isa
+                F.forM_ (IM.elems (IM.containing idx caddr)) $ printConcreteBlock H.outputStr (recoveredISA ri)
         _ -> invalidArguments cmd
 
-replPrintOutputBlock :: REPLInfo -> CommandHandler
+replPrintOutputBlock :: REPLInfo arch -> CommandHandler
 replPrintOutputBlock ri =
   CommandHandler { commandName = "print-output-block"
                  , commandDesc = "Print the block containing the given address from the rewritten code"
@@ -342,13 +334,12 @@ replPrintOutputBlock ri =
         [mAddr]
           | Just (addr :: Word64) <- readMaybe mAddr ->
             case outputIndex ri of
-              Nothing -> H.outputStrLn "No output blocks"
-              Just (SomeBlockIndex idx isa) -> do
+              BlockIndex idx -> do
                 let caddr = R.concreteFromAbsolute (fromIntegral addr)
-                F.forM_ (IM.elems (IM.containing idx caddr)) $ printConcretizedBlock H.outputStr isa
+                F.forM_ (IM.elems (IM.containing idx caddr)) $ printConcretizedBlock H.outputStr (recoveredISA ri)
         _ -> invalidArguments cmd
 
-replAddressInfo :: REPLInfo -> CommandHandler
+replAddressInfo :: REPLInfo arch -> CommandHandler
 replAddressInfo ri =
   CommandHandler { commandName = "address-info"
                  , commandDesc = "Print information about the block containing the given address"
@@ -364,25 +355,23 @@ replAddressInfo ri =
               Just h -> h
         _ -> invalidArguments cmd
 
-tryOriginalAddress :: REPLInfo -> Word64 -> Maybe (H.InputT IO ())
+tryOriginalAddress :: REPLInfo arch -> Word64 -> Maybe (H.InputT IO ())
 tryOriginalAddress ri addr = do
-  bi <- discoveredIndex ri
-  case bi of
-    SomeBlockIndex idx isa -> do
+  case discoveredIndex ri of
+    BlockIndex idx -> do
       let caddr = R.concreteFromAbsolute (fromIntegral addr)
       case IM.elems (IM.containing idx caddr) of
         [] -> Nothing
-        bs -> Just (replOriginalBlockInfo ri isa addr caddr bs)
+        bs -> Just (replOriginalBlockInfo ri addr caddr bs)
 
-tryOutputAddress :: REPLInfo -> Word64 -> Maybe (H.InputT IO ())
+tryOutputAddress :: REPLInfo arch -> Word64 -> Maybe (H.InputT IO ())
 tryOutputAddress ri addr = do
-  bi <- outputIndex ri
-  case bi of
-    SomeBlockIndex idx isa -> do
+  case outputIndex ri of
+    BlockIndex idx -> do
       let caddr = R.concreteFromAbsolute (fromIntegral addr)
       case IM.elems (IM.containing idx caddr) of
         [] -> Nothing
-        bs -> Just (replOutputBlockInfo isa caddr bs)
+        bs -> Just (replOutputBlockInfo (recoveredISA ri) caddr bs)
 
 plurality :: [a] -> String
 plurality ls =
@@ -391,18 +380,16 @@ plurality ls =
     _ -> "s"
 
 replOriginalBlockInfo :: (R.ArchConstraints arch)
-                      => REPLInfo
-                      -> R.ISA arch
+                      => REPLInfo arch
                       -> Word64
                       -> R.ConcreteAddress arch
                       -> [R.ConcreteBlock arch]
                       -> H.InputT IO ()
-replOriginalBlockInfo ri isa waddr addr bs = do
+replOriginalBlockInfo ri waddr addr bs = do
   H.outputStrLn ("The instruction at " +|| PD.pretty addr ||+ " was in the original text section in block" +| plurality bs |+ ":")
-  F.forM_ bs (printConcreteBlock H.outputStr isa)
+  F.forM_ bs (printConcreteBlock H.outputStr (recoveredISA ri))
   case (outputIndex ri, blockMapping ri) of
-    (Nothing, _) -> H.outputStrLn "There are no output blocks"
-    (Just (SomeBlockIndex idx isa'), BlockMapping bm) -> do
+    (BlockIndex idx, R.BlockMapping bm _) -> do
       let caddr' = R.concreteFromAbsolute (fromIntegral waddr)
       case M.lookup caddr' bm of
         Nothing ->
@@ -411,7 +398,7 @@ replOriginalBlockInfo ri isa waddr addr bs = do
           let outBlockAddr' = R.concreteFromAbsolute (fromIntegral (R.absoluteAddress outputBlockAddr))
           let obs = IM.elems (IM.containing idx outBlockAddr')
           H.outputStrLn ("It occurs in the following output block" +| plurality obs |+ "")
-          F.forM_ obs (printConcretizedBlock H.outputStr isa')
+          F.forM_ obs (printConcretizedBlock H.outputStr (recoveredISA ri))
 
 replOutputBlockInfo :: (R.ArchConstraints arch)
                     => R.ISA arch
@@ -429,17 +416,30 @@ invalidArguments cmd =
 -- | Print out all of the information requested by the user via the command line 'Options'
 --
 -- Factored out so that we can call it once for both 32 and 64 bits
-printInfo :: (MM.MemWidth (MM.ArchAddrWidth arch))
+printInfo :: (R.ArchConstraints arch)
           => Options
-          -> R.RewriterInfo () arch
+          -> R.ISA arch
+          -> R.RewriterInfo arch
           -> IO ()
-printInfo o ri = do
-  withHandleWhen (oBlockMappingFile o) (printBlockMapping (ri ^. R.riBlockMapping))
-  F.forM_ (ri ^. R.riOutputBlocks) (printConcretizedBlocks (oPrintOutputBlocks o) (oOutputBlockFile o))
-  F.forM_ (ri ^. R.riRecoveredBlocks) (printConcreteBlocks (oPrintDiscoveredBlocks o) (oDiscoveredBlockFile o))
+printInfo o isa ri = do
+  let bm = R.rrBlockMapping (R.riRedirectionResult ri)
+  withHandleWhen (oBlockMappingFile o) (printBlockMapping bm)
+  let concretized = [ concretizedBlock
+                    | rp <- R.riRewritePairs ri
+                    , Just concretizedBlock <- return (R.rpNew rp)
+                    ]
+  printConcretizedBlocks (oPrintOutputBlocks o) (oOutputBlockFile o) isa concretized
+  let concrete = R.biBlocks (R.riBlockInfo ri)
+  printConcreteBlocks (oPrintDiscoveredBlocks o) (oDiscoveredBlockFile o) isa concrete
 
-printConcreteBlocks :: [Word64] -> Maybe FilePath -> R.SomeConcreteBlocks -> IO ()
-printConcreteBlocks reqs mOutFile (R.SomeConcreteBlocks isa blocks) = do
+printConcreteBlocks
+  :: (R.ArchConstraints arch)
+  => [Word64]
+  -> Maybe FilePath
+  -> R.ISA arch
+  -> [R.ConcreteBlock arch]
+  -> IO ()
+printConcreteBlocks reqs mOutFile isa blocks = do
   let idx = indexBlocks isa blocks
   let cbs = [ b
             | addrWord <- reqs
@@ -449,8 +449,14 @@ printConcreteBlocks reqs mOutFile (R.SomeConcreteBlocks isa blocks) = do
   withHandleWhen (Just (fromMaybe "-" mOutFile)) $ \h ->
     F.forM_ cbs (printConcreteBlock (IO.hPutStr h) isa)
 
-printConcretizedBlocks :: [Word64] -> Maybe FilePath -> R.SomeConcretizedBlocks -> IO ()
-printConcretizedBlocks reqs mOutFile (R.SomeConcretizedBlocks isa blocks) = do
+printConcretizedBlocks
+  :: (R.ArchConstraints arch)
+  => [Word64]
+  -> Maybe FilePath
+  -> R.ISA arch
+  -> [R.ConcretizedBlock arch]
+  -> IO ()
+printConcretizedBlocks reqs mOutFile isa blocks = do
   let idx = indexBlocks isa blocks
   let cbs = [ b
             | addrWord <- reqs
@@ -531,9 +537,9 @@ printConcretizedBlock put isa cb = do
   return ()
 -- | Print out a mapping of original block addresses to rewritten block addresses to the given 'IO.Handle'
 printBlockMapping :: (MM.MemWidth (MM.ArchAddrWidth arch))
-                  => [(R.ConcreteAddress arch, R.ConcreteAddress arch)]
+                  => R.BlockMapping arch
                   -> IO.Handle
                   -> IO ()
-printBlockMapping bm h = do
-  F.forM_ bm $ \(origAddr, newAddr) -> do
+printBlockMapping (R.BlockMapping bm _revMap) h = do
+  F.forM_ (M.toList bm) $ \(origAddr, newAddr) -> do
     T.hPutStrLn h (Fmt.fmt (PD.pretty origAddr ||+ " -> " +|| PD.pretty newAddr ||+ ""))

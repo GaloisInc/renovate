@@ -15,22 +15,20 @@ module Renovate.BinaryFormat.ELF.Common
   , allocatedVAddrsM
   , findTextSections
   , findTextSection
-  , TextSectionIssue
   , pageAlignment
   , newTextAlign
   ) where
 
 import qualified Control.Monad.Catch as C
-import qualified Control.Monad.Fail as Fail
 import qualified Data.ByteString.Char8 as C8
 import qualified Data.Foldable as F
 import qualified Data.Map as Map
-import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
 
 import qualified Data.ElfEdit as E
 
 import           Renovate.BinaryFormat.ELF.Common.Internal
+import qualified Renovate.Core.Exception as RCE
 
 -- | Extract all the segments' virtual addresses (keys) and their sizes
 -- (values). If we don't know the size of a segment yet because it is going to
@@ -48,34 +46,23 @@ allocatedVAddrs e = F.foldl' (Map.unionWith max) Map.empty <$> traverse processR
 
 
 -- | Like allocatedVAddrs, but throw an error instead of returning it purely
-allocatedVAddrsM ::
-  Fail.MonadFail m =>
-  E.ElfWidthConstraints w =>
-  E.Elf w ->
-  m (Map.Map (E.ElfWordType w) (E.ElfWordType w))
+allocatedVAddrsM
+  :: (C.MonadThrow m, E.ElfWidthConstraints w)
+  => E.Elf w
+  -> m (Map.Map (E.ElfWordType w) (E.ElfWordType w))
 allocatedVAddrsM e = case allocatedVAddrs e of
-  Left seg -> fail
-    $  "Could not compute free virtual addresses: segment "
-    ++ show (E.elfSegmentIndex seg)
-    ++ " has relative size"
+  Left seg -> C.throwM (RCE.SegmentHasRelativeSize (toInteger (E.elfSegmentIndex seg)))
   Right m -> return m
 
 findTextSections :: E.Elf w -> [E.ElfSection (E.ElfWordType w)]
 findTextSections = E.findSectionByName (C8.pack ".text")
 
-data TextSectionIssue =
-    NoTextSectionFound
-  | MultipleTextSectionsFound Int
-  deriving (Show, Typeable)
-
-instance C.Exception TextSectionIssue
-
 findTextSection :: C.MonadThrow m => E.Elf w -> m (E.ElfSection (E.ElfWordType w))
 findTextSection e = do
   case findTextSections e of
     [textSection] -> return textSection
-    [] -> C.throwM NoTextSectionFound
-    sections -> C.throwM (MultipleTextSectionsFound (length sections))
+    [] -> C.throwM (RCE.MissingExpectedSection ".text")
+    sections -> C.throwM (RCE.MultipleSectionDefinitions ".text" (length sections))
 
 -- | The system page alignment (assuming 4k pages)
 pageAlignment :: Word64
