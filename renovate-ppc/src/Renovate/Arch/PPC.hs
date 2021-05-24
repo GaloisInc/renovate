@@ -20,7 +20,8 @@ module Renovate.Arch.PPC (
   disassemble,
   Instruction,
   Operand(..),
-
+  annotateInstr,
+  annotateInstrWith,
   -- * Exceptions
   InstructionDisassemblyFailure(..)
   ) where

@@ -4,6 +4,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
@@ -20,6 +21,8 @@ module Renovate.Arch.PPC.ISA (
   OnlyEncoding,
   fromInst,
   toInst,
+  annotateInstr,
+  annotateInstrWith,
   Operand(..),
   PPCRepr(..),
   -- * Exceptions
@@ -527,7 +530,6 @@ instance R.ToGenericInstruction (MP.AnyPPC v) where
   toGenericInstruction   = toInst
   fromGenericInstruction = fromInst
 
-
 -- | Convert the 'Instruction' wrapper to the base instruction type, dropping
 -- annotations. This operation is depricated in favor of
 -- 'R.toGenericInstruction'.
@@ -552,6 +554,16 @@ fromInst PPCRepr i =
 unannotateOpcode :: D.Annotated a D.Operand tp -> D.Operand tp
 unannotateOpcode (D.Annotated _ op) = op
 
+annotateInstr :: a -> Instruction tp () -> Instruction tp a
+annotateInstr a = annotateInstrWith (\(D.Annotated _ op) -> D.Annotated a op)
+
+annotateInstrWith
+  :: (forall s . D.Annotated () D.Operand s -> D.Annotated a D.Operand s)
+  -> Instruction tp ()
+  -> Instruction tp a
+annotateInstrWith f (I i) =
+  case i of
+    D.Instruction opc ops -> I (D.Instruction (coerce opc) (FC.fmapFC f ops))
 
 {- Note [Conditional Branch Restrictions]
 
