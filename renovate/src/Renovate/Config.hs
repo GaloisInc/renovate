@@ -240,7 +240,6 @@ compose funcs = go funcs
                                    is'
                                    repr'
                                    (B.symbolicBlockSymbolicSuccessor b)
-                                   (B.symbolicBlockDiscoveryBlock b)
           in go fs b'
         Nothing -> go fs b
 

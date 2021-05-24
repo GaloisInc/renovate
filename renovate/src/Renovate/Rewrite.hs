@@ -323,7 +323,6 @@ instrumentBlocks isa blockInfo (textStart, textEnd) instrumentor mem baseSymBloc
                                      insns'
                                      repr'
                                      (B.symbolicBlockSymbolicSuccessor sb)
-                                     (B.symbolicBlockDiscoveryBlock sb)
            return $! RCL.WithProvenance cb sb' RCL.Modified
          Nothing      ->
            return $! RCL.WithProvenance cb sb RCL.Unmodified

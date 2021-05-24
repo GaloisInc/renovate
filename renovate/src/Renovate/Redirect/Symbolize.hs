@@ -97,7 +97,7 @@ symbolizeJumps isa mem symAddrMap (cb, symAddr) =
                                                   ]
          Just insnList ->
            case RRR.reifyFallthrough isa mem cb of
-             Nothing -> (cb, symbolicBlock (concreteBlockAddress cb) symAddr insnList repr Nothing (concreteDiscoveryBlock cb))
+             Nothing -> (cb, symbolicBlock (concreteBlockAddress cb) symAddr insnList repr Nothing)
              Just concreteFallthrough ->
                -- NOTE: It is not a failure if there is no symbolic address for a
                -- fallthrough address.  That simply means that code discovery was
@@ -107,7 +107,7 @@ symbolizeJumps isa mem symAddrMap (cb, symAddr) =
                -- it originally fell through to.
                let symSucc = lookupSymbolicAddress concreteFallthrough
                    concAddr = concreteBlockAddress cb
-               in (cb, symbolicBlock concAddr symAddr insnList repr (Just symSucc) (concreteDiscoveryBlock cb))
+               in (cb, symbolicBlock concAddr symAddr insnList repr (Just symSucc))
   where
     symbolize :: forall tp
                . (RCI.Instruction arch tp (), ConcreteAddress arch)

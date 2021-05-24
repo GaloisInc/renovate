@@ -51,7 +51,6 @@ module Renovate
   B.symbolicBlockOriginalAddress,
   B.symbolicBlockSymbolicAddress,
   B.symbolicBlockSymbolicSuccessor,
-  B.symbolicBlockDiscoveryBlock,
   B.withSymbolicInstructions,
   -- ** Concretized blocks
   B.ConcretizedBlock,

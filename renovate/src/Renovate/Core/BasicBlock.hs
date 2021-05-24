@@ -25,7 +25,6 @@ module Renovate.Core.BasicBlock (
   symbolicBlockSymbolicSuccessor,
   symbolicBlockSize,
   symbolicBlockWithoutSuccessor,
-  symbolicBlockDiscoveryBlock,
   withSymbolicInstructions,
   -- ** Padding blocks
   PaddingBlock,
@@ -167,7 +166,6 @@ data SymbolicBlock arch =
                 , symbolicBlockInstructions :: DLN.NonEmpty (RCI.Instruction arch tp (RCR.Relocation arch))
                 , symbolicBlockRepr :: RCI.InstructionArchRepr arch tp
                 , symbolicBlockSymbolicSuccessor :: Maybe (RCA.SymbolicAddress arch)
-                , symbolicBlockDiscoveryBlock :: Some (MD.ParsedBlock arch)
                 }
 
 symbolicBlock :: forall arch (tp :: RCI.InstructionArchReprKind arch)
@@ -184,15 +182,13 @@ symbolicBlock :: forall arch (tp :: RCI.InstructionArchReprKind arch)
               --
               -- This could be Nothing if the block ends in an unconditional
               -- jump (note: calls have a fallthrough because they return)
-              -> Some (MD.ParsedBlock arch)
               -> SymbolicBlock arch
-symbolicBlock concAddr symAddr symInsns repr symSucc spb =
+symbolicBlock concAddr symAddr symInsns repr symSucc =
   SymbolicBlock { symbolicBlockOriginalAddress = concAddr
                 , symbolicBlockSymbolicAddress = symAddr
                 , symbolicBlockInstructions = symInsns
                 , symbolicBlockRepr = repr
                 , symbolicBlockSymbolicSuccessor = symSucc
-                , symbolicBlockDiscoveryBlock = spb
                 }
 
 symbolicBlockWithoutSuccessor :: SymbolicBlock arch -> SymbolicBlock arch
@@ -206,7 +202,7 @@ withSymbolicInstructions :: SymbolicBlock arch
                             . ( RCI.InstructionConstraints arch tp )
                             => RCI.InstructionArchRepr arch tp -> DLN.NonEmpty (RCI.Instruction arch tp (RCR.Relocation arch)) -> a)
                          -> a
-withSymbolicInstructions (SymbolicBlock _caddr _saddr insns repr _ _) k =
+withSymbolicInstructions (SymbolicBlock _caddr _saddr insns repr _) k =
   k repr insns
 
 -- | Some algorithms (such as layout) will need to assigned an address
@@ -362,7 +358,7 @@ symbolicBlockSize :: (HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch))
                   -> MC.Memory (MC.ArchAddrWidth arch)
                   -> SymbolicBlock arch
                   -> Word64
-symbolicBlockSize isa mem (SymbolicBlock origAddr _symAddr insns repr mSymSucc _) =
+symbolicBlockSize isa mem (SymbolicBlock origAddr _symAddr insns repr mSymSucc) =
   fromIntegral (normalInstSizes + fallthroughInstSizes)
   where
     -- The symbolic block has tagged instructions, which have each modifiable
