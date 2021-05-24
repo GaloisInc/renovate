@@ -109,13 +109,12 @@ isa = R.ISA
 
 -- | Simple adapter for 'x64JumpTypeRaw' with the right type to be used in an
 -- ISA.
-x64JumpType :: forall (tp :: R.InstructionArchReprKind X86.X86_64) t unused
+x64JumpType :: forall (tp :: R.InstructionArchReprKind X86.X86_64) t
              . Instruction tp t
             -> MM.Memory 64
             -> R.ConcreteAddress X86.X86_64
-            -> unused
             -> Some (R.JumpType X86.X86_64)
-x64JumpType insn _ addr _ = x64JumpTypeRaw insn addr
+x64JumpType insn _ addr = x64JumpTypeRaw insn addr
 
 -- | Classify different kinds of jump instructions.
 --
@@ -274,23 +273,21 @@ promoteJump ii =
 -- references, so we don't need to update any IP-relative address operands.
 -- However, we do need to extend any jumps we find into jumps with 4 byte
 -- offsets.
-x64SymbolizeAddresses :: forall (tp :: R.InstructionArchReprKind X86.X86_64) ids
+x64SymbolizeAddresses :: forall (tp :: R.InstructionArchReprKind X86.X86_64)
                        . MM.Memory 64
                       -> (R.ConcreteAddress X86.X86_64 -> R.SymbolicAddress X86.X86_64)
-                      -> MD.ParsedBlock X86.X86_64 ids
                       -> R.ConcreteAddress X86.X86_64
                       -> Instruction tp ()
                       -> [R.Instruction X86.X86_64 tp (R.Relocation X86.X86_64)]
-x64SymbolizeAddresses _ _ _ _ (RawBytes b) = [RawBytes b]
-x64SymbolizeAddresses mem toSymbolic pb insnAddr i0@(XI (promoteJump -> ii)) =
-  [XI (ii { D.iiArgs = fmap (toRelocatableOperand mem toSymbolic pb insnAddr ii size0) (D.iiArgs ii) })]
+x64SymbolizeAddresses _ _ _ (RawBytes b) = [RawBytes b]
+x64SymbolizeAddresses mem toSymbolic insnAddr i0@(XI (promoteJump -> ii)) =
+  [XI (ii { D.iiArgs = fmap (toRelocatableOperand mem toSymbolic insnAddr ii size0) (D.iiArgs ii) })]
   where
     size0 = x64Size i0
 
 toRelocatableOperand
   :: MM.Memory 64
   -> (R.ConcreteAddress X86.X86_64 -> R.SymbolicAddress X86.X86_64)
-  -> MD.ParsedBlock X86.X86_64 ids
   -> R.ConcreteAddress X86.X86_64
   -> D.InstructionInstanceF (AnnotatedOperand ())
   -> Word8
@@ -298,7 +295,7 @@ toRelocatableOperand
   -- needed to calculate jump targets
   -> AnnotatedOperand ()
   -> AnnotatedOperand (R.Relocation X86.X86_64)
-toRelocatableOperand mem toSymbolic _pb insnAddr ii size0 AnnotatedOperand { aoOperand = (v, ty) } =
+toRelocatableOperand mem toSymbolic insnAddr ii size0 AnnotatedOperand { aoOperand = (v, ty) } =
   case v of
     D.JumpOffset _ oldOffset ->
       -- Note that jump offsets are always extended to 32 bit offsets so that we

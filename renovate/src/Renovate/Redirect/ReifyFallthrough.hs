@@ -28,7 +28,7 @@ reifyFallthrough isa mem cb =
   RB.withInstructionAddresses isa cb $ \_repr insns -> do
     case (RB.concreteDiscoveryBlock cb, DLN.last insns) of
       (Some pb, (lastInsn, lastInsnAddr))
-        | isUnconditionalJT (RI.isaJumpType isa lastInsn mem lastInsnAddr pb) -> Nothing
+        | isUnconditionalJT (RI.isaJumpType isa lastInsn mem lastInsnAddr) -> Nothing
         | otherwise -> do
             let sz = MD.blockSize pb
             let succAddr = RB.concreteBlockAddress cb `RA.addressAddOffset` fromIntegral sz

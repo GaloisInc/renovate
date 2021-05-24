@@ -373,15 +373,14 @@ ppcConcretizeAddresses _mem concretize srcAddr (I i) =
 --
 -- Note that the long unconditional jump we add has a dummy target, as the real
 -- target is specified through the symbolic target.
-ppcSymbolizeAddresses :: forall arch tp v unused
+ppcSymbolizeAddresses :: forall arch tp v
                        . (MM.MemWidth (MM.ArchAddrWidth arch), arch ~ MP.AnyPPC v)
                       => MM.Memory (MM.ArchAddrWidth arch)
                       -> (R.ConcreteAddress arch -> R.SymbolicAddress arch)
-                      -> unused
                       -> R.ConcreteAddress arch
                       -> R.Instruction arch tp ()
                       -> [R.Instruction arch tp (R.Relocation arch)]
-ppcSymbolizeAddresses mem symbolizeAddress pb insnAddr origI@(I i) = case i of
+ppcSymbolizeAddresses mem symbolizeAddress insnAddr origI@(I i) = case i of
   D.Instruction opc operands ->
     [I (D.Instruction (coerce opc) (FC.fmapFC toRelocation operands))]
   where
@@ -394,9 +393,9 @@ ppcSymbolizeAddresses mem symbolizeAddress pb insnAddr origI@(I i) = case i of
     toRelocation :: forall a tp' . D.Annotated a D.Operand tp' -> D.Annotated (R.Relocation arch) D.Operand tp'
     toRelocation (D.Annotated _ operand) =
       case operand of
-        D.Calltarget (D.BT {}) -> jumpRelocation symbolizeAddress insnAddr operand (ppcJumpType origI mem insnAddr pb)
-        D.Directbrtarget (D.BT {}) -> jumpRelocation symbolizeAddress insnAddr operand (ppcJumpType origI mem insnAddr pb)
-        D.Condbrtarget (D.CBT {}) -> jumpRelocation symbolizeAddress insnAddr operand (ppcJumpType origI mem insnAddr pb)
+        D.Calltarget (D.BT {}) -> jumpRelocation symbolizeAddress insnAddr operand (ppcJumpType origI mem insnAddr)
+        D.Directbrtarget (D.BT {}) -> jumpRelocation symbolizeAddress insnAddr operand (ppcJumpType origI mem insnAddr)
+        D.Condbrtarget (D.CBT {}) -> jumpRelocation symbolizeAddress insnAddr operand (ppcJumpType origI mem insnAddr)
         _ -> D.Annotated R.NoRelocation operand
 
 -- | Generate any needed relocations for a jump operand (based on the results if 'R.isaJumpType')
@@ -435,9 +434,8 @@ ppcJumpType :: (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch))
             => Instruction tp t
             -> MM.Memory (MM.ArchAddrWidth arch)
             -> R.ConcreteAddress arch
-            -> unused
             -> Some (R.JumpType arch)
-ppcJumpType i _mem insnAddr _ =
+ppcJumpType i _mem insnAddr =
   case toInst i of
     D.Instruction opc operands ->
       case operands of

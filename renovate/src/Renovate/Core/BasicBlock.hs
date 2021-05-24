@@ -409,8 +409,7 @@ terminatorType :: (MC.MemWidth (MC.ArchAddrWidth arch)) => RI.ISA arch -> MC.Mem
 terminatorType isa mem b =
   withInstructionAddresses isa b $ \_repr insns ->
     let (termInsn, addr) = DLN.last insns
-    in case concreteDiscoveryBlock b of
-      Some pb -> RI.isaJumpType isa termInsn mem addr pb
+    in RI.isaJumpType isa termInsn mem addr
 
 prettyConcreteBlock :: (MC.MemWidth (MC.ArchAddrWidth arch)) => RI.ISA arch -> ConcreteBlock arch -> PP.Doc ann
 prettyConcreteBlock isa (ConcreteBlock addr insns _repr _pb) =

@@ -66,16 +66,37 @@ import           Renovate.Arch.AArch32.Repr
 
 -- | A wrapper around A32 and T32 instructions type indexed to ensure that ARM
 -- and Thumb instructions cannot be mixed in a single basic block
+--
+-- Note that unlike other architectures, the ARM instruction type carries the
+-- 'MD.ParsedBlock' that it was discovered from. This is required to resolve
+-- jump targets for instructions that are not obvious jumps (i.e., arithmetic
+-- instructions that modify PC directly).
+--
+-- NOTE: This means that 'R.isaJumpType' will *only* work properly for
+-- instructions that jump by modifying PC if the 'MD.ParsedBlock' is
+-- included. This should not be a problem for clients of renovate unless they
+-- use 'R.isaJumpType' on instructions generated during rewriting that jump via
+-- PC modifications, which is not recommended.
 data Instruction tp a where
   -- | An A32 encoded instruction
-  ARMInstruction :: DA.AnnotatedInstruction a -> Instruction A32 a
+  ARMInstruction :: Maybe (MD.ParsedBlock MA.ARM ids) -> DA.AnnotatedInstruction a -> Instruction A32 a
   -- | Raw bytes in the A32 instruction stream
   ARMBytes :: BS.ByteString -> Instruction A32 a
   -- | A T32 instruction
-  ThumbInstruction :: DT.AnnotatedInstruction a -> Instruction T32 a
+  ThumbInstruction :: Maybe (MD.ParsedBlock MA.ARM ids) -> DT.AnnotatedInstruction a -> Instruction T32 a
 
 instance Show (Instruction tp a) where
   show i = show (PP.pretty i)
+
+withInstructionParsedBlock
+  :: Instruction tp a
+  -> (forall ids . Maybe (MD.ParsedBlock MA.ARM ids) -> b)
+  -> b
+withInstructionParsedBlock i k =
+  case i of
+    ARMInstruction mpb _ -> k mpb
+    ARMBytes {} -> k Nothing
+    ThumbInstruction mpb _ -> k mpb
 
 armInstructionRepr :: Instruction tp a -> ARMRepr tp
 armInstructionRepr i =
@@ -88,7 +109,7 @@ pattern AI :: forall (tp :: ARMKind) a
             . ()
            => (tp ~ A32)
            => DA.Instruction -> Instruction tp a
-pattern AI i <- ARMInstruction (armDropAnnotations -> i)
+pattern AI i <- ARMInstruction _ (armDropAnnotations -> i)
 
 -- pattern TI :: forall (tp :: ARMKind) a
 --             . ()
@@ -115,18 +136,18 @@ instance PP.Pretty (Instruction tp a) where
 instance Functor (Instruction tp) where
   fmap f i =
     case i of
-      ARMInstruction (DA.Instruction opc operands) ->
-        ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC (\(DA.Annotated a o) -> DA.Annotated (f a) o) operands))
+      ARMInstruction mpb (DA.Instruction opc operands) ->
+        ARMInstruction mpb (DA.Instruction (coerce opc) (FC.fmapFC (\(DA.Annotated a o) -> DA.Annotated (f a) o) operands))
       ARMBytes bs -> ARMBytes bs
-      ThumbInstruction (DT.Instruction opc operands) ->
-        ThumbInstruction (DT.Instruction (coerce opc) (FC.fmapFC (\(DT.Annotated a o) -> DT.Annotated (f a) o) operands))
+      ThumbInstruction mpb (DT.Instruction opc operands) ->
+        ThumbInstruction mpb (DT.Instruction (coerce opc) (FC.fmapFC (\(DT.Annotated a o) -> DT.Annotated (f a) o) operands))
 
 instance Eq (Instruction tp ()) where
-  ARMInstruction i1 == ARMInstruction i2 = i1 == i2
+  ARMInstruction _ i1 == ARMInstruction _ i2 = i1 == i2
   ARMBytes bs1 == ARMBytes bs2 = bs1 == bs2
   ARMInstruction {} == ARMBytes {} = False
   ARMBytes {} == ARMInstruction {} = False
-  ThumbInstruction i1 == ThumbInstruction i2 = i1 == i2
+  ThumbInstruction _ i1 == ThumbInstruction _ i2 = i1 == i2
 
 instance Eq (Operand tp) where
   ARMOperand o1 == ARMOperand o2 = isJust (PC.testEquality o1 o2)
@@ -170,9 +191,9 @@ instance C.Exception InstructionDisassemblyFailure
 assemble :: (C.MonadThrow m) => Instruction tp () -> m BS.ByteString
 assemble i =
   case i of
-    ARMInstruction ai -> return (LBS.toStrict (DA.assembleInstruction (armDropAnnotations ai)))
+    ARMInstruction _ ai -> return (LBS.toStrict (DA.assembleInstruction (armDropAnnotations ai)))
     ARMBytes bs -> return bs
-    ThumbInstruction ti -> return (LBS.toStrict (DT.assembleInstruction (thumbDropAnnotations ti)))
+    ThumbInstruction _ ti -> return (LBS.toStrict (DT.assembleInstruction (thumbDropAnnotations ti)))
 
 -- | Disassemble a concrete block from a bytestring
 --
@@ -192,12 +213,12 @@ disassemble :: forall m ids
             -> BS.ByteString
             -> m (R.ConcreteBlock MA.ARM)
 disassemble pb startAddr endAddr bs0 = do
-  let acon = toAnnotatedARM A32Repr
+  let acon = toAnnotatedARM (Just pb) A32Repr
   let minsns0 = go A32Repr acon DA.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
   case DLN.nonEmpty =<< minsns0 of
     Just insns -> return (R.concreteBlock startAddr insns (A32Repr) pb)
     Nothing -> do
-      let tcon = ThumbInstruction . toAnnotatedThumb
+      let tcon = ThumbInstruction (Just pb) . toAnnotatedThumb
       minsns1 <- go T32Repr tcon DT.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
       case DLN.nonEmpty minsns1 of
         Nothing -> C.throwM (EmptyBlock startAddr)
@@ -229,9 +250,9 @@ disassemble pb startAddr endAddr bs0 = do
 armPrettyInstruction :: Instruction tp a -> String
 armPrettyInstruction i =
   case i of
-    ARMInstruction ai -> show (DA.ppInstruction (armDropAnnotations ai))
+    ARMInstruction _ ai -> show (DA.ppInstruction (armDropAnnotations ai))
     ARMBytes bs -> ".word " ++ show bs
-    ThumbInstruction ti -> show (DT.ppInstruction (thumbDropAnnotations ti))
+    ThumbInstruction _ ti -> show (DT.ppInstruction (thumbDropAnnotations ti))
 
 armDropAnnotations :: DA.AnnotatedInstruction a -> DA.Instruction
 armDropAnnotations i =
@@ -239,11 +260,11 @@ armDropAnnotations i =
     DA.Instruction opc annotatedOps ->
       DA.Instruction (coerce opc) (FC.fmapFC armUnannotateOpcode annotatedOps)
 
-toAnnotatedARM :: ARMRepr A32 -> DA.Instruction -> Instruction A32 ()
-toAnnotatedARM _ i =
+toAnnotatedARM :: Maybe (MD.ParsedBlock MA.ARM ids) -> ARMRepr A32 -> DA.Instruction -> Instruction A32 ()
+toAnnotatedARM mpb _ i =
   case i of
     DA.Instruction opc ops ->
-      ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC (DA.Annotated ()) ops))
+      ARMInstruction mpb (DA.Instruction (coerce opc) (FC.fmapFC (DA.Annotated ()) ops))
 
 toAnnotatedThumb :: DT.Instruction -> DT.AnnotatedInstruction ()
 toAnnotatedThumb i =
@@ -272,7 +293,7 @@ armInstrSize i =
   case i of
     ARMInstruction {} -> 4
     ARMBytes bs -> fromIntegral (BS.length bs)
-    ThumbInstruction ti ->
+    ThumbInstruction _ ti ->
       let bytes = DT.assembleInstruction (thumbDropAnnotations ti)
       in fromIntegral (LBS.length bytes)
 
@@ -281,14 +302,14 @@ armMakePadding nBytes repr =
   case repr of
     A32Repr
       | leftoverARM == 0 ->
-        fmap (toAnnotatedARM repr) (replicate (fromIntegral nARMInsns) aBrk)
+        fmap (toAnnotatedARM Nothing repr) (replicate (fromIntegral nARMInsns) aBrk)
       | otherwise ->
         RP.panic RP.ARMISA "armMakePadding" [ "Unexpected byte count (A32): " ++ show nBytes
                                             , "Only instruction-sized padding (4 bytes) is supported"
                                             ]
     T32Repr
       | leftoverThumb == 0 ->
-        fmap (ThumbInstruction . toAnnotatedThumb) (replicate (fromIntegral nThumbInsns) tBrk)
+        fmap (ThumbInstruction Nothing . toAnnotatedThumb) (replicate (fromIntegral nThumbInsns) tBrk)
       | otherwise ->
         RP.panic RP.ARMISA "armMakePadding" [ "Unexpected byte count (T32): " ++ show nBytes
                                             , "Only instruction-sized padding (2 bytes) is supported"
@@ -375,10 +396,9 @@ asInteger w = PN.toSigned (PN.knownNat @n) (toInteger w)
 armJumpType :: Instruction tp a
             -> MM.Memory 32
             -> R.ConcreteAddress MA.ARM
-            -> MD.ParsedBlock MA.ARM ids
             -> Some (R.JumpType MA.ARM)
-armJumpType i mem insnAddr pb =
-  case asParsedTerminator mem insnAddr pb of
+armJumpType i mem insnAddr = withInstructionParsedBlock i $ \mpb ->
+  case asParsedTerminator mem insnAddr mpb of
     Nothing -> Some R.NoJump
     Just term ->
       case term of
@@ -468,9 +488,10 @@ data CurrentInstruction = NoInstruction
 -- statement and close it at 'MD.ArchState'
 asParsedTerminator :: MM.Memory 32
                    -> R.ConcreteAddress MA.ARM
-                   -> MD.ParsedBlock MA.ARM ids
+                   -> Maybe (MD.ParsedBlock MA.ARM ids)
                    -> Maybe (MD.ParsedTermStmt MA.ARM ids)
-asParsedTerminator mem insnAddr pb =
+asParsedTerminator _ _ Nothing = Nothing
+asParsedTerminator mem insnAddr (Just pb) =
   case F.foldl' searchTarget NoInstruction (markLast (MD.pblockStmts pb)) of
     NoInstruction -> Nothing
     InInstruction addr
@@ -505,7 +526,7 @@ markLast lst =
     (lastItem, _) : rest -> reverse ((lastItem, True) : rest)
 
 singleton :: DA.Instruction -> DLN.NonEmpty (Instruction A32 ())
-singleton = (DLN.:| []) . toAnnotatedARM A32Repr
+singleton = (DLN.:| []) . toAnnotatedARM Nothing A32Repr
 
 -- | Resolve relocations in instructions (turning them from symbolic instructions to concrete instructions)
 --
@@ -525,7 +546,7 @@ armConcretizeAddresses _mem toConcrete insnAddr i0 =
   case i0 of
     ARMBytes {} ->
       RP.panic RP.ARMISA "armConcretizeAddresses" [ "Illegal raw bytes at: " ++ show insnAddr ]
-    ARMInstruction (DA.Instruction opc operands) ->
+    ARMInstruction _ (DA.Instruction opc operands) ->
       case (opc, operands) of
         (DA.LDR_l_A1, DA.Annotated _ p
                 DA.:< DA.Annotated _ rt
@@ -536,11 +557,11 @@ armConcretizeAddresses _mem toConcrete insnAddr i0 =
                 DA.:< DA.Nil) ->
           -- See Note [Rewriting LDR] for details on this construction
           let w32 = fromIntegral (R.absoluteAddress (absAddr `R.addressAddOffset` 8))
-              i1 = ARMInstruction $ DA.Instruction DA.LDR_l_A1 (DA.Annotated () p DA.:< DA.Annotated () rt DA.:< DA.Annotated () u DA.:< DA.Annotated () w DA.:< DA.Annotated () cond DA.:< DA.Annotated () (DA.Bv12 0) DA.:< DA.Nil)
-              i2 = toAnnotatedARM A32Repr $ DA.Instruction DA.B_A1 (DA.Bv4 unconditional DA.:< DA.Bv24 (0 `DB.shiftR` 2) DA.:< DA.Nil)
+              i1 = ARMInstruction Nothing $ DA.Instruction DA.LDR_l_A1 (DA.Annotated () p DA.:< DA.Annotated () rt DA.:< DA.Annotated () u DA.:< DA.Annotated () w DA.:< DA.Annotated () cond DA.:< DA.Annotated () (DA.Bv12 0) DA.:< DA.Nil)
+              i2 = toAnnotatedARM Nothing A32Repr $ DA.Instruction DA.B_A1 (DA.Bv4 unconditional DA.:< DA.Bv24 (0 `DB.shiftR` 2) DA.:< DA.Nil)
               i3 = ARMBytes (LBS.toStrict (BB.toLazyByteString (BB.word32LE w32)))
               -- Operands marked with ??? were blindly chosen by disassembling a similar instruction.
-              i4 = ARMInstruction $ DA.Instruction DA.LDR_i_A1_off $
+              i4 = ARMInstruction Nothing $ DA.Instruction DA.LDR_i_A1_off $
                      (DA.Annotated () (DA.Bv1 1) -- ???
                       DA.:< DA.Annotated () rt -- target register?
                       DA.:< DA.Annotated () rt -- source register?
@@ -566,7 +587,7 @@ armConcretizeAddresses _mem toConcrete insnAddr i0 =
                DA.:< DA.Nil) ->
           let newOff = jumpOffset insnAddr (toConcrete symTarget)
           in singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
-        _ -> ARMInstruction (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands)) DLN.:| []
+        _ -> ARMInstruction Nothing (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands)) DLN.:| []
     ThumbInstruction {} ->
       RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet supported"
                                                   ]
@@ -583,12 +604,11 @@ armConcretizeAddresses _mem toConcrete insnAddr i0 =
 jumpTargetRelocation
   :: MM.Memory 32
   -> (R.ConcreteAddress MA.ARM -> R.SymbolicAddress MA.ARM)
-  -> MD.ParsedBlock MA.ARM ids
   -> R.ConcreteAddress MA.ARM
   -> Instruction tp ()
   -> Maybe (R.Relocation MA.ARM)
-jumpTargetRelocation mem toSymbolic pb insnAddr i =
-  case armJumpType i mem insnAddr pb of
+jumpTargetRelocation mem toSymbolic insnAddr i =
+  case armJumpType i mem insnAddr of
     Some (R.RelativeJump _jc src offset) -> Just (R.SymbolicRelocation (toSymbolic (src `R.addressAddOffset` offset)))
     Some (R.AbsoluteJump _jc target) -> Just (R.SymbolicRelocation (toSymbolic target))
     Some (R.IndirectJump {}) -> Nothing
@@ -603,13 +623,12 @@ noRelocation = DA.Annotated R.NoRelocation
 
 armSymbolizeAddresses :: MM.Memory 32
                       -> (R.ConcreteAddress MA.ARM -> R.SymbolicAddress MA.ARM)
-                      -> MD.ParsedBlock MA.ARM ids
                       -> R.ConcreteAddress MA.ARM
                       -> Instruction tp ()
                       -> [R.Instruction MA.ARM tp (R.Relocation MA.ARM)]
-armSymbolizeAddresses mem toSymbolic pb insnAddr i =
+armSymbolizeAddresses mem toSymbolic insnAddr i =
   case i of
-    ARMInstruction (DA.Instruction opc operands) ->
+    ARMInstruction mpb (DA.Instruction opc operands) ->
       case (opc, operands) of
         (DA.LDR_l_A1, DA.Annotated _ p
                 DA.:< DA.Annotated _ rt
@@ -628,32 +647,32 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
                                                DA.:< DA.Annotated (R.PCRelativeRelocation target) (DA.Bv12 0)
                                                DA.:< DA.Nil
                                                )
-          in [ARMInstruction i']
+          in [ARMInstruction mpb i']
         (DA.B_A1, DA.Annotated _ cond@(DA.Bv4 _) DA.:< DA.Annotated _ (DA.Bv24 _off) DA.:< DA.Nil)
-          | Just reloc <- jumpTargetRelocation mem toSymbolic pb insnAddr i ->
+          | Just reloc <- jumpTargetRelocation mem toSymbolic insnAddr i ->
               let i' = DA.Instruction (coerce opc) (     noRelocation cond
                                                    DA.:< DA.Annotated reloc (DA.Bv24 0)
                                                    DA.:< DA.Nil
                                                    )
-              in [ARMInstruction i']
+              in [ARMInstruction mpb i']
         (DA.BL_i_A1, DA.Annotated _ cond@(DA.Bv4 _) DA.:< DA.Annotated _ (DA.Bv24 _off) DA.:< DA.Nil)
-          | Just reloc <- jumpTargetRelocation mem toSymbolic pb insnAddr i ->
+          | Just reloc <- jumpTargetRelocation mem toSymbolic insnAddr i ->
             let i' = DA.Instruction (coerce opc) (     noRelocation cond
                                                  DA.:< DA.Annotated reloc (DA.Bv24 0)
                                                  DA.:< DA.Nil
                                                  )
-            in [ARMInstruction i']
+            in [ARMInstruction mpb i']
         (DA.BL_i_A2, DA.Annotated _ b1@(DA.Bv1 _) DA.:< DA.Annotated _ cond@(DA.Bv4 _) DA.:< DA.Annotated _ (DA.Bv24 _off) DA.:< DA.Nil)
-          | Just reloc <- jumpTargetRelocation mem toSymbolic pb insnAddr i ->
+          | Just reloc <- jumpTargetRelocation mem toSymbolic insnAddr i ->
             let i' = DA.Instruction (coerce opc) (     noRelocation b1
                                                  DA.:< noRelocation cond
                                                  DA.:< DA.Annotated reloc (DA.Bv24 0)
                                                  DA.:< DA.Nil
                                                  )
-            in [ARMInstruction i']
+            in [ARMInstruction mpb i']
         _ ->
           let i' = DA.Instruction (coerce opc) (FC.fmapFC (\(DA.Annotated _ c) -> DA.Annotated R.NoRelocation c) operands)
-          in [ARMInstruction i']
+          in [ARMInstruction mpb i']
     ARMBytes {} ->
       RP.panic RP.ARMISA "armSymbolizeAddresses" [ "Raw bytes are not allowed in the instruction stream during symbolization at: " ++ show insnAddr ]
     ThumbInstruction {} ->

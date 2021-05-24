@@ -19,7 +19,6 @@ import qualified Data.List.NonEmpty as DLN
 import qualified Data.Macaw.CFG as MM
 import qualified Data.Map as M
 import           Data.Maybe ( fromMaybe )
-import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Traversable as T
 import           Data.Word ( Word64 )
 
@@ -113,8 +112,7 @@ symbolizeJumps isa mem symAddrMap (cb, symAddr) =
                . (RCI.Instruction arch tp (), ConcreteAddress arch)
               -> [RCI.Instruction arch tp (RCR.Relocation arch)]
     symbolize (i, addr) =
-      case concreteDiscoveryBlock cb of
-        Some pb -> isaSymbolizeAddresses isa mem lookupSymbolicAddress pb addr i
+      isaSymbolizeAddresses isa mem lookupSymbolicAddress addr i
 
     lookupSymbolicAddress target = fromMaybe (StableAddress target) (M.lookup target symAddrMap)
 

@@ -153,8 +153,7 @@ processWorklist = do
             addCond :: JumpCondition -> M arch ()
             addCond Unconditional = return ()
             addCond Conditional = addSuccessor
-        Some pb <- return (concreteDiscoveryBlock b)
-        () <- case isaJumpType isa lastInsn mem insnAddr pb of
+        () <- case isaJumpType isa lastInsn mem insnAddr of
           -- Fallthrough to the next block
           Some NoJump -> addSuccessor
           Some (Return cond) -> do

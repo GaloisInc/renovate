@@ -26,7 +26,6 @@ import qualified Data.List.NonEmpty as DLN
 import           Data.Word ( Word8, Word64 )
 
 import qualified Data.Macaw.CFG as MM
-import qualified Data.Macaw.Discovery as MD
 import qualified Data.Parameterized.Classes as PC
 import           Data.Parameterized.Some ( Some(..) )
 
@@ -122,10 +121,9 @@ data ISA arch = ISA
     -- ^ Compute the size of an instruction in bytes
   , isaInstructionRepr :: forall t tp . RCI.Instruction arch tp t -> RCI.InstructionArchRepr arch tp
     -- ^ Return the type representative for an instruction
-  , isaSymbolizeAddresses :: forall tp ids
+  , isaSymbolizeAddresses :: forall tp
                            . MM.Memory (MM.ArchAddrWidth arch)
                           -> (RA.ConcreteAddress arch -> RA.SymbolicAddress arch)
-                          -> MD.ParsedBlock arch ids
                           -> RA.ConcreteAddress arch
                           -> RCI.Instruction arch tp ()
                           -> [RCI.Instruction arch tp (RCR.Relocation arch)]
@@ -152,11 +150,10 @@ data ISA arch = ISA
     -- modify relative jump targets to point to the proper locations.
     --
     -- NOTE: It is allowed to return extra instructions to accomplish these things.
-  , isaJumpType :: forall t tp ids
+  , isaJumpType :: forall t tp
                  . RCI.Instruction arch tp t
                 -> MM.Memory (MM.ArchAddrWidth arch)
                 -> RA.ConcreteAddress arch
-                -> MD.ParsedBlock arch ids
                 -> Some (JumpType arch)
     -- ^ Test if an instruction is a jump; if it is, return some
     -- metadata about the jump (destination or offset).
