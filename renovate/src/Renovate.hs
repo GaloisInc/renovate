@@ -132,6 +132,7 @@ module Renovate
   RCL.RewritePair(..),
   -- * Constraints
   ISA.ArchConstraints,
+  RCI.InstructionConstraints,
   -- * Diagnostics
   Diagnostic.Diagnostic(..),
   Diagnostic.ELFDiagnostic(..),
