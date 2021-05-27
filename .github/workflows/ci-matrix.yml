@@ -94,17 +94,14 @@ jobs:
       # NOTE: Locally, we use a docker runner to isolate test cases in case the
       # rewriter breaks them in a dangerous way. Docker-in-docker isn't so great
       # (and doesn't really work here), so we just disable the runner in CI
-      timeout-minutes: 30
+      timeout-minutes: 60
       if: "matrix.os != 'self-hosted'"
-      continue-on-error: true
       run: |
         sudo apt install -y qemu-user-binfmt qemu-user
         cabal test pkg:refurbish --test-options='--no-docker-runner'
 
     - name: Test refurbish (with docker-in-docker)
       # NOTE: Jared added this to intentionally attempt to bork the new self hosted CI.
-      timeout-minutes: 30
-      continue-on-error: true
+      timeout-minutes: 60
       run: |
         cabal test pkg:refurbish
-
