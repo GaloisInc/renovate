@@ -98,11 +98,11 @@ jobs:
       if: "matrix.os != 'self-hosted'"
       run: |
         sudo apt install -y qemu-user-binfmt qemu-user
-        cabal test pkg:refurbish --test-options='--no-docker-runner' --test-show-details=direct
+        cabal test pkg:refurbish --test-options='--no-docker-runner' --test-show-details=direct --write-ghc-environment-files=always --enable-tests
 
     - name: Test refurbish (with docker-in-docker)
       # NOTE: Jared added this to intentionally attempt to bork the new self hosted CI.
       timeout-minutes: 60
       if: "matrix.os == 'self.hosted'"
       run: |
-        cabal test pkg:refurbish --test-show-details=direct --write-ghc-environment-files=always
+        cabal test pkg:refurbish --test-show-details=direct --write-ghc-environment-files=always --enable-tests
