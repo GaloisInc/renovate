@@ -67,28 +67,28 @@ jobs:
     - name: Build Haskell Dependencies
       run: |
         cp cabal.project.dist cabal.project
-        cabal configure pkg:refurbish --write-ghc-environment-files=always --enable-tests
+        cabal configure --write-ghc-environment-files=always --enable-tests
         cabal build pkg:renovate --only-dependencies
 
     - name: Build renovate
       run: |
         cabal build pkg:renovate
 
+    - name: Test renovate
+      run: |
+        cabal test pkg:renovate
+
     - name: Build renovate x86
       run: |
         cabal build pkg:renovate-x86
 
+    - name: Test renovate x86
+      run: |
+        cabal test pkg:renovate-x86
+
     - name: Build refurbish
       run: |
         cabal build pkg:refurbish
-
-    - name: Test renovate
-      run: |
-        cabal test pkg:renovate --test-show-details=direct
-
-    - name: Test renovate x86
-      run: |
-        cabal test pkg:renovate-x86 --test-show-details=direct
 
     - name: Test refurbish
       # NOTE: Locally, we use a docker runner to isolate test cases in case the
@@ -98,11 +98,11 @@ jobs:
       if: "matrix.os != 'self-hosted'"
       run: |
         sudo apt install -y qemu-user-binfmt qemu-user
-        cabal test pkg:refurbish --test-options='--no-docker-runner' --test-show-details=direct --write-ghc-environment-files=always --enable-tests
+        cabal test pkg:refurbish --test-options='--no-docker-runner'
 
     - name: Test refurbish (with docker-in-docker)
       # NOTE: Jared added this to intentionally attempt to bork the new self hosted CI.
       timeout-minutes: 60
       if: "matrix.os == 'self-hosted'"
       run: |
-        cabal test pkg:refurbish --test-show-details=direct --write-ghc-environment-files=always --enable-tests
+        cabal test pkg:refurbish
