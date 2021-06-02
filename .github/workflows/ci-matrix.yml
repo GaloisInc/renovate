@@ -18,7 +18,7 @@ jobs:
 
     env:
       LANG: en_US.UTF-8
-      LANGUAGE: en_US:en
+      # LANGUAGE: en_US:en
       LC_ALL: en_US.UTF-8
       TZ: America/Los_Angeles
       CI_TEST_LEVEL: "2"
