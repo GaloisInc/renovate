@@ -68,23 +68,23 @@ jobs:
       run: |
         cp cabal.project.dist cabal.project
         cabal configure --write-ghc-environment-files=always --enable-tests
-        cabal build pkg:renovate --only-dependencies
+      # cabal build pkg:renovate --only-dependencies
 
-    - name: Build renovate
-      run: |
-        cabal build pkg:renovate
-
-    - name: Test renovate
-      run: |
-        cabal test pkg:renovate
-
-    - name: Build renovate x86
-      run: |
-        cabal build pkg:renovate-x86
-
-    - name: Test renovate x86
-      run: |
-        cabal test pkg:renovate-x86
+    # - name: Build renovate
+    #   run: |
+    #     cabal build pkg:renovate
+    #
+    # - name: Test renovate
+    #   run: |
+    #     cabal test pkg:renovate
+    #
+    # - name: Build renovate x86
+    #   run: |
+    #     cabal build pkg:renovate-x86
+    #
+    # - name: Test renovate x86
+    #   run: |
+    #     cabal test pkg:renovate-x86
 
     - name: Build refurbish
       run: |
@@ -104,5 +104,10 @@ jobs:
       # NOTE: Jared added this to intentionally attempt to bork the new self hosted CI.
       timeout-minutes: 60
       if: "matrix.os == 'self-hosted'"
+      env:
+        TASTY_ANSI_TRICKS: "false"
+        TASTY_COLOR: "never"
       run: |
-        cabal test pkg:refurbish
+        cabal test refurbish:doctests
+        cabal test refurbish:refurbish-tests --test-options='--verbose-output --showsearch'
+        cabal test refurbish:refurbish-tests --test-options='--verbose-output'
