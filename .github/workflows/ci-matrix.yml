@@ -33,11 +33,6 @@ jobs:
     name: GHC ${{ matrix.ghc }} on ${{ matrix.os }} renovate
 
     steps:
-    - name: Test docker before doing the whole CI thing
-      run: |
-        docker run --rm --init --privileged -v /runner:/runner:Z alpine echo "run without sudo" || true
-        sudo -i docker run --rm --init --privileged -v /runner:/runner:Z alpine echo "run with sudo" || true
-
     - uses: actions/checkout@v2
       with:
         submodules: 'true'
@@ -110,4 +105,4 @@ jobs:
       timeout-minutes: 60
       if: "matrix.os == 'self-hosted'"
       run: |
-        sudo -i cabal test pkg:refurbish
+        cabal test pkg:refurbish
