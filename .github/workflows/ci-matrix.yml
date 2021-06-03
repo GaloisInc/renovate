@@ -18,7 +18,6 @@ jobs:
 
     env:
       LANG: en_US.UTF-8
-      # LANGUAGE: en_US:en
       LC_ALL: en_US.UTF-8
       TZ: America/Los_Angeles
       CI_TEST_LEVEL: "2"
@@ -67,24 +66,24 @@ jobs:
     - name: Build Haskell Dependencies
       run: |
         cp cabal.project.dist cabal.project
-        cabal configure --write-ghc-environment-files=always --enable-tests
-      # cabal build pkg:renovate --only-dependencies
+        cabal configure --write-ghc-environment-files=always --enable-tests --test-show-details=direct
+        cabal build pkg:renovate --only-dependencies
 
-    # - name: Build renovate
-    #   run: |
-    #     cabal build pkg:renovate
-    #
-    # - name: Test renovate
-    #   run: |
-    #     cabal test pkg:renovate
-    #
-    # - name: Build renovate x86
-    #   run: |
-    #     cabal build pkg:renovate-x86
-    #
-    # - name: Test renovate x86
-    #   run: |
-    #     cabal test pkg:renovate-x86
+    - name: Build renovate
+      run: |
+        cabal build pkg:renovate
+
+    - name: Test renovate
+      run: |
+        cabal test pkg:renovate
+
+    - name: Build renovate x86
+      run: |
+        cabal build pkg:renovate-x86
+
+    - name: Test renovate x86
+      run: |
+        cabal test pkg:renovate-x86
 
     - name: Build refurbish
       run: |
@@ -94,7 +93,7 @@ jobs:
       # NOTE: Locally, we use a docker runner to isolate test cases in case the
       # rewriter breaks them in a dangerous way. Docker-in-docker isn't so great
       # (and doesn't really work here), so we just disable the runner in CI
-      timeout-minutes: 60
+      timeout-minutes: 90
       if: "matrix.os != 'self-hosted'"
       run: |
         sudo apt install -y qemu-user-binfmt qemu-user
@@ -102,7 +101,7 @@ jobs:
 
     - name: Test refurbish (with docker-in-docker)
       # NOTE: Jared added this to intentionally attempt to bork the new self hosted CI.
-      timeout-minutes: 60
+      timeout-minutes: 90
       if: "matrix.os == 'self-hosted'"
       env:
         TASTY_ANSI_TRICKS: "false"
