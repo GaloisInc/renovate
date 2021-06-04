@@ -45,14 +45,16 @@ jobs:
 
     - uses: actions/cache@v2
       name: Cache cabal-store
+      env:
+        cacheprefix: 0
       with:
         path: |
           ${{ steps.setup-haskell-cabal.outputs.cabal-store }}
           dist-newstyle
-        key: cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('cabal.project.dist') }}-${{ github.sha }}
+        key: ${{ env.cacheprefix }}-cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('cabal.project.dist') }}-${{ github.sha }}
         restore-keys: |
-          cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('cabal.project.dist') }}-
-          cabal-${{ runner.os }}-${{ matrix.ghc }}-
+          ${{ env.cacheprefix }}-cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('cabal.project.dist') }}-
+          ${{ env.cacheprefix }}-cabal-${{ runner.os }}-${{ matrix.ghc }}-
 
     - name: System Dependencies
       run: |
@@ -60,8 +62,10 @@ jobs:
         sudo apt install -y software-properties-common apt-transport-https ca-certificates wget
         sudo apt install -y curl zlibc zlib1g zlib1g-dev git zip \
           libgmp3-dev build-essential libtinfo-dev autoconf automake gperf cmake locales \
-          python3-distutils python-setuptools antlr3 libantlr3c-dev libtool libtool-bin libboost-all-dev python3-pip libfftw3-dev
+          python3-distutils python-setuptools antlr3 libantlr3c-dev libtool libtool-bin libboost-all-dev python3-pip libfftw3-dev \
+          language-pack-en-base language-pack-en
         sudo locale-gen en_US.UTF-8
+        sudo update-locale LANG=$LANG LANGUAGE=$LANGUAGE
 
     - name: Build Haskell Dependencies
       run: |
@@ -109,6 +113,7 @@ jobs:
         TASTY_COLOR: "never"
       run: |
         echo "allowing to continue on failure temporarily"
+        locale
         cabal test refurbish:doctests
         cabal test refurbish:refurbish-tests --test-options='--verbose-output --showsearch'
         cabal test refurbish:refurbish-tests --test-options='--verbose-output'
