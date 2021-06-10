@@ -98,7 +98,8 @@ jobs:
       # rewriter breaks them in a dangerous way. Docker-in-docker isn't so great
       # (and doesn't really work here), so we just disable the runner in CI
       timeout-minutes: 90
-      if: "matrix.os != 'self-hosted'"
+      if: "matrix.os == 'self-hosted'"
+      continue-on-error: true
       run: |
         sudo apt install -y qemu-user-binfmt qemu-user
         cabal test pkg:refurbish --test-options='--no-docker-runner'
