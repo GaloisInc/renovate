@@ -70,7 +70,7 @@ jobs:
     - name: Build Haskell Dependencies
       run: |
         cp cabal.project.dist cabal.project
-        cabal configure --write-ghc-environment-files=always --enable-tests --test-show-details=direct
+        cabal configure --write-ghc-environment-files=always --enable-tests --test-show-details=direct -j
         cabal build pkg:renovate --only-dependencies
 
     - name: Build renovate
@@ -107,4 +107,4 @@ jobs:
         TASTY_ANSI_TRICKS: "false"
         TASTY_COLOR: "never"
       run: |
-        cabal test -j -RTS -N -RTS refurbish:refurbish-tests --test-options='--no-docker-runner -j'
+        cabal test refurbish:refurbish-tests --test-options="--no-docker-runner -j$(nproc)"
