@@ -93,15 +93,18 @@ jobs:
       run: |
         cabal build pkg:refurbish
 
+    - name: DocTest refurbish
+      run: |
+        sudo apt install -y qemu-user-binfmt qemu-user
+        cabal test refurbish:doctests
+
     - name: Test refurbish
       # NOTE: Locally, we use a docker runner to isolate test cases in case the
       # rewriter breaks them in a dangerous way. Docker-in-docker isn't so great
       # (and doesn't really work here), so we just disable the runner in CI
-      timeout-minutes: 180
+      timeout-minutes: 240
       env:
         TASTY_ANSI_TRICKS: "false"
         TASTY_COLOR: "never"
       run: |
-        sudo apt install -y qemu-user-binfmt qemu-user
-        cabal test refurbish:doctests
-        cabal test refurbish:refurbish-tests --test-options='--no-docker-runner'
+        cabal test -j -RTS -N -RTS refurbish:refurbish-tests --test-options='--no-docker-runner -j'
