@@ -15,24 +15,28 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      TZ: America/Los_Angeles
+      CI_TEST_LEVEL: "2"
+
     strategy:
       fail-fast: false
       matrix:
         ghc: ['8.6', '8.8', '8.10']
-        cabal: ['3.2.0.0']
-        os: [ubuntu-20.04]
+        cabal: ['3.4.0.0']
+        os: [self-hosted]
 
     name: GHC ${{ matrix.ghc }} on ${{ matrix.os }} renovate
-
-    env:
-      CI_TEST_LEVEL: "2"
 
     steps:
     - uses: actions/checkout@v2
       with:
         submodules: 'true'
 
-    - uses: actions/setup-haskell@v1
+    - uses: haskell/actions/setup@v1
       id: setup-haskell
       name: Setup Haskell
       with:
@@ -41,47 +45,74 @@ jobs:
 
     - uses: actions/cache@v2
       name: Cache cabal-store
+      env:
+        cacheprefix: 0
       with:
         path: |
           ${{ steps.setup-haskell-cabal.outputs.cabal-store }}
           dist-newstyle
-        key: cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles(format('cabal.GHC-{0}.config', matrix.ghc)) }}-${{ github.sha }}
+        key: ${{ env.cacheprefix }}-cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('cabal.project.dist') }}-${{ github.sha }}
         restore-keys: |
-          cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles(format('cabal.GHC-{0}.config', matrix.ghc)) }}-
+          ${{ env.cacheprefix }}-cabal-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('cabal.project.dist') }}-
+          ${{ env.cacheprefix }}-cabal-${{ runner.os }}-${{ matrix.ghc }}-
+
+    - name: System Dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y software-properties-common apt-transport-https ca-certificates wget
+        sudo apt install -y curl zlibc zlib1g zlib1g-dev git zip \
+          libgmp3-dev build-essential libtinfo-dev autoconf automake gperf cmake locales \
+          python3-distutils python-setuptools antlr3 libantlr3c-dev libtool libtool-bin libboost-all-dev python3-pip libfftw3-dev \
+          language-pack-en-base language-pack-en
+        sudo locale-gen en_US.UTF-8
+        sudo update-locale LANG=$LANG LANGUAGE=$LANGUAGE
+
+    - name: Build Haskell Dependencies
+      run: |
+        cp cabal.project.dist cabal.project
+        cabal configure --write-ghc-environment-files=always --enable-tests --test-show-details=direct -j
+        cabal build pkg:renovate --only-dependencies
 
     - name: Build renovate
       run: |
-        cp cabal.project.dist cabal.project
-        cabal v2-configure pkg:renovate --write-ghc-environment-files=always -j1 --enable-tests
-        cabal v2-build pkg:renovate
-
-    - name: Build renovate x86
-      run: |
-        cp cabal.project.dist cabal.project
-        cabal v2-configure pkg:renovate-x86 --write-ghc-environment-files=always -j1 --enable-tests
-        cabal v2-build pkg:renovate-x86
-
-    - name: Build refurbish
-      run: |
-        cp cabal.project.dist cabal.project
-        cabal v2-configure pkg:refurbish --write-ghc-environment-files=always -j1 --enable-tests
-        cabal v2-build pkg:refurbish
+        cabal build pkg:renovate
 
     - name: Test renovate
       run: |
-        cabal v2-test pkg:renovate
+        cabal test pkg:renovate
+
+    - name: Build renovate x86
+      run: |
+        cabal build pkg:renovate-x86
 
     - name: Test renovate x86
       run: |
-        cabal v2-test pkg:renovate-x86
+        cabal test pkg:renovate-x86
+
+    - name: Build refurbish
+      run: |
+        cabal build pkg:refurbish
+
+    - name: DocTest refurbish
+      run: |
+        sudo apt install -y qemu-user-binfmt qemu-user
+        cabal test refurbish:doctests
+
+    - name: Refurbish Test Plan
+      env:
+        TASTY_ANSI_TRICKS: "false"
+        TASTY_COLOR: "never"
+      run: |
+        cabal test refurbish:refurbish-tests --test-options="--showsearch"
 
     - name: Test refurbish
-      if: runner.os == 'Linux'
       # NOTE: Locally, we use a docker runner to isolate test cases in case the
       # rewriter breaks them in a dangerous way. Docker-in-docker isn't so great
       # (and doesn't really work here), so we just disable the runner in CI
+      timeout-minutes: 360
+      continue-on-error: true
+      env:
+        TASTY_ANSI_TRICKS: "false"
+        TASTY_COLOR: "never"
       run: |
-        sudo apt update
-        sudo apt install qemu-user-binfmt qemu-user
-        cabal v2-test pkg:refurbish --test-options='--no-docker-runner'
-
+        cabal test refurbish:refurbish-tests --test-options="--no-docker-runner -j4 +RTS -N4"

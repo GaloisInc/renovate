@@ -4,3 +4,5 @@ dist-newstyle
 .boring
 _darcs
 *~
+cabal.project.local*
+.ghc.environment*
