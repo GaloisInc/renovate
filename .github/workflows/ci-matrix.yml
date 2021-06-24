@@ -109,10 +109,10 @@ jobs:
       # NOTE: Locally, we use a docker runner to isolate test cases in case the
       # rewriter breaks them in a dangerous way. Docker-in-docker isn't so great
       # (and doesn't really work here), so we just disable the runner in CI
-      timeout-minutes: 240
+      timeout-minutes: 360
       continue-on-error: true
       env:
         TASTY_ANSI_TRICKS: "false"
         TASTY_COLOR: "never"
       run: |
-        cabal test refurbish:refurbish-tests --test-options="--no-docker-runner"
+        cabal test refurbish:refurbish-tests --test-options="--no-docker-runner -j4 +RTS -N4"
