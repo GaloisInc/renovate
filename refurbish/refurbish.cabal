@@ -115,7 +115,7 @@ test-suite refurbish-tests
                  prettyprinter,
                  tasty,
                  tasty-checklist >= 1.0 && < 1.1,
-                 tasty-sugar >= 1.1 && < 1.2,
+                 tasty-sugar >= 1.1 && < 1.4,
                  tasty-hunit,
                  text,
                  filemanip,

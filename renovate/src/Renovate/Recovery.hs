@@ -3,6 +3,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ImplicitParams #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE RankNTypes #-}
@@ -60,6 +61,7 @@ import qualified Data.Parameterized.Some as PU
 import qualified Lang.Crucible.CFG.Core as C
 import qualified Lang.Crucible.CFG.Reg as CR
 import qualified Lang.Crucible.FunctionHandle as C
+import qualified Lang.Crucible.LLVM.MemModel as LCLM
 import qualified What4.FunctionName as C
 import qualified What4.ProgramLoc as C
 
@@ -160,7 +162,7 @@ toRegCFG :: forall arch ids
          -> MC.DiscoveryFunInfo arch ids
          -> Maybe (IO (SCFG CR.SomeCFG arch))
 toRegCFG halloc dfi = do
-  archFns <- MS.archFunctions <$> MS.archVals (Proxy @arch)
+  archFns <- MS.archFunctions <$> MS.archVals (Proxy @arch) Nothing
   let nmTxt = T.decodeUtf8With T.lenientDecode (MC.discoveredFunName dfi)
   let nm = C.functionNameFromText nmTxt
   let posFn addr = C.BinaryPos nmTxt (maybe 0 fromIntegral (MC.segoffAsAbsoluteAddr addr))
@@ -171,7 +173,7 @@ toCFG :: forall arch
       => SymbolicRegCFG arch
       -> Maybe (IO (SCFG C.SomeCFG arch))
 toCFG symRegCFG = do
-  archFns <- MS.archFunctions <$> MS.archVals (Proxy @arch)
+  archFns <- MS.archFunctions <$> MS.archVals (Proxy @arch) Nothing
   return $ do
     regCFG <- getSymbolicRegCFG symRegCFG -- this is why we're in IO, not ST
     return (MS.toCoreCFG archFns regCFG)
@@ -397,6 +399,7 @@ refineDiscoveryInfo logAction rc = go mempty
       -- NOTE: We are currently throwing away all of the diagnostics from
       -- macaw-refinement.  We could collect them in an @MVar (Seq msg)@ or
       -- similar if we wanted them
+      let ?memOpts = LCLM.defaultMemOptions
       (s1, findings1) <- runRefineM @_ @arch logAction $ MR.refineDiscovery rc findings0 s0
       case findings0 == findings1 of
         True -> return s1

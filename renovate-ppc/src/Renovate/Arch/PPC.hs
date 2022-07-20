@@ -45,7 +45,6 @@ config32 :: ( MM.MemWidth w
             , w ~ 32
             , MC.ArchAddrWidth MP.PPC32 ~ w
             , MBL.BinaryLoader MP.PPC32 binFmt
-            , BLP.HasTOC MP.PPC32 binFmt
             )
          => callbacks MP.PPC32 binFmt a
          -- ^ An analysis (or analysis + rewriter) to be invoked by renovate on a
@@ -54,7 +53,7 @@ config32 :: ( MM.MemWidth w
 config32 analysis = R.RenovateConfig
   { R.rcISA = isa
   , R.rcABI = abi32
-  , R.rcArchInfo = MP.ppc32_linux_info
+  , R.rcArchInfo = \_ -> MP.ppc32_linux_info
   , R.rcAssembler = assemble
   , R.rcDisassembler = disassemble
   , R.rcFunctionCallback = Nothing

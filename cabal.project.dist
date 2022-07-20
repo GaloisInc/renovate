@@ -12,6 +12,7 @@ packages: deps/elf-edit/
           deps/what4/what4/
           deps/what4-serialize/
           deps/crucible/crucible-llvm/
+          deps/crucible/crucible-symio/
           deps/llvm-pretty/
           deps/arm-asl-parser/
           deps/asl-translator/
