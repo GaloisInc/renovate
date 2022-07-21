@@ -25,8 +25,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ['8.6', '8.8', '8.10']
-        cabal: ['3.4.0.0']
+        ghc: ['8.8', '8.10', '9.0', '9.2']
+        cabal: ['3.6.0.0']
         os: [self-hosted]
 
     name: GHC ${{ matrix.ghc }} on ${{ matrix.os }} renovate

@@ -384,8 +384,8 @@ padLastBlock = do
 bytesFor :: forall m arch . (C.MonadThrow m) => ConcretizedBlock arch -> Assembler arch m B.ByteString
 bytesFor b = do
   withConcretizedInstructions b $ \_repr insns -> do
-    asm1 <- St.gets asAssemble
-    case mapM asm1 insns of
+    st <- St.get
+    case mapM (asAssemble st) insns of
       Left err -> C.throwM (RCE.AssemblyError b err)
       Right strs -> return (sconcat strs)
 
