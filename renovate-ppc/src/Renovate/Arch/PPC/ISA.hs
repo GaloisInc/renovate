@@ -35,7 +35,7 @@ import qualified Data.ByteString.Lazy as LB
 import           Data.Coerce ( coerce )
 import           Data.Int ( Int32 )
 import qualified Data.List.NonEmpty as DLN
-import qualified Data.Text.Prettyprint.Doc as PP
+import qualified Prettyprinter as PP
 import           Data.Typeable ( Typeable )
 import           Data.Word ( Word8, Word64 )
 import           Data.Void ( Void )
@@ -99,7 +99,7 @@ instance Ord (Operand tp) where
   compare o1 o2 = toOrdering (compareF o1 o2)
 
 type instance R.ArchitectureRelocation (MP.AnyPPC v) = Void
-type instance R.Instruction (MP.AnyPPC v) = Instruction
+type instance R.Instruction (MP.AnyPPC v) = Instruction @v
 type instance R.RegisterType (MP.AnyPPC v) = Operand
 
 instance PP.Pretty (Instruction tp a) where
@@ -491,8 +491,6 @@ ppcJumpType i _mem insnAddr _ =
             -- This is a call because it is setting the link register and could
             -- return to the next instruction
             D.BCCTRL -> Some R.IndirectCall
-            D.BCL -> Some R.IndirectCall
-            D.GBCL -> Some R.IndirectCall
             D.GBCCTRL -> Some R.IndirectCall
             -- Syscall
             D.SC -> Some R.IndirectCall

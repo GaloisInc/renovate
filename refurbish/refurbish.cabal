@@ -115,7 +115,7 @@ test-suite refurbish-tests
                  prettyprinter,
                  tasty,
                  tasty-checklist >= 1.0 && < 1.1,
-                 tasty-sugar >= 1.1 && < 1.2,
+                 tasty-sugar >= 1.1 && < 1.4,
                  tasty-hunit,
                  text,
                  filemanip,
@@ -144,7 +144,7 @@ test-suite doctests
   main-is:        doctests.hs
   ghc-options:    -Wall -Wcompat -threaded
   build-depends:  base,
-                  doctest >= 0.10 && < 0.17,
+                  doctest >= 0.10 && < 0.21,
                   -- Dependencies required by the doctest examples
                   --
                   -- We need to specify these here, otherwise the doctests might get built before

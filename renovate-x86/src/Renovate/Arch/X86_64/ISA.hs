@@ -22,13 +22,14 @@ import qualified Control.Monad.Catch as C
 import           Data.Bits ( bit )
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Builder as BB
+import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Functor.Identity as I
 import           Data.Int ( Int32 )
 import qualified Data.List.NonEmpty as DLN
 import           Data.Parameterized.NatRepr
 import           Data.Parameterized.Some
-import qualified Data.Text.Prettyprint.Doc as PD
+import qualified Prettyprinter as PD
 import           Data.Void ( absurd )
 import           Data.Word ( Word8, Word64 )
 
@@ -130,7 +131,7 @@ x64JumpTypeRaw (RawBytes _) _ =
   -- NOTE: This could be a panic: none of these should show up until a user inserts them
   Some R.NoJump
 x64JumpTypeRaw xi@(XI ii) addr =
-  case (D.iiOp ii, map (fst . aoOperand) (D.iiArgs ii)) of
+  case (BSC.unpack (D.iiOp ii), map (fst . aoOperand) (D.iiArgs ii)) of
     ("jmp", [D.JumpOffset _ off]) -> Some (R.RelativeJump R.Unconditional addr (fixJumpOffset sz off))
     ("jmp", _) -> Some (R.IndirectJump R.Unconditional)
     ("ret", _) -> Some (R.Return R.Unconditional)
@@ -261,9 +262,9 @@ promoteJump
   :: D.InstructionInstanceF (AnnotatedOperand ())
   -> D.InstructionInstanceF (AnnotatedOperand ())
 promoteJump ii =
-  case (D.iiOp ii, D.iiArgs ii) of
+  case (BSC.unpack (D.iiOp ii), D.iiArgs ii) of
     ('j' : _, [AnnotatedOperand (D.JumpOffset _ val, _ty) ()]) ->
-      case D.mkInstruction (D.iiOp ii) [D.JumpOffset D.JSize32 val] of
+      case D.mkInstruction (BSC.unpack (D.iiOp ii)) [D.JumpOffset D.JSize32 val] of
         Just ii' -> ii' { D.iiArgs = fmap (\o -> AnnotatedOperand o ()) (D.iiArgs ii') }
         Nothing -> RP.panic RP.X86_64ISA "promoteJump" [ "Unable to promote jump " ++ show ii ]
     _ -> ii
@@ -366,7 +367,7 @@ resolveRelocations mem toConcrete insnAddr ii AnnotatedOperand { aoOperand = (v,
     -- Note that we currently only use symbolic addresses for jump targets
     R.SymbolicRelocation symAddr ->
       let repr = instructionRepr (XI ii)
-          opcode = D.iiOp ii
+          opcode = BSC.unpack (D.iiOp ii)
           fakeJmp = makeInstr repr opcode [D.JumpOffset D.JSize32 (D.FixedOffset 0)]
           jmpOff = toInteger (toConcrete symAddr `R.addressDiff` insnAddr)
           jmpSize = toInteger (x64Size fakeJmp)

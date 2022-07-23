@@ -42,6 +42,7 @@ import qualified GHC.Err.Located as L
 
 import qualified Control.Monad.Catch as C
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Lazy as LB
 import           Data.Maybe ( fromMaybe )
@@ -205,7 +206,7 @@ instance C.Exception AssemblyFailure
 
 -- | Retrieve the 'String' opcode from an instruction (for diagnostic purposes)
 instrOpcode :: Instruction tp a -> String
-instrOpcode (XI ii) = D.iiOp ii
+instrOpcode (XI ii) = BSC.unpack (D.iiOp ii)
 instrOpcode (RawBytes _) = "<data>"
 
 -- | Extract the operands from an instruction

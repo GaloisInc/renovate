@@ -71,14 +71,15 @@ library
                        bytestring >= 0.9 && < 0.12,
                        containers >= 0.5 && < 0.7,
                        crucible,
+                       crucible-llvm,
                        elf-edit >= 0.28,
                        exceptions >= 0.7 && < 0.11,
-                       generic-lens >= 0.5 && < 2.2,
+                       generic-lens >= 0.5 && < 2.3,
                        heaps >= 0.3 && < 0.5,
                        IntervalMap >= 0.6 && < 0.7,
                        lens >= 4 && < 6,
                        lumberjack >= 0.1 && < 1.1,
-                       mtl >= 2.2 && < 2.3,
+                       mtl >= 2.2 && < 2.4,
                        mwc-random >= 0.13.6.0 && < 0.15,
                        macaw-base >= 0.3.2,
                        macaw-loader,
@@ -91,7 +92,7 @@ library
                        text,
                        union-find >= 0.2 && < 0.3,
                        unliftio-core >= 0.2 && < 0.3,
-                       vector >= 0.10 && < 0.13,
+                       vector >= 0.10 && < 0.14,
                        what4
 
   hs-source-dirs:      src
