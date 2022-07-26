@@ -10,6 +10,7 @@ The core of the binary rewriter is architecture-independent; each supported arch
 Currently, statically-linked ELF binaries for the x86_64 and PowerPC architectures are supported.
 
 Potential uses of this library include, but are not limited to:
+
 * Architecture-independent binary analysis (including symbolic simulation)
 * Arbitrary binary rewriting of whole programs
 * Binary diversity (through randomized code re-layout)
