@@ -24,6 +24,7 @@ common bldflags
                -Werror=missing-methods
                -Werror=overlapping-patterns
                -Wpartial-fields
+               -Wincomplete-uni-patterns
                -fno-ignore-asserts
                -fhide-source-paths
 
