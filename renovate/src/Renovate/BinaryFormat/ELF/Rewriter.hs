@@ -15,7 +15,8 @@ module Renovate.BinaryFormat.ELF.Rewriter (
   RewriterEnv,
   reSegmentMaximumSize,
   reSegmentVirtualAddress,
-  reLogAction
+  reLogAction,
+  reTextSectionName
   ) where
 
 import qualified Control.Monad.Catch as CMC
@@ -52,6 +53,9 @@ data RewriterEnv lm arch =
               -- ^ Maximum size of the new text section
               , reLogAction :: LJ.LogAction IO (RCD.Diagnostic lm)
               -- ^ The logger used by the Rewriter monad
+              , reTextSectionName :: String
+              -- ^ The name of the text section including the leading
+              -- dot, e.g. ".text"
               }
 
 makeRewriterEnv
@@ -74,7 +78,8 @@ makeRewriterEnv logAction cfg e = do
   -- It's real tough to guarantee (3), since we don't know how much code there
   -- will be yet. So we just pick the biggest chunk of address space that
   -- satisfies (1) and (2).
-  textSection <- RBEC.findTextSection e
+  let textSecName = RC.rcTextSectionName cfg
+  textSection <- RBEC.findTextSection textSecName e
   let (lo, hi) = withinJumpRange cfg textSection
   let layoutChoiceFunction = case RC.rcExtratextOffset cfg of
         0 -> selectLayoutAddr lo hi
@@ -84,6 +89,7 @@ makeRewriterEnv logAction cfg e = do
   pure $ RewriterEnv { reSegmentVirtualAddress = fromIntegral newTextAddr
                      , reSegmentMaximumSize = fromIntegral newTextSize
                      , reLogAction = logAction
+                     , reTextSectionName = textSecName
                      }
 
 

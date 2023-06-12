@@ -211,6 +211,9 @@ data RenovateConfig arch binFmt callbacks (b :: Type -> Type) = RenovateConfig
   , rcRefinementConfig :: Maybe MR.RefinementConfig
   -- ^ Optional configuration for macaw-refinement; if provided, call
   -- macaw-refinement to find additional code through SMT-based refinement
+  , rcTextSectionName :: String
+  -- ^ The name of the text section including the leading dot, e.g.
+  -- ".text"
   }
 
 -- | Compose a list of instrumentation functions into a single
