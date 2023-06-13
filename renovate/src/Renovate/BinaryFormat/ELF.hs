@@ -232,7 +232,7 @@ analyzeElf logAction cfg hdlAlloc ehi loadedBinary = do
     LJ.writeLog logAction (RCD.ELFDiagnostic (RCD.ELFParseErrors elfParseErrors))
   (b, _ri, _env) <- runElfRewriter logAction cfg ehi e $ do
     symmap <- withCurrentELF buildSymbolMap
-    textSection <- withCurrentELF findTextSection
+    textSection <- withCurrentELF (findTextSection (rcTextSectionName cfg))
     let textRange = sectionAddressRange textSection
     withAnalysisEnv logAction cfg hdlAlloc loadedBinary symmap textRange $ \env -> do
       IO.liftIO (aoAnalyze (rcAnalysis cfg) env)
@@ -344,7 +344,7 @@ doRewrite cfg hdlAlloc loadedBinary symmap strat = do
 
   -- We pull some information from the unmodified initial binary: the text
   -- section, the entry point(s), and original symbol table (if any).
-  textSection <- withCurrentELF findTextSection
+  textSection <- withCurrentELF (findTextSection (rcTextSectionName cfg))
   mBaseSymtab <- withCurrentELF getBaseSymbolTable
 
   -- Remove (and pad out) the sections whose size could change if we
@@ -1035,14 +1035,16 @@ overwriteTextSection :: (w ~ MM.ArchAddrWidth arch, Integral (E.ElfWordType w)) 
 overwriteTextSection newBytes e = do
   ((), ) <$> E.elfSections doOverwrite e
   where
-    doOverwrite sec
-      | E.elfSectionName sec /= C8.pack ".text" = return sec
-      | otherwise = do
-        when (B.length newBytes /= fromIntegral (E.elfSectionSize sec)) $ do
-          C.throwM (RCE.RewrittenTextSectionSizeMismatch (toInteger (B.length newBytes)) (toInteger (E.elfSectionSize sec)))
-        return sec { E.elfSectionData = newBytes
-                   , E.elfSectionSize = fromIntegral (B.length newBytes)
-                   }
+    doOverwrite sec = do
+        secName <- R.asks reTextSectionName
+        if E.elfSectionName sec /= C8.pack secName
+           then return sec
+           else do
+               when (B.length newBytes /= fromIntegral (E.elfSectionSize sec)) $ do
+                 C.throwM (RCE.RewrittenTextSectionSizeMismatch (toInteger (B.length newBytes)) (toInteger (E.elfSectionSize sec)))
+               return sec { E.elfSectionData = newBytes
+                          , E.elfSectionSize = fromIntegral (B.length newBytes)
+                          }
 
 -- | Allocate a new text section (with the name ".extratext")
 --

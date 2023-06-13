@@ -54,15 +54,15 @@ allocatedVAddrsM e = case allocatedVAddrs e of
   Left seg -> C.throwM (RCE.SegmentHasRelativeSize (toInteger (E.elfSegmentIndex seg)))
   Right m -> return m
 
-findTextSections :: E.Elf w -> [E.ElfSection (E.ElfWordType w)]
-findTextSections = E.findSectionByName (C8.pack ".text")
+findTextSections :: String -> E.Elf w -> [E.ElfSection (E.ElfWordType w)]
+findTextSections secName = E.findSectionByName (C8.pack secName)
 
-findTextSection :: C.MonadThrow m => E.Elf w -> m (E.ElfSection (E.ElfWordType w))
-findTextSection e = do
-  case findTextSections e of
+findTextSection :: C.MonadThrow m => String -> E.Elf w -> m (E.ElfSection (E.ElfWordType w))
+findTextSection secName e = do
+  case findTextSections secName e of
     [textSection] -> return textSection
-    [] -> C.throwM (RCE.MissingExpectedSection ".text")
-    sections -> C.throwM (RCE.MultipleSectionDefinitions ".text" (length sections))
+    [] -> C.throwM (RCE.MissingExpectedSection secName)
+    sections -> C.throwM (RCE.MultipleSectionDefinitions secName (length sections))
 
 -- | The system page alignment (assuming 4k pages)
 pageAlignment :: Word64
