@@ -111,6 +111,7 @@ instance PP.Pretty RedirectionDiagnostic where
                    , PP.pretty (RCB.concreteBlockAddress block)
                    , PP.pretty "cannot be redirected, so the rewriter was never called on it:"
                    , reason
+                   , PP.pretty block
                    ]
 
 data RecoveryDiagnostic where

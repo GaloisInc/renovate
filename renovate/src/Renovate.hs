@@ -82,6 +82,7 @@ module Renovate
   RCI.ToGenericInstruction(..),
   RCR.ArchitectureRelocation,
   RCR.Relocation(..),
+  RCI.InstructionConstraints(..),
   -- * Addresses
   RCA.SymbolicAddress,
   RCA.ConcreteAddress,

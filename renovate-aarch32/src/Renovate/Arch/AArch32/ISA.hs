@@ -28,6 +28,8 @@ module Renovate.Arch.AArch32.ISA (
   T32
   ) where
 
+import Debug.Trace (trace)
+
 import qualified Control.Monad.Catch as C
 import qualified Data.Bits as DB
 import qualified Data.ByteString as BS
@@ -174,6 +176,11 @@ assemble i =
     ARMBytes bs -> return bs
     ThumbInstruction ti -> return (LBS.toStrict (DT.assembleInstruction (thumbDropAnnotations ti)))
 
+data MySuperGreatException = MySuperGreatException String
+  deriving (Show)
+
+instance C.Exception MySuperGreatException
+
 -- | Disassemble a concrete block from a bytestring
 --
 -- This is very trick in ARM because we aren't passing in the expected decoding
@@ -194,14 +201,17 @@ disassemble :: forall m ids
 disassemble pb startAddr endAddr bs0 = do
   let acon = toAnnotatedARM A32Repr
   let minsns0 = go A32Repr acon DA.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
-  case DLN.nonEmpty =<< minsns0 of
-    Just insns -> return (R.concreteBlock startAddr insns (A32Repr) pb)
-    Nothing -> do
+  -- case DLN.nonEmpty =<< minsns0 of
+  case minsns0 of
+    Right insns' | Just insns <- DLN.nonEmpty insns' -> return (R.concreteBlock startAddr insns (A32Repr) pb)
+                 | otherwise -> C.throwM $ MySuperGreatException (show insns')
+    Left e -> do
       let tcon = ThumbInstruction . toAnnotatedThumb
-      minsns1 <- go T32Repr tcon DT.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
-      case DLN.nonEmpty minsns1 of
-        Nothing -> C.throwM (EmptyBlock startAddr)
-        Just insns -> return (R.concreteBlock startAddr insns (T32Repr) pb)
+      let minsns1 = go T32Repr tcon DT.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
+      case minsns1 of
+        Right insns' | Just insns <- DLN.nonEmpty insns' -> return (R.concreteBlock startAddr insns (T32Repr) pb)
+                     | otherwise -> C.throwM $ MySuperGreatException (show e ++ "Examine code to figure out what this means: " ++ show insns')
+        Left e' -> C.throwM $ MySuperGreatException ("Examine code to figure out what this means, part 2: " ++ show e)
   where
     go :: forall tp i m'
         . (C.MonadThrow m')
@@ -219,7 +229,7 @@ disassemble pb startAddr endAddr bs0 = do
           C.throwM (InstructionDisassemblyFailure b bytesRead)
         (bytesRead, Just i) ->
           let nextAddr = insnAddr `R.addressAddOffset` fromIntegral bytesRead
-          in if | nextAddr > endAddr -> C.throwM (OverlappingBlocks startAddr endAddr)
+          in if | nextAddr > endAddr -> trace ("\n\n ** bytesRead: " ++ show bytesRead ++ "\n ** nextAddr: " ++ show nextAddr ++ "\n ** insnAddr: " ++ show insnAddr ++ "\n ** startAddr: " ++ show startAddr ++ "\n ** endAddr: " ++ show endAddr) $ C.throwM (OverlappingBlocks startAddr endAddr)
                 | nextAddr == endAddr ->
                   return (reverse (con i : insns))
                 | otherwise ->
@@ -608,6 +618,7 @@ armSymbolizeAddresses :: MM.Memory 32
                       -> Instruction tp ()
                       -> [R.Instruction MA.ARM tp (R.Relocation MA.ARM)]
 armSymbolizeAddresses mem toSymbolic pb insnAddr i =
+--  trace (show pb) $
   case i of
     ARMInstruction (DA.Instruction opc operands) ->
       case (opc, operands) of
@@ -657,7 +668,8 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
     ARMBytes {} ->
       RP.panic RP.ARMISA "armSymbolizeAddresses" [ "Raw bytes are not allowed in the instruction stream during symbolization at: " ++ show insnAddr ]
     ThumbInstruction {} ->
-      RP.panic RP.ARMISA "armSymbolizeAddresses" [ "Thumb rewriting is not yet support" ]
+      RP.panic RP.ARMISA "armSymbolizeAddresses" [ "Thumb rewriting is not yet support"
+                                                 , show pb ]
 
 isa :: R.ISA MA.ARM
 isa =

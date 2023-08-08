@@ -27,6 +27,9 @@ module Renovate.Recovery (
   numBlockRegions
   ) where
 
+import Debug.Trace (traceM, trace)
+import Numeric (showHex)
+
 import qualified Control.Lens as L
 import           Control.Monad ( guard )
 import qualified Control.Monad.Catch as C
@@ -147,6 +150,7 @@ analyzeDiscoveredFunctions recovery mem textAddrRange info !iterations =
   case M.lookupMin (info L.^. MC.unexploredFunctions) of
     Nothing -> return info
     Just (addr, rsn) -> do
+      putStrLn $ "analyzeDiscoveredFunctions: addr=" ++ show addr
       let (info', _someFunInfo) = MC.analyzeFunction addr rsn info
       case recoveryFuncCallback recovery of
         Just (freq, fcb)
@@ -196,14 +200,38 @@ cfgFromAddrsWith recovery mem textAddrRange symbols initAddrs = do
 --
 -- We deduplicate identical blocks in this function.  We deal with overlapping
 -- blocks by just never instrumenting them.
-accumulateBlocks :: (MC.MemWidth (MC.ArchAddrWidth arch))
+accumulateBlocks :: (MS.SymArchConstraints arch) -- MC.MemWidth (MC.ArchAddrWidth arch))
                  => M.Map (MC.ArchSegmentOff arch) (MC.ArchSegmentOff arch, (PU.Some (MC.ParsedBlock arch)))
                  -> (MC.ArchSegmentOff arch, PU.Some (MC.ParsedBlock arch))
                  -> M.Map (MC.ArchSegmentOff arch) (MC.ArchSegmentOff arch, (PU.Some (MC.ParsedBlock arch)))
-accumulateBlocks m v@(faddr0, (PU.Some pb0))
-  | Just (faddr, (PU.Some pb)) <- M.lookup (MC.pblockAddr pb0) m
-  , MC.blockSize pb0 == MC.blockSize pb && faddr0 == faddr = m
-  | otherwise = M.insert (MC.pblockAddr pb0) v m
+accumulateBlocks m v@(faddr0, (PU.Some pb0)) = case M.lookup (MC.pblockAddr pb0) m of
+  Just (faddr, (PU.Some pb)) ->
+    case MC.blockSize pb0 == MC.blockSize pb && faddr0 == faddr of
+      True  -> m
+      False | pbFinalPair@(_,PU.Some pbFinal) <- chooseBlock (faddr, pb) (faddr0, pb0) ->
+                M.insert (MC.pblockAddr pbFinal) pbFinalPair m
+  Nothing -> M.insert (MC.pblockAddr pb0) v m
+
+-- | When two block addresses are the same, but they have different sizes, pick one.
+chooseBlock :: MS.SymArchConstraints arch
+            => (MC.ArchSegmentOff arch, MC.ParsedBlock arch ids0)
+            -> (MC.ArchSegmentOff arch, MC.ParsedBlock arch ids1)
+            -> (MC.ArchSegmentOff arch, PU.Some (MC.ParsedBlock arch))
+chooseBlock (faddr0, pb0) (faddr1, pb1) =
+  -- TODO: Is the below case an error, or should we actually pick one?
+  trace (if faddr0 /= faddr1 then "Found two blocks with the same address, which belong to different functions\n\n" else "") $
+  case (errTermStmt (MC.pblockTermStmt pb0), errTermStmt (MC.pblockTermStmt pb1)) of
+      ( True, False ) -> (faddr1, PU.Some pb1)
+      ( False, True ) -> (faddr0, PU.Some pb0)
+      ( True, True  ) -> trace ("Found two valid blocks with different sizes:\n\nBlock 1:\n\n" ++ show (MC.pblockStmts pb0) ++ "\n\nBlock 2:\n\n:" ++ show (MC.pblockStmts pb1)) $
+        if MC.blockSize pb0 >= MC.blockSize pb1 then (faddr0, PU.Some pb0) else (faddr1, PU.Some pb1)
+      ( False, False ) -> trace ("Found two invalid blocks:\n\nBlock 1:\n\n" ++ show (MC.pblockStmts pb0) ++ "\n\nBlock 2:\n\n:" ++ show (MC.pblockStmts pb1)) $
+        (faddr0, PU.Some pb0)
+
+
+  where errTermStmt MC.ParsedTranslateError{} = True
+        errTermStmt MC.ClassifyFailure{} = True
+        errTermStmt _ = False
 
 addrInRange :: (MC.MemWidth (MC.ArchAddrWidth arch))
             => (ConcreteAddress arch, ConcreteAddress arch)
@@ -215,6 +243,16 @@ addrInRange (textStart, textEnd) addr = fromMaybe False $ do
   let soEnd = absoluteAddress textEnd
   return (absAddr >= soStart && absAddr < soEnd)
 
+
+-- | Clear the least significant bit of a segment offset.
+clearSegOffLeastBit :: MC.Memory w
+                    -> MC.MemSegmentOff w
+                    -> MC.MemSegmentOff w
+clearSegOffLeastBit mem addr = case MC.asSegmentOff mem (MC.clearAddrLeastBit (MC.segoffAddr addr)) of
+  Just addr' -> addr'
+  Nothing -> error "PANIC: clearSegOffLeastBit (Recovery.hs)"
+
+
 blockInfo :: forall arch
            . (MS.SymArchConstraints arch)
           => Recovery arch
@@ -224,15 +262,24 @@ blockInfo :: forall arch
           -> IO (BlockInfo arch)
 blockInfo recovery mem textAddrRange di = do
   let blockBuilder = buildBlock (recoveryDis recovery) (recoveryAsm recovery) mem
-  let macawBlocks = F.foldl' accumulateBlocks M.empty [ (MC.discoveredFunAddr dfi, PU.Some pb)
+  let macawBlocks = F.foldl' accumulateBlocks M.empty [ (faddr, PU.Some pb)
                                                       | PU.Some dfi <- validFuncs
-                                                      , pb <- M.elems (dfi L.^. MC.parsedBlocks)
-                                                      , addrInRange textAddrRange (MC.pblockAddr pb)
+                                                      , _pb <- M.elems (dfi L.^. MC.parsedBlocks)
+                                                      , addrInRange textAddrRange (MC.pblockAddr _pb)
+                                                      , let _faddr = MC.discoveredFunAddr dfi
+                                                      , let pb = _pb { MC.pblockAddr = clearSegOffLeastBit mem (MC.pblockAddr _pb) }
+                                                      , let faddr = clearSegOffLeastBit mem _faddr
+                                                      -- , even (MC.segoffOffset (MC.pblockAddr pb))
                                                       ]
   let blockStarts = M.fromList [ (baddr, baddr `addressAddOffset` fromIntegral (MC.blockSize b))
                                | (archSegOff, (_, PU.Some b)) <- M.toList macawBlocks
                                , Just baddr <- return (concreteFromSegmentOff mem archSegOff)
+                               , MC.blockSize b /= 0
+                               , even (absoluteAddress baddr)
                                ]
+
+  traceM (show blockStarts)
+
   -- We collect not only the blocks, but also the addresses of functions
   -- containing untranslatable blocks so that they can be marked as incomplete.
   (incomp, blocks) <- partitionEithers <$> mapM (blockBuilder blockStarts) (M.elems macawBlocks)
@@ -342,19 +389,24 @@ recoverBlocks
   -> (ConcreteAddress arch, ConcreteAddress arch)
   -> IO (BlockInfo arch)
 recoverBlocks logAction recovery loadedBinary symmap entries textAddrRange = do
+  putStrLn "1!!"
   let mem = MBL.memoryImage loadedBinary
   sam <- toMacawSymbolMap mem symmap
+  putStrLn "2!!"
   di <- cfgFromAddrsWith recovery mem textAddrRange sam (F.toList entries)
+  putStrLn "3!!"
   -- If the caller requested refinement, call refinement in a loop until nothing changes
   di' <- case recoveryRefinement recovery of
-    Nothing -> return di
+    Nothing -> putStrLn "3a!!" >> return di
     Just refineCfg -> do
       rc <- MR.defaultRefinementContext refineCfg loadedBinary
+      putStrLn "3b!!"
       refineDiscoveryInfo logAction rc di
+  putStrLn "4!!"
   binfo <- blockInfo recovery mem textAddrRange di'
-
+  putStrLn "5!!"
   mapM_ (reportDiscoveryFailures logAction) (M.elems (biDiscoveryInfo binfo L.^. MC.funInfo))
-
+  putStrLn "6!!"
   return binfo
 
 newtype RefineM arch a = RefineM { unRefineM :: CMR.ReaderT (LJ.LogAction (RefineM arch) (MR.RefinementLog arch)) IO a }
@@ -467,7 +519,7 @@ blockStopAddress blockStarts pb startAddr
 -- For each block, it is either translated (Right), or we report the address of
 -- the function containing the untranslatable block (Left).  We need this list
 -- to mark functions as incomplete.
-buildBlock :: (HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow m)
+buildBlock :: (HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow m, MS.SymArchConstraints arch)
            => (forall ids . MC.ParsedBlock arch ids -> ConcreteAddress arch -> ConcreteAddress arch -> B.ByteString -> Either C.SomeException (ConcreteBlock arch))
            -- ^ A function to disassemble an entire block at once (up to the
            -- requested number of bytes)
@@ -481,32 +533,34 @@ buildBlock :: (HasCallStack, MC.MemWidth (MC.ArchAddrWidth arch), C.MonadThrow m
            -> (MC.ArchSegmentOff arch, PU.Some (MC.ParsedBlock arch))
            -- ^ The macaw block to re-disassemble
            -> m (Either (MC.ArchSegmentOff arch) (ConcreteBlock arch))
-buildBlock disBlock asm1 mem blockStarts (funcAddr, (PU.Some pb))
-  | MC.blockSize pb == 0 = return (Left funcAddr)
-  | isIncompleteBlock pb = return (Left funcAddr)
-  | Just concAddr <- concreteFromSegmentOff mem segAddr = do
-      case MC.addrContentsAfter mem (MC.segoffAddr segAddr) of
-        Left err -> C.throwM (RCE.MemoryError segAddr err)
-        Right [MC.ByteRegion bs] -> do
-          let stopAddr = blockStopAddress blockStarts pb concAddr
-          case disBlock pb concAddr stopAddr bs of
-            Left err -> C.throwM (RCE.EmptyBlock concAddr err)
-            Right bb ->
-              -- If we can't re-assemble all of the instructions we have found,
-              -- pretend we never saw this block.  Note that the caller will have to
-              -- remember this to note that the function containing this block is
-              -- incomplete.
-              --
-              -- We do this to avoid re-assembly errors later, where we can't do
-              -- anything about it.
-              withConcreteInstructions bb $ \_repr insns -> do
-                case all (canAssemble asm1) insns of
-                  True -> return (Right bb)
-                  False -> return (Left funcAddr)
-        _ -> C.throwM (RCE.NoByteRegionAtAddress (MC.segoffAddr segAddr))
-  | otherwise = return (Left funcAddr)
-  where
-    segAddr = MC.pblockAddr pb
+buildBlock disBlock asm1 mem blockStarts (funcAddr, (PU.Some pb)) = do
+  -- traceM ("PARSED BLOCK at: " ++ show (MC.pblockAddr pb) ++ "\n\nSTMTS:\n" ++ show (MC.pblockStmts pb) ++ "\n\nTERM STMT:\n" ++ show (MC.pblockTermStmt pb))
+  if | MC.blockSize pb == 0 -> return (Left funcAddr)
+     | isIncompleteBlock pb -> return (Left funcAddr)
+     | Just concAddr <- concreteFromSegmentOff mem segAddr -> do
+         case MC.addrContentsAfter mem (MC.segoffAddr segAddr) of
+           Left err -> C.throwM (RCE.MemoryError segAddr err)
+           Right [MC.ByteRegion bs] -> do
+             let stopAddr = blockStopAddress blockStarts pb concAddr
+             case disBlock pb concAddr stopAddr bs of
+               -- Left err -> trace (show funcAddr ++ "\n\n--------\n\n" ++ show segAddr ++ "\n\n--------\n\n" ++ show concAddr ++ "\n\n--------\n\n" ++ (showHex (B.head bs) "") ++ "\n\n--------\n\n") $ C.throwM (RCE.EmptyBlock concAddr err)
+               Left err -> C.throwM (RCE.EmptyBlock concAddr err)
+               Right bb ->
+                 -- If we can't re-assemble all of the instructions we have found,
+                 -- pretend we never saw this block.  Note that the caller will have to
+                 -- remember this to note that the function containing this block is
+                 -- incomplete.
+                 --
+                 -- We do this to avoid re-assembly errors later, where we can't do
+                 -- anything about it.
+                 withConcreteInstructions bb $ \_repr insns -> do
+                   case all (canAssemble asm1) insns of
+                     True -> return (Right bb)
+                     False -> return (Left funcAddr)
+           _ -> C.throwM (RCE.NoByteRegionAtAddress (MC.segoffAddr segAddr))
+     | otherwise -> return (Left funcAddr)
+     where
+       segAddr = MC.pblockAddr pb
 
 -- | Collect the set of basic block addresses of blocks that are contained in incomplete functions
 --
