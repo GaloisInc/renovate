@@ -11,6 +11,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE OverloadedStrings #-}
 -- | The interface for 'BasicBlock' recovery
 module Renovate.Recovery (
   Recovery(..),
@@ -76,6 +77,7 @@ import qualified Renovate.Core.Instruction as RCI
 import           Renovate.ISA
 import           Renovate.Recovery.Overlap
 import           Renovate.Recovery.SymbolMap ( SymbolMap, toMacawSymbolMap )
+import Data.Macaw.Discovery (DiscoveryFunInfo)
 
 data Cached a = Cached (IO.IORef (Maybe a)) (IO a)
 type SCFG f arch = f (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch)
@@ -150,15 +152,23 @@ analyzeDiscoveredFunctions recovery mem textAddrRange info !iterations =
   case M.lookupMin (info L.^. MC.unexploredFunctions) of
     Nothing -> return info
     Just (addr, rsn) -> do
-      putStrLn $ "analyzeDiscoveredFunctions: addr=" ++ show addr
-      let (info', _someFunInfo) = MC.analyzeFunction addr rsn info
-      case recoveryFuncCallback recovery of
-        Just (freq, fcb)
-          | iterations `mod` freq == 0 -> do
-              bi <- blockInfo recovery mem textAddrRange info'
-              fcb addr bi
-        _ -> return ()
-      analyzeDiscoveredFunctions recovery mem textAddrRange info' (iterations + 1)
+      (info', C.Some fnInfo) <- return $ MC.analyzeFunction addr rsn info
+      putStrLn $ "analyzeDiscoveredFunctions: addr=" ++ show addr ++ " sym:" ++ show (MC.discoveredFunSymbol fnInfo)
+      case recoveryFuncFilter recovery addr (Just (MC.discoveredFunName fnInfo)) of
+        False -> do
+          putStrLn "  dropped"
+          info'' <- return $ info L.& MC.unexploredFunctions L.%~ (M.delete addr)
+          fnInfo' <- return $ fnInfo L.& MC.parsedBlocks L.%~ (\_ -> M.empty)
+          info''' <- return $ info'' L.& MC.funInfo L.%~ M.insert addr (C.Some fnInfo')
+          analyzeDiscoveredFunctions recovery mem textAddrRange info''' (iterations + 1)
+        True -> do
+          case recoveryFuncCallback recovery of
+            Just (freq, fcb)
+              | iterations `mod` freq == 0 -> do
+                  bi <- blockInfo recovery mem textAddrRange info'
+                  fcb addr bi
+            _ -> return ()
+          analyzeDiscoveredFunctions recovery mem textAddrRange info' (iterations + 1)
 
 toRegCFG :: forall arch ids
           . (MS.SymArchConstraints arch)
@@ -342,6 +352,7 @@ data Recovery arch =
            , recoveryArchInfo :: MC.ArchitectureInfo arch
            , recoveryHandleAllocator :: C.HandleAllocator
            , recoveryFuncCallback :: Maybe (Int, MC.ArchSegmentOff arch -> BlockInfo arch -> IO ())
+           , recoveryFuncFilter :: MC.ArchSegmentOff arch -> Maybe B.ByteString -> Bool
            , recoveryRefinement :: Maybe MR.RefinementConfig
            }
 
@@ -393,7 +404,8 @@ recoverBlocks logAction recovery loadedBinary symmap entries textAddrRange = do
   let mem = MBL.memoryImage loadedBinary
   sam <- toMacawSymbolMap mem symmap
   putStrLn "2!!"
-  di <- cfgFromAddrsWith recovery mem textAddrRange sam (F.toList entries)
+  let entries' = filter (\addr -> (M.lookup addr sam) == Just "main") (F.toList entries)
+  di <- cfgFromAddrsWith recovery mem textAddrRange sam entries'
   putStrLn "3!!"
   -- If the caller requested refinement, call refinement in a loop until nothing changes
   di' <- case recoveryRefinement recovery of
