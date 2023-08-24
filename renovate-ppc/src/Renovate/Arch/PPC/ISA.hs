@@ -36,7 +36,7 @@ import           Data.Coerce ( coerce )
 import           Data.Int ( Int32 )
 import qualified Data.List.NonEmpty as DLN
 import qualified Prettyprinter as PP
-import           Data.Typeable ( Typeable )
+import           Data.Typeable ( Typeable, Proxy (..) )
 import           Data.Word ( Word8, Word64 )
 import           Data.Void ( Void )
 import           Text.Printf ( printf )
@@ -149,7 +149,7 @@ instance C.Exception InstructionDisassemblyFailure
 -- | An 'ISA' description for PowerPC
 --
 -- For now, the same description works for both PowerPC 32 and PowerPC 64.
-isa :: ( arch ~ MP.AnyPPC v
+isa :: forall arch v. ( arch ~ MP.AnyPPC v
        , MM.MemWidth (MM.ArchAddrWidth arch)
        )
     => R.ISA arch
@@ -162,6 +162,7 @@ isa =
         , R.isaMakeRelativeJumpTo = ppcMakeRelativeJumpTo
         , R.isaMaxRelativeJumpSize = const ppcMaxRelativeJumpSize
         , R.isaJumpType = ppcJumpType
+        , R.isaIsRelocatableJump = ppcIsRelocatableJump (Proxy @arch)
         , R.isaConcretizeAddresses = ppcConcretizeAddresses
         , R.isaSymbolizeAddresses = ppcSymbolizeAddresses
         }
@@ -427,6 +428,80 @@ jumpRelocation symbolizeAddress insnAddr operand (Some jt) =
     R.NotInstrumentable _ ->
       D.Annotated R.NoRelocation operand
 
+ppcJumpTypeRaw :: forall arch tp t. (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch))
+               => Instruction tp t 
+               -> Either (R.ConcreteAddress arch -> R.JumpType arch R.HasModifiableTarget)
+                         (R.JumpType arch R.NoModifiableTarget)
+ppcJumpTypeRaw i = 
+  case toInst i of
+    D.Instruction opc operands ->
+      case operands of
+        D.Calltarget (D.BT offset) D.:< D.Nil ->
+          Left (\insnAddr -> R.DirectCall insnAddr (fromIntegral (offset `shiftL` 2)))
+        D.Directbrtarget (D.BT offset) D.:< D.Nil ->
+          Left (\insnAddr -> R.RelativeJump R.Unconditional insnAddr (fromIntegral (offset `shiftL` 2)))
+        -- GBC has an extra argument generalizing to include a branch hint
+        D.Condbrtarget (D.CBT offset) D.:< _crbit D.:< _bh D.:< D.Nil ->
+          Left (\insnAddr -> R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2)))
+        D.Condbrtarget (D.CBT offset) D.:< _crbit D.:< D.Nil ->
+          Left (\insnAddr -> R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2)))
+        D.Condbrtarget (D.CBT offset) D.:< D.Nil ->
+          case opc of
+            D.BCLalways ->
+              Left (\insnAddr -> R.RelativeJump R.Unconditional insnAddr (fromIntegral (offset `shiftL` 2)))
+            _ ->
+              Left (\insnAddr -> R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2)))
+        D.Absdirectbrtarget (D.ABT addr) D.:< D.Nil ->
+          Left (\_ -> R.AbsoluteJump R.Unconditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2))))
+        D.Abscondbrtarget (D.ACBT addr) D.:< D.Nil ->
+          Left (\_ -> R.AbsoluteJump R.Conditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2))))
+        D.Abscondbrtarget (D.ACBT addr) D.:< _ D.:< _ D.:< D.Nil ->
+          Left (\_ -> R.AbsoluteJump R.Conditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2))))
+        D.Nil ->
+          case opc of
+            D.BCTR -> Right (R.IndirectJump R.Unconditional)
+            D.BCTRL -> Right R.IndirectCall
+            D.TRAP -> Right R.IndirectCall
+            -- Conditional branches to link register
+            D.BDNZLR -> Right R.IndirectCall    -- Some kind of conditional return
+            D.BDNZLRL -> Right R.IndirectCall   -- Conditional return and link
+            D.BDNZLRLm -> Right R.IndirectCall
+            D.BDNZLRLp -> Right R.IndirectCall
+            D.BDNZLRm -> Right R.IndirectCall
+            D.BDNZLRp -> Right R.IndirectCall
+            D.BDZLR -> Right R.IndirectCall
+            D.BDZLRL -> Right R.IndirectCall
+            D.BDZLRLm -> Right R.IndirectCall
+            D.BDZLRLp -> Right R.IndirectCall
+            D.BDZLRm -> Right R.IndirectCall
+            D.BDZLRp -> Right R.IndirectCall
+            -- Normal return (branch to link register)
+            D.BLR -> Right (R.Return R.Unconditional)
+            D.BLRL -> Right (R.Return R.Unconditional)
+            _ -> Right R.NoJump
+        (_ D.:< _) ->
+          -- In this case, we handle all of the branches that don't need to inspect
+          -- operands (because they are indirect)
+          case opc of
+            -- Conditional branch through the CTR register
+            D.BCCTR -> Right (R.IndirectJump R.Conditional)
+            D.GBCCTR -> Right (R.IndirectJump R.Conditional)
+            -- This is a call because it is setting the link register and could
+            -- return to the next instruction
+            D.BCCTRL -> Right R.IndirectCall
+            D.GBCCTRL -> Right R.IndirectCall
+            -- Syscall
+            D.SC -> Right R.IndirectCall
+            -- Traps
+            D.TW -> Right R.IndirectCall
+            D.TWI -> Right R.IndirectCall
+            D.TD -> Right R.IndirectCall
+            D.TDI -> Right R.IndirectCall
+            -- Returns with extra operands
+            D.GBCLR -> Right (R.Return R.Conditional)
+            D.GBCLRL -> Right (R.Return R.Conditional)
+            _ -> Right R.NoJump
+
 -- | Classify jumps (and determine their targets, where possible)
 ppcJumpType :: (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch))
             => Instruction tp t
@@ -434,75 +509,18 @@ ppcJumpType :: (HasCallStack, MM.MemWidth (MM.ArchAddrWidth arch))
             -> R.ConcreteAddress arch
             -> unused
             -> Some (R.JumpType arch)
-ppcJumpType i _mem insnAddr _ =
-  case toInst i of
-    D.Instruction opc operands ->
-      case operands of
-        D.Calltarget (D.BT offset) D.:< D.Nil ->
-          Some (R.DirectCall insnAddr (fromIntegral (offset `shiftL` 2)))
-        D.Directbrtarget (D.BT offset) D.:< D.Nil ->
-          Some (R.RelativeJump R.Unconditional insnAddr (fromIntegral (offset `shiftL` 2)))
-        -- GBC has an extra argument generalizing to include a branch hint
-        D.Condbrtarget (D.CBT offset) D.:< _crbit D.:< _bh D.:< D.Nil ->
-          Some (R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2)))
-        D.Condbrtarget (D.CBT offset) D.:< _crbit D.:< D.Nil ->
-          Some (R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2)))
-        D.Condbrtarget (D.CBT offset) D.:< D.Nil ->
-          case opc of
-            D.BCLalways ->
-              Some (R.RelativeJump R.Unconditional insnAddr (fromIntegral (offset `shiftL` 2)))
-            _ ->
-              Some (R.RelativeJump R.Conditional insnAddr (fromIntegral (offset `shiftL` 2)))
-        D.Absdirectbrtarget (D.ABT addr) D.:< D.Nil ->
-          Some (R.AbsoluteJump R.Unconditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2))))
-        D.Abscondbrtarget (D.ACBT addr) D.:< D.Nil ->
-          Some (R.AbsoluteJump R.Conditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2))))
-        D.Abscondbrtarget (D.ACBT addr) D.:< _ D.:< _ D.:< D.Nil ->
-          Some (R.AbsoluteJump R.Conditional (R.concreteFromAbsolute (fromIntegral (addr `shiftL` 2))))
-        D.Nil ->
-          case opc of
-            D.BCTR -> Some (R.IndirectJump R.Unconditional)
-            D.BCTRL -> Some R.IndirectCall
-            D.TRAP -> Some R.IndirectCall
-            -- Conditional branches to link register
-            D.BDNZLR -> Some R.IndirectCall    -- Some kind of conditional return
-            D.BDNZLRL -> Some R.IndirectCall   -- Conditional return and link
-            D.BDNZLRLm -> Some R.IndirectCall
-            D.BDNZLRLp -> Some R.IndirectCall
-            D.BDNZLRm -> Some R.IndirectCall
-            D.BDNZLRp -> Some R.IndirectCall
-            D.BDZLR -> Some R.IndirectCall
-            D.BDZLRL -> Some R.IndirectCall
-            D.BDZLRLm -> Some R.IndirectCall
-            D.BDZLRLp -> Some R.IndirectCall
-            D.BDZLRm -> Some R.IndirectCall
-            D.BDZLRp -> Some R.IndirectCall
-            -- Normal return (branch to link register)
-            D.BLR -> Some (R.Return R.Unconditional)
-            D.BLRL -> Some (R.Return R.Unconditional)
-            _ -> Some R.NoJump
-        (_ D.:< _) ->
-          -- In this case, we handle all of the branches that don't need to inspect
-          -- operands (because they are indirect)
-          case opc of
-            -- Conditional branch through the CTR register
-            D.BCCTR -> Some (R.IndirectJump R.Conditional)
-            D.GBCCTR -> Some (R.IndirectJump R.Conditional)
-            -- This is a call because it is setting the link register and could
-            -- return to the next instruction
-            D.BCCTRL -> Some R.IndirectCall
-            D.GBCCTRL -> Some R.IndirectCall
-            -- Syscall
-            D.SC -> Some R.IndirectCall
-            -- Traps
-            D.TW -> Some R.IndirectCall
-            D.TWI -> Some R.IndirectCall
-            D.TD -> Some R.IndirectCall
-            D.TDI -> Some R.IndirectCall
-            -- Returns with extra operands
-            D.GBCLR -> Some (R.Return R.Conditional)
-            D.GBCLRL -> Some (R.Return R.Conditional)
-            _ -> Some R.NoJump
+ppcJumpType i _mem insnAddr _ = case ppcJumpTypeRaw i of
+  Left f -> Some (f insnAddr)
+  Right jt -> Some jt
+
+ppcIsRelocatableJump :: forall arch tp t proxy. MM.MemWidth (MM.ArchAddrWidth arch) 
+                     => proxy arch
+                     -> Instruction tp t 
+                     -> Bool
+ppcIsRelocatableJump _ i = case ppcJumpTypeRaw @arch i of
+  Left{} -> True
+  Right jt | not (R.isRelocatableJump (Some jt)) -> False
+  Right jt -> error $ "ppcIsRelocatableJump: unexpected jump type: " ++ show jt
 
 -- | Compute a new jump offset between the @srcAddr@ and @targetAddr@.
 --

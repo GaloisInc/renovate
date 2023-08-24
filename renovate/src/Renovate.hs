@@ -125,6 +125,7 @@ module Renovate
   ISA.HasModifiableTarget,
   ISA.NoModifiableTarget,
   ISA.StackAddress(..),
+  ISA.isRelocatableJump,
   -- * Results
   RRe.BlockMapping(..),
   RRe.RedirectionResult(..),

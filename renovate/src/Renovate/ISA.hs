@@ -20,6 +20,7 @@ module Renovate.ISA
   , NoModifiableTarget
   , isaDefaultInstructionArchRepr
   , ArchConstraints
+  , isRelocatableJump
   ) where
 
 import qualified Data.List.NonEmpty as DLN
@@ -93,6 +94,17 @@ data JumpType arch k where
   --
   -- The address is the address of the instruction
   NotInstrumentable :: RA.ConcreteAddress arch -> JumpType arch NoModifiableTarget
+
+isRelocatableJump :: Some (JumpType arch) -> Bool
+isRelocatableJump (Some jt) = case jt of
+  RelativeJump{} -> True
+  AbsoluteJump{} -> True
+  IndirectJump{} -> False
+  DirectCall{} -> True
+  IndirectCall{} -> False
+  Return{} -> False
+  NoJump{} -> False
+  NotInstrumentable{} -> False
 
 deriving instance (MM.MemWidth (MM.ArchAddrWidth arch)) => Show (JumpType arch k)
 deriving instance Eq (JumpType arch k)
@@ -168,6 +180,12 @@ data ISA arch = ISA
     --
     -- The 'Address' parameter is the address of the instruction,
     -- which is needed to resolve relative jumps.
+  , isaIsRelocatableJump :: forall tp. RCI.Instruction arch tp (RCR.Relocation arch) -> Bool
+    -- ^ Similar to 'isaJumpType' but only determines if the instruction is
+    --   relocatable without requiring the surrounding context.
+    --   Instead it is limited to instructions which have been annotated with
+    --   relocation information, where the context has already (potentially) been
+    --   used to embed the jump type into the instruction.
   , isaMakeRelativeJumpTo :: forall tp
                            . RA.ConcreteAddress arch
                           -> RA.ConcreteAddress arch

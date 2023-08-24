@@ -98,6 +98,7 @@ isa :: R.ISA X86.X86_64
 isa = R.ISA
   { R.isaInstructionSize = x64Size
   , R.isaJumpType = x64JumpType
+  , R.isaIsRelocatableJump = x64IsRelocatableJump
   , R.isaInstructionArchReprs = R.SomeInstructionArchRepr X86Repr DLN.:| []
   , R.isaInstructionRepr = instructionRepr
   , R.isaMakeRelativeJumpTo = x64MakeRelativeJumpTo
@@ -116,7 +117,9 @@ x64JumpType :: forall (tp :: R.InstructionArchReprKind X86.X86_64) t unused
             -> R.ConcreteAddress X86.X86_64
             -> unused
             -> Some (R.JumpType X86.X86_64)
-x64JumpType insn _ addr _ = x64JumpTypeRaw insn addr
+x64JumpType insn _ addr _ = case x64JumpTypeRaw insn of
+  Left f -> Some (f addr)
+  Right jt -> Some jt
 
 -- | Classify different kinds of jump instructions.
 --
@@ -125,20 +128,20 @@ x64JumpType insn _ addr _ = x64JumpTypeRaw insn addr
 -- to handle all of them.
 x64JumpTypeRaw :: forall (tp :: R.InstructionArchReprKind X86.X86_64) t
                 . Instruction tp t
-               -> R.ConcreteAddress X86.X86_64
-               -> Some (R.JumpType X86.X86_64)
-x64JumpTypeRaw (RawBytes _) _ =
+               -> Either (R.ConcreteAddress X86.X86_64 -> R.JumpType X86.X86_64 R.HasModifiableTarget)
+                         (R.JumpType X86.X86_64 R.NoModifiableTarget)
+x64JumpTypeRaw (RawBytes _) =
   -- NOTE: This could be a panic: none of these should show up until a user inserts them
-  Some R.NoJump
-x64JumpTypeRaw xi@(XI ii) addr =
+  Right R.NoJump
+x64JumpTypeRaw xi@(XI ii) =
   case (BSC.unpack (D.iiOp ii), map (fst . aoOperand) (D.iiArgs ii)) of
-    ("jmp", [D.JumpOffset _ off]) -> Some (R.RelativeJump R.Unconditional addr (fixJumpOffset sz off))
-    ("jmp", _) -> Some (R.IndirectJump R.Unconditional)
-    ("ret", _) -> Some (R.Return R.Unconditional)
-    ('i':'n':'t':_, _) -> Some R.IndirectCall
-    ('i':'r':'e':'t':_, _) -> Some (R.Return R.Unconditional)
-    ('l':'o':'o':'p':_, [D.JumpOffset _ off]) -> Some (R.RelativeJump R.Conditional addr (fixJumpOffset sz off))
-    ('j':_, [D.JumpOffset _ off]) -> Some (R.RelativeJump R.Conditional addr (fixJumpOffset sz off))
+    ("jmp", [D.JumpOffset _ off]) -> Left $ \addr -> (R.RelativeJump R.Unconditional addr (fixJumpOffset sz off))
+    ("jmp", _) -> Right (R.IndirectJump R.Unconditional)
+    ("ret", _) -> Right (R.Return R.Unconditional)
+    ('i':'n':'t':_, _) -> Right R.IndirectCall
+    ('i':'r':'e':'t':_, _) -> Right (R.Return R.Unconditional)
+    ('l':'o':'o':'p':_, [D.JumpOffset _ off]) -> Left $ \addr -> (R.RelativeJump R.Conditional addr (fixJumpOffset sz off))
+    ('j':_, [D.JumpOffset _ off]) -> Left $ \addr -> (R.RelativeJump R.Conditional addr (fixJumpOffset sz off))
     -- We treat calls as conditional jumps for the purposes of basic
     -- block recovery.  The important aspect of this treatment is that
     -- execution can (does) reach the instruction after the call, and
@@ -150,12 +153,19 @@ x64JumpTypeRaw xi@(XI ii) addr =
       -- Macaw, we can just analyze from _start and be okay, so we
       -- don't have to worry about this odd type of jump anymore
       let offset = fixJumpOffset sz off
-      in Some (R.DirectCall addr offset)
-    ("call", _) -> Some R.IndirectCall
-    ("syscall", _) -> Some R.IndirectCall
-    _ -> Some R.NoJump
+      in Left $ \addr -> (R.DirectCall addr offset)
+    ("call", _) -> Right R.IndirectCall
+    ("syscall", _) -> Right R.IndirectCall
+    _ -> Right R.NoJump
   where
     sz = x64Size xi
+
+x64IsRelocatableJump :: Instruction tp t -> Bool
+x64IsRelocatableJump i = case x64JumpTypeRaw i of
+  Left{} -> True
+  Right jt | not (R.isRelocatableJump (Some jt)) -> False
+  Right jt -> error $ "x64IsRelocatableJump: unexpected jump type: " ++ show jt
+
 
 -- | This function corrects for a difference in representation between
 -- x86_64 and the Renovate redirection code.  The redirection code assumes
