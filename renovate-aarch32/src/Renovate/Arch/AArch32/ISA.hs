@@ -394,8 +394,11 @@ armMaxRelativeJumpSize repr =
     A32Repr -> DB.bit 30 - 4
     T32Repr -> DB.bit 10 - 4
 
-asInteger :: forall n . (KnownNat n, 1 PN.<= n) => W.W n -> Integer
-asInteger w = PN.toSigned (PN.knownNat @n) (toInteger w)
+asSignedInteger :: forall n . (KnownNat n, 1 PN.<= n) => W.W n -> Integer
+asSignedInteger w = PN.toSigned (PN.knownNat @n) (toInteger w)
+
+asUnsignedInteger :: forall n . (KnownNat n, 1 PN.<= n) => W.W n -> Integer
+asUnsignedInteger w = toInteger w
 
 -- FIXME: This one will be tricky - I think we can simplify it a lot if we pass
 -- in the macaw block containing the instruction.  If it isn't the entire block,
@@ -427,9 +430,9 @@ armJumpType i mem insnAddr pb =
         -- FIXME: Implement thumb cases
         MD.ParsedCall _regs _retLoc ->
           case i of
-            AI (DA.Instruction DA.BL_i_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asInteger -> off) DA.:< DA.Nil)) ->
+            AI (DA.Instruction DA.BL_i_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
               Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
-            AI (DA.Instruction DA.BL_i_A2 (DA.Bv1 _ DA.:< DA.Bv4 _ DA.:< DA.Bv24 (asInteger -> off) DA.:< DA.Nil)) ->
+            AI (DA.Instruction DA.BL_i_A2 (DA.Bv1 _ DA.:< DA.Bv4 _ DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
               Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
             AI (DA.Instruction DA.BLX_r_A1 (DA.Bv4 _cond DA.:< DA.Bv4 _reg DA.:< DA.QuasiMask12 _ DA.:< DA.Nil)) ->
               Some R.IndirectCall
@@ -453,7 +456,7 @@ armJumpType i mem insnAddr pb =
              , nextInsnAddr == tgtAddr -> Some R.NoJump
              | otherwise ->
                case i of
-                 AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asInteger -> off) DA.:< DA.Nil)) ->
+                 AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
                    Some (R.RelativeJump R.Unconditional insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
                  -- FIXME: Handle Thumb cases
                  _ -> Some (R.NotInstrumentable insnAddr)
@@ -462,7 +465,7 @@ armJumpType i mem insnAddr pb =
         -- We are only handling B with condition codes here.
         MD.ParsedBranch {} ->
           case i of
-            AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asInteger -> off) DA.:< DA.Nil)) ->
+            AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
               Some (R.RelativeJump R.Conditional insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
             -- FIXME: Handle T32 cases
             _ -> Some (R.NotInstrumentable insnAddr)
@@ -591,6 +594,7 @@ armConcretizeAddresses _mem toConcrete insnAddr i0 =
                       DA.:< DA.Annotated () (DA.Bv12 0) -- offset
                       DA.:< DA.Nil)
           in i1 DLN.:| [ i2, i3, i4 ]
+        (DA.LDR_l_A1, _) -> RP.panic RP.ARMISA "armConcretizeAddresses" [ "Unsupported pc-relative load", show i0 ]
         (DA.B_A1, DA.Annotated _ (DA.Bv4 cond)
             DA.:< DA.Annotated (R.SymbolicRelocation symTarget) (DA.Bv24 _off)
             DA.:< DA.Nil) ->
@@ -659,16 +663,21 @@ armSymbolizeAddresses :: MM.Memory 32
                       -> Instruction tp ()
                       -> [R.Instruction MA.ARM tp (R.Relocation MA.ARM)]
 armSymbolizeAddresses mem toSymbolic pb insnAddr i =
---  trace (show pb) $
+  -- trace (show pb) $
   case i of
     ARMInstruction (DA.Instruction opc operands) ->
       case (opc, operands) of
         (DA.LDR_l_A1, DA.Annotated _ p
                 DA.:< DA.Annotated _ rt
-                DA.:< DA.Annotated _ u
+                -- FIXME: U operand needs to be '1' for the offset to be added, otherwise
+                -- it is subtracted. We don't have any good primitives for decrementing addresses
+                -- at the moment, so we just pin this to '1'
+                DA.:< DA.Annotated _ u@(DA.Bv1 (asUnsignedInteger -> 1))
                 DA.:< DA.Annotated _ w
                 DA.:< DA.Annotated _ cond
-                DA.:< DA.Annotated _ (DA.Bv12 (asInteger -> off12))
+                -- Offset is always an unsigned value, where its sign is instead determined
+                -- by the 'U' flag
+                DA.:< DA.Annotated _ (DA.Bv12 (asUnsignedInteger -> off12))
                 DA.:< DA.Nil) ->
           -- See Note [Rewriting LDR] for details on this construction
           let target = insnAddr `R.addressAddOffset` fromIntegral off12
