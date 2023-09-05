@@ -580,6 +580,47 @@ ldr_i cond rn rt u w offset = ARMInstructionBare $ DA.Instruction DA.LDR_i_A1_of
   DA.:< DA.Annotated () offset -- offset
   DA.:< DA.Nil)
 
+-- | Add registers Rn and Rm and put the value in Rd
+add_r :: DA.Operand "Bv4" {-^ condition code -}
+      -> DA.Operand "Bv4" {-^ target register (Rd) -}
+      -> DA.Operand "Bv4" {-^ source register (Rm) -}
+      -> DA.Operand "Bv4" {-^ source register (Rn) -}
+      -> DA.Operand "Bv1" {-^ flag to set condition registers on overflow -}
+      -> DA.Operand "Bv5" {-^ shift Rm according to type1 register -}
+      -> DA.Operand "Bv2" {-^ enum to set shift type -}
+      -> Instruction A32 ()
+add_r cond rd rn rm s imm5 type1 = ARMInstructionBare $ DA.Instruction DA.ADD_r_A1 $
+  (DA.Annotated () rd
+  DA.:< DA.Annotated () rm
+  DA.:< DA.Annotated () rn
+  DA.:< DA.Annotated () s
+  DA.:< DA.Annotated () cond
+  DA.:< DA.Annotated () imm5
+  DA.:< DA.Annotated () type1
+  DA.:< DA.Nil)
+
+-- | Push the source register onto the stack
+push :: DA.Operand "Bv4" {-^ condition code -}
+     -> DA.Operand "Bv4" {-^ source register -}
+     -> Instruction A32 ()
+push cond (DA.Bv4 rn) = ARMInstructionBare $ DA.Instruction DA.STMDB_A1 $
+  (DA.Annotated () (DA.Bv4 13) -- Rn (hardcoded to SP here)
+  DA.:< DA.Annotated () (DA.Bv1 1) -- W: writeback (increment SP)
+  DA.:< DA.Annotated () cond -- condition code
+  DA.:< DA.Annotated () (DA.Bv16 $ (W.w 1) `DB.shiftL` (fromIntegral rn)) -- indexed register list
+  DA.:< DA.Nil)
+
+-- | Pop the top of the stack and write it to the target register
+pop :: DA.Operand "Bv4" {-^ condition code -}
+     -> DA.Operand "Bv4" {-^ target register -}
+     -> Instruction A32 ()
+pop cond (DA.Bv4 rn) = ARMInstructionBare $ DA.Instruction DA.LDM_A1 $
+  (DA.Annotated () (DA.Bv4 13) -- Rn (hardcoded to SP here)
+  DA.:< DA.Annotated () (DA.Bv1 1) -- W: writeback (decrement SP)
+  DA.:< DA.Annotated () cond -- condition code
+  DA.:< DA.Annotated () (DA.Bv16 $ (W.w 1) `DB.shiftL` (fromIntegral rn)) -- indexed register list
+  DA.:< DA.Nil)
+
 
 -- | Read the given concrete value into the register
 --   See Note [Rewriting LDR] for details on this construction
@@ -642,6 +683,24 @@ armConcretizeAddresses _mem toConcrete insnAddr i0 =
                DA.:< DA.Nil) ->
           let newOff = jumpOffset insnAddr (toConcrete symTarget)
           in singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
+        (DA.ADD_r_A1, DA.Annotated _ rd
+                DA.:< DA.Annotated annM rm
+                DA.:< DA.Annotated annN rn
+                DA.:< DA.Annotated _ s
+                DA.:< DA.Annotated _ cond
+                DA.:< DA.Annotated _ imm5
+                DA.:< DA.Annotated _ type1
+                DA.:< DA.Nil) | isPC rm || isPC rn ->
+          let (r_source, addr) = case (annM, annN) of
+                (R.PCRelativeRelocation addrM, R.NoRelocation) -> (rn, addrM)
+                (R.NoRelocation, R.PCRelativeRelocation addrN) -> (rm, addrN)
+                _ -> RP.panic RP.ARMISA "armConcretizeAddresses" [ "Unsupported operands for ADD_r_A1", show i0]
+              r_spare = spareRegister [r_source, rd]
+              i1 = push cond r_spare -- stash spare
+              i2s = loadValueIntoReg (R.absoluteAddress (addr `R.addressAddOffset` 8)) cond r_spare -- read into r_spare
+              i3 = add_r cond rd r_spare r_source s imm5 type1 -- add r_spare and source value
+              i4 = pop cond r_spare -- restore r_spare 
+          in i1 DLN.:| (DLN.toList i2s) ++ [i3,i4]
         _ -> ARMInstructionBare (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands)) DLN.:| []
     ThumbInstruction {} ->
       RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet supported"
@@ -651,6 +710,15 @@ armConcretizeAddresses _mem toConcrete insnAddr i0 =
                       . DA.Annotated (R.Relocation MA.ARM) DA.Operand tp
                      -> DA.Annotated () DA.Operand tp
     toUnitAnnotation (DA.Annotated _ op) = DA.Annotated () op
+    
+    -- find a spare register disjoint from the given registers
+    spareRegister :: [DA.Operand "Bv4"] -> DA.Operand "Bv4"
+    spareRegister regs = go (DA.Bv4 0) regs
+      where 
+        go (DA.Bv4 (asUnsignedInteger -> r1)) _ | r1 > 8 = RP.panic RP.ARMISA "armConcretizeAddresses" [ "No spare registers"]
+        go (DA.Bv4 r1) ((DA.Bv4 r2) : rs) = if r1 == r2 then go (DA.Bv4 (r1 + 1)) regs else go (DA.Bv4 r1) rs
+        go r1 [] = r1
+
 
 -- | Compute the type of relocation to generate for the offset of the given jump instruction (if any)
 --
@@ -676,6 +744,12 @@ jumpTargetRelocation mem toSymbolic pb insnAddr i =
 
 noRelocation :: DA.Operand tp -> DA.Annotated (R.Relocation MA.ARM) DA.Operand tp
 noRelocation = DA.Annotated R.NoRelocation
+
+
+isPC :: DA.Operand "Bv4" -> Bool
+isPC opc = case opc of
+  (DA.Bv4 (asUnsignedInteger -> 15)) -> True
+  _ -> False
 
 armInstruction
   :: MM.Memory 32
@@ -745,6 +819,63 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
                                                  DA.:< DA.Nil
                                                  )
             in [armInstruction mem pb insnAddr i']
+        (DA.ADD_r_A1, DA.Annotated _ rd
+                DA.:< DA.Annotated _ rm
+                DA.:< DA.Annotated _ rn
+                DA.:< DA.Annotated _ s
+                DA.:< DA.Annotated _ cond
+                DA.:< DA.Annotated _ imm5@(DA.Bv5 (asUnsignedInteger -> imm5_int))
+                DA.:< DA.Annotated _ type1@(DA.Bv2 (asUnsignedInteger -> type1_int))
+                DA.:< DA.Nil) | isPC rn || isPC rm -> case imm5_int == 0 && type1_int == 0 of
+                    True -> 
+                      let target = insnAddr
+                          i' = DA.Instruction (coerce opc) 
+                            ((noRelocation rd)
+                            DA.:< (if isPC rm then DA.Annotated (R.PCRelativeRelocation target) rm else noRelocation rm)
+                            DA.:< (if isPC rn then DA.Annotated (R.PCRelativeRelocation target) rn else noRelocation rn)
+                            DA.:< noRelocation s
+                            DA.:< noRelocation cond
+                            DA.:< noRelocation imm5
+                            DA.:< noRelocation type1
+                            DA.:< DA.Nil
+                            )
+                      {-
+                      let target = insnAddr
+                          i' = DA.Instruction DA.ADD_i_A1 
+                            (     noRelocation rd -- Rd - output register
+                            DA.:< noRelocation rm -- Rn - input register
+                            DA.:< noRelocation s -- S
+                            DA.:< noRelocation cond -- condition code (unusued)
+                            DA.:< DA.Annotated (R.PCRelativeRelocation target) (DA.Bv12 0) -- 'imm12' -- immediate value
+                            DA.:< DA.Nil
+                            )
+                      -}
+                      in [armInstruction mem pb insnAddr i']
+                    False -> err $ "Unsupported operands for PC relative instruction:\n" ++ show i
+
+        -- FIXME: add instructions are potentially used to construct pc-relative offsets, and
+        -- so we need to identify which operands may refer to the pc.
+        -- Likely only a small subset of these actually can refer to the PC, and so we can remove
+        -- them from this list
+        {-
+        (DA.ADD_i_A1, _) -> err "ADD_i_A1"
+        (DA.ADDS_rr_A1, _) -> err "ADDS_rr_A1"
+        (DA.ADD_rr_A1, _) -> err "ADD_rr_A1"
+        (DA.ADDS_SP_r_A1, _) -> err "ADDS_SP_r_A1"
+        (DA.ADD_r_A1_RRX, _) -> err "ADD_r_A1_RRX"
+        (DA.ADDS_r_A1_RRX, _) -> err "ADDS_r_A1_RRX"
+        (DA.ADDS_r_A1, _) -> err "ADDS_r_A1"
+        (DA.SADD16_A1, _) -> err "SADD16_A1"
+        (DA.UQADD16_A1, _) -> err "UQADD16_A1"
+        (DA.UADD8_A1, _) -> err "UADD8_A1"
+        (DA.QADD_A1, _) -> err "QADD_A1"
+        (DA.ADD_SP_i_A1, _) -> err "ADD_SP_i_A1"
+        (DA.ADDS_SP_i_A1, _) -> err "ADDS_SP_i_A1"
+        (DA.UHADD16_A1, _) -> err "UHADD16_A1"
+        (DA.UQADD8_A1, _) -> err "UQADD8_A1"
+        (DA.SHADD16_A1, _) -> err "SHADD16_A1"
+        (DA.UADD16_A1, _) -> err "UADD16_A1"
+        -}
         _ ->
           let i' = DA.Instruction (coerce opc) (FC.fmapFC (\(DA.Annotated _ c) -> DA.Annotated R.NoRelocation c) operands)
           in [armInstruction mem pb insnAddr i']
