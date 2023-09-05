@@ -224,20 +224,25 @@ disassemble :: forall m ids
             -> R.ConcreteAddress MA.ARM
             -> BS.ByteString
             -> m (R.ConcreteBlock MA.ARM)
-disassemble pb startAddr endAddr bs0 = do
+disassemble pb startAddr endAddr bs0 = throwAsFail $ do
+  
+  -- False <- return $ isThumbMode $ MP.blockAbstractState pb
   let acon = toAnnotatedARM A32Repr
   let minsns0 = go A32Repr acon DA.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
   -- case DLN.nonEmpty =<< minsns0 of
   case minsns0 of
     Right insns' | Just insns <- DLN.nonEmpty insns' -> return (R.concreteBlock startAddr insns (A32Repr) pb)
                  | otherwise -> C.throwM $ MySuperGreatException (show insns')
-    Left e -> do
+    -- don't bother with thumb for now
+    Left e -> C.throwM e
+      {- do
       let tcon = ThumbInstruction . toAnnotatedThumb
       let minsns1 = go T32Repr tcon DT.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
       case minsns1 of
         Right insns' | Just insns <- DLN.nonEmpty insns' -> return (R.concreteBlock startAddr insns (T32Repr) pb)
                      | otherwise -> C.throwM $ MySuperGreatException (show e ++ "Examine code to figure out what this means: " ++ show insns')
         Left e' -> C.throwM $ MySuperGreatException ("Examine code to figure out what this means, part 2: " ++ show e)
+        -}
   where
     go :: forall tp i m'
         . (C.MonadThrow m')
