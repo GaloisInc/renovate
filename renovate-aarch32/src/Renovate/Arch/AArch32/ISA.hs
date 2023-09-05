@@ -556,6 +556,45 @@ markLast lst =
 singleton :: DA.Instruction -> DLN.NonEmpty (Instruction A32 ())
 singleton = (DLN.:| []) . toAnnotatedARM A32Repr
 
+-- | Read the value at the address in the source register into the target register
+ldr_i :: DA.Operand "Bv4" {-^ condition code -}
+      -> DA.Operand "Bv4" {-^ source register -}
+      -> DA.Operand "Bv4" {-^ target register -}
+      -> DA.Operand "Bv1" {-^ add or subtract offset from PC. 1: add; 0: subtract -}
+      -> DA.Operand "Bv1" {-^ writeback address to source register. 1: add; 0: subtract -}
+      -> DA.Operand "Bv12" {-^ offset -}
+      -> Instruction A32 ()
+ldr_i cond rn rt u w offset = ARMInstructionBare $ DA.Instruction DA.LDR_i_A1_off $
+  -- Notably LDR_i_A1 is the base instruction, while LDR_i_A1_off is a restriction
+  -- on the operands where P=1 and W=0 
+  -- 
+  -- See: LDR_i_A1_off in A32.dump-splices (dismantle-aarch32 template haskell dump) to look at pretty printer to find operand order
+  -- See: LDR_i_A1 in arm-instrs.asl (asl-translator/data) to view semantics for the instruction
+  -- See: LDR_i_A1_off in dismantle-arm-xml/data/ISA_v85A_AArch32_xml_00bet9/ldr_i.xml to look at the restriction for the '_off' variant
+  (DA.Annotated () (DA.Bv1 1) -- P - 1: read from source register; 0: read from register + offset
+  DA.:< DA.Annotated () rn -- Rn - source register
+  DA.:< DA.Annotated () rt -- Rt - target register
+  DA.:< DA.Annotated () u --  - U - 1: add offset to source register; 0: subtract offset from source register
+  DA.:< DA.Annotated () w --  - W - 1: write address back to source register; 0: no writes to source register
+  DA.:< DA.Annotated () cond -- condition code
+  DA.:< DA.Annotated () offset -- offset
+  DA.:< DA.Nil)
+
+
+-- | Read the given concrete value into the register
+--   See Note [Rewriting LDR] for details on this construction
+loadValueIntoReg :: MM.MemWord 32 {-^ address to read from -}
+                 -> DA.Operand "Bv4" {-^ condition code -}
+                 -> DA.Operand "Bv4" {-^ input register -}
+                 -> DLN.NonEmpty (Instruction A32 ())
+loadValueIntoReg absAddr cond rt = 
+  let 
+    w32 = fromIntegral absAddr
+    i1 = ARMInstructionBare $ DA.Instruction DA.LDR_l_A1 (DA.Annotated () (DA.Bv1 1) DA.:< DA.Annotated () rt DA.:< DA.Annotated () (DA.Bv1 1) DA.:< DA.Annotated () (DA.Bv1 0) DA.:< DA.Annotated () cond DA.:< DA.Annotated () (DA.Bv12 0) DA.:< DA.Nil)
+    i2 = toAnnotatedARM A32Repr $ DA.Instruction DA.B_A1 (DA.Bv4 unconditional DA.:< DA.Bv24 (0 `DB.shiftR` 2) DA.:< DA.Nil)
+    i3 = ARMBytes (LBS.toStrict (BB.toLazyByteString (BB.word32LE w32)))
+  in i1 DLN.:| [ i2, i3 ]
+
 -- | Resolve relocations in instructions (turning them from symbolic instructions to concrete instructions)
 --
 -- On AArch32, we only use relocations for two things (right now):
@@ -576,30 +615,17 @@ armConcretizeAddresses _mem toConcrete insnAddr i0 =
       RP.panic RP.ARMISA "armConcretizeAddresses" [ "Illegal raw bytes at: " ++ show insnAddr ]
     ARMInstruction (DA.Instruction opc operands) ->
       case (opc, operands) of
-        (DA.LDR_l_A1, DA.Annotated _ p
+        (DA.LDR_l_A1, DA.Annotated _ _p
                 DA.:< DA.Annotated _ rt
                 DA.:< DA.Annotated _ u
                 DA.:< DA.Annotated _ w
                 DA.:< DA.Annotated _ cond
-                DA.:< DA.Annotated (R.PCRelativeRelocation absAddr) _off12
+                DA.:< DA.Annotated (R.PCRelativeRelocation absAddr) offset
                 DA.:< DA.Nil) ->
           -- See Note [Rewriting LDR] for details on this construction
-          let w32 = fromIntegral (R.absoluteAddress (absAddr `R.addressAddOffset` 8))
-              i1 = ARMInstructionBare $ DA.Instruction DA.LDR_l_A1 (DA.Annotated () p DA.:< DA.Annotated () rt DA.:< DA.Annotated () u DA.:< DA.Annotated () w DA.:< DA.Annotated () cond DA.:< DA.Annotated () (DA.Bv12 0) DA.:< DA.Nil)
-              i2 = toAnnotatedARM A32Repr $ DA.Instruction DA.B_A1 (DA.Bv4 unconditional DA.:< DA.Bv24 (0 `DB.shiftR` 2) DA.:< DA.Nil)
-              i3 = ARMBytes (LBS.toStrict (BB.toLazyByteString (BB.word32LE w32)))
-              -- Operands marked with ??? were blindly chosen by disassembling a similar instruction.
-              i4 = ARMInstructionBare $ DA.Instruction DA.LDR_i_A1_off $
-                     (DA.Annotated () (DA.Bv1 1) -- ???
-                      DA.:< DA.Annotated () rt -- target register?
-                      DA.:< DA.Annotated () rt -- source register?
-                      DA.:< DA.Annotated () (DA.Bv1 1) -- ???
-                      DA.:< DA.Annotated () (DA.Bv1 0) -- ???
-                      DA.:< DA.Annotated () (DA.Bv4 14) -- ???
-                      DA.:< DA.Annotated () (DA.Bv12 0) -- offset
-                      DA.:< DA.Nil)
-          in i1 DLN.:| [ i2, i3, i4 ]
-        (DA.LDR_l_A1, _) -> RP.panic RP.ARMISA "armConcretizeAddresses" [ "Unsupported pc-relative load", show i0 ]
+          let i1s = loadValueIntoReg (R.absoluteAddress (absAddr `R.addressAddOffset` 8)) cond rt
+              i2 = ldr_i cond rt rt u w offset
+          in DLN.append i1s (DLN.singleton i2)
         (DA.B_A1, DA.Annotated _ (DA.Bv4 cond)
             DA.:< DA.Annotated (R.SymbolicRelocation symTarget) (DA.Bv24 _off)
             DA.:< DA.Nil) ->
@@ -687,7 +713,7 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
                 -- it doesn't matter any more, since the address has been concretized
                 1 -> insnAddr `R.addressAddOffset` fromIntegral off12
                 0 -> R.concreteFromAbsolute (R.absoluteAddress insnAddr - (fromIntegral off12))
-                _ -> error "armSymbolizeAddresses: impossible U value"
+                _ -> err "armSymbolizeAddresses: impossible U value"
               i' = DA.Instruction (coerce opc) (     noRelocation p
                                                DA.:< noRelocation rt
                                                DA.:< noRelocation (DA.Bv1 1)
@@ -727,6 +753,9 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
     ThumbInstruction {} ->
       RP.panic RP.ARMISA "armSymbolizeAddresses" [ "Thumb rewriting is not yet support"
                                                  , show pb ]
+    where
+      err :: String -> a
+      err msg = RP.panic RP.ARMISA "armSymbolizeAddresses" [msg, show pb]
 
 isa :: R.ISA MA.ARM
 isa =
