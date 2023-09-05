@@ -669,10 +669,7 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
       case (opc, operands) of
         (DA.LDR_l_A1, DA.Annotated _ p
                 DA.:< DA.Annotated _ rt
-                -- FIXME: U operand needs to be '1' for the offset to be added, otherwise
-                -- it is subtracted. We don't have any good primitives for decrementing addresses
-                -- at the moment, so we just pin this to '1'
-                DA.:< DA.Annotated _ u@(DA.Bv1 (asUnsignedInteger -> 1))
+                DA.:< DA.Annotated _ (DA.Bv1 (asUnsignedInteger -> u_raw))
                 DA.:< DA.Annotated _ w
                 DA.:< DA.Annotated _ cond
                 -- Offset is always an unsigned value, where its sign is instead determined
@@ -680,10 +677,15 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
                 DA.:< DA.Annotated _ (DA.Bv12 (asUnsignedInteger -> off12))
                 DA.:< DA.Nil) ->
           -- See Note [Rewriting LDR] for details on this construction
-          let target = insnAddr `R.addressAddOffset` fromIntegral off12
+          let target = case u_raw of
+                -- U flag indicates if this offset is added or subtracted, once rewritten
+                -- it doesn't matter any more, since the address has been concretized
+                1 -> insnAddr `R.addressAddOffset` fromIntegral off12
+                0 -> R.concreteFromAbsolute (R.absoluteAddress insnAddr - (fromIntegral off12))
+                _ -> error "armSymbolizeAddresses: impossible U value"
               i' = DA.Instruction (coerce opc) (     noRelocation p
                                                DA.:< noRelocation rt
-                                               DA.:< noRelocation u
+                                               DA.:< noRelocation (DA.Bv1 1)
                                                DA.:< noRelocation w
                                                DA.:< noRelocation cond
                                                DA.:< DA.Annotated (R.PCRelativeRelocation target) (DA.Bv12 0)
