@@ -231,16 +231,6 @@ addrInRange (textStart, textEnd) addr = fromMaybe False $ do
   let soEnd = absoluteAddress textEnd
   return (absAddr >= soStart && absAddr < soEnd)
 
-
--- | Clear the least significant bit of a segment offset.
-clearSegOffLeastBit :: MC.Memory w
-                    -> MC.MemSegmentOff w
-                    -> MC.MemSegmentOff w
-clearSegOffLeastBit mem addr = case MC.asSegmentOff mem (MC.clearAddrLeastBit (MC.segoffAddr addr)) of
-  Just addr' -> addr'
-  Nothing -> error "PANIC: clearSegOffLeastBit (Recovery.hs)"
-
-
 blockInfo :: forall arch
            . (MS.SymArchConstraints arch)
           => Recovery arch
@@ -252,18 +242,14 @@ blockInfo recovery mem textAddrRange di = do
   let blockBuilder = buildBlock (recoveryDis recovery) (recoveryAsm recovery) mem
   let macawBlocks = F.foldl' accumulateBlocks M.empty [ (faddr, PU.Some pb)
                                                       | PU.Some dfi <- validFuncs
-                                                      , _pb <- M.elems (dfi L.^. MC.parsedBlocks)
-                                                      , addrInRange textAddrRange (MC.pblockAddr _pb)
-                                                      , let _faddr = MC.discoveredFunAddr dfi
-                                                      , let pb = _pb { MC.pblockAddr = clearSegOffLeastBit mem (MC.pblockAddr _pb) }
-                                                      , let faddr = clearSegOffLeastBit mem _faddr
-                                                      -- , even (MC.segoffOffset (MC.pblockAddr pb))
+                                                      , pb <- M.elems (dfi L.^. MC.parsedBlocks)
+                                                      , addrInRange textAddrRange (MC.pblockAddr pb)
+                                                      , let faddr = MC.discoveredFunAddr dfi
                                                       ]
   let blockStarts = M.fromList [ (baddr, baddr `addressAddOffset` fromIntegral (MC.blockSize b))
                                | (archSegOff, (_, PU.Some b)) <- M.toList macawBlocks
                                , Just baddr <- return (concreteFromSegmentOff mem archSegOff)
                                , MC.blockSize b /= 0
-                               , even (absoluteAddress baddr)
                                ]
 
   traceM (show blockStarts)
