@@ -218,30 +218,8 @@ accumulateBlocks m v@(faddr0, (PU.Some pb0)) = case M.lookup (MC.pblockAddr pb0)
   Just (faddr, (PU.Some pb)) ->
     case MC.blockSize pb0 == MC.blockSize pb && faddr0 == faddr of
       True  -> m
-      False | pbFinalPair@(_,PU.Some pbFinal) <- chooseBlock (faddr, pb) (faddr0, pb0) ->
-                M.insert (MC.pblockAddr pbFinal) pbFinalPair m
+      False -> M.insert (MC.pblockAddr pb0) v m
   Nothing -> M.insert (MC.pblockAddr pb0) v m
-
--- | When two block addresses are the same, but they have different sizes, pick one.
-chooseBlock :: MS.SymArchConstraints arch
-            => (MC.ArchSegmentOff arch, MC.ParsedBlock arch ids0)
-            -> (MC.ArchSegmentOff arch, MC.ParsedBlock arch ids1)
-            -> (MC.ArchSegmentOff arch, PU.Some (MC.ParsedBlock arch))
-chooseBlock (faddr0, pb0) (faddr1, pb1) =
-  -- TODO: Is the below case an error, or should we actually pick one?
-  trace (if faddr0 /= faddr1 then "Found two blocks with the same address, which belong to different functions\n\n" else "") $
-  case (errTermStmt (MC.pblockTermStmt pb0), errTermStmt (MC.pblockTermStmt pb1)) of
-      ( True, False ) -> (faddr1, PU.Some pb1)
-      ( False, True ) -> (faddr0, PU.Some pb0)
-      ( True, True  ) -> trace ("Found two valid blocks with different sizes:\n\nBlock 1:\n\n" ++ show (MC.pblockStmts pb0) ++ "\n\nBlock 2:\n\n:" ++ show (MC.pblockStmts pb1)) $
-        if MC.blockSize pb0 >= MC.blockSize pb1 then (faddr0, PU.Some pb0) else (faddr1, PU.Some pb1)
-      ( False, False ) -> trace ("Found two invalid blocks:\n\nBlock 1:\n\n" ++ show (MC.pblockStmts pb0) ++ "\n\nBlock 2:\n\n:" ++ show (MC.pblockStmts pb1)) $
-        (faddr0, PU.Some pb0)
-
-
-  where errTermStmt MC.ParsedTranslateError{} = True
-        errTermStmt MC.ClassifyFailure{} = True
-        errTermStmt _ = False
 
 addrInRange :: (MC.MemWidth (MC.ArchAddrWidth arch))
             => (ConcreteAddress arch, ConcreteAddress arch)
