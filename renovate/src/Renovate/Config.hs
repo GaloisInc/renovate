@@ -211,8 +211,6 @@ data RenovateConfig arch binFmt callbacks (b :: Type -> Type) = RenovateConfig
   , rcRefinementConfig :: Maybe MR.RefinementConfig
   -- ^ Optional configuration for macaw-refinement; if provided, call
   -- macaw-refinement to find additional code through SMT-based refinement
-  , rcIgnoredSymbols :: [B.ByteString]
-  -- ^ Set of function symbols to ignore during analysis. 
   }
 
 -- | Compose a list of instrumentation functions into a single

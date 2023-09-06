@@ -154,21 +154,13 @@ analyzeDiscoveredFunctions recovery mem textAddrRange info !iterations =
     Just (addr, rsn) -> do
       (info', C.Some fnInfo) <- return $ MC.analyzeFunction addr rsn info
       putStrLn $ "analyzeDiscoveredFunctions: addr=" ++ show addr ++ " sym:" ++ show (MC.discoveredFunSymbol fnInfo)
-      case recoveryFuncFilter recovery addr (Just (MC.discoveredFunName fnInfo)) of
-        False -> do
-          putStrLn "  dropped"
-          info'' <- return $ info L.& MC.unexploredFunctions L.%~ (M.delete addr)
-          fnInfo' <- return $ fnInfo L.& MC.parsedBlocks L.%~ (\_ -> M.empty)
-          info''' <- return $ info'' L.& MC.funInfo L.%~ M.insert addr (C.Some fnInfo')
-          analyzeDiscoveredFunctions recovery mem textAddrRange info''' (iterations + 1)
-        True -> do
-          case recoveryFuncCallback recovery of
-            Just (freq, fcb)
-              | iterations `mod` freq == 0 -> do
-                  bi <- blockInfo recovery mem textAddrRange info'
-                  fcb addr bi
-            _ -> return ()
-          analyzeDiscoveredFunctions recovery mem textAddrRange info' (iterations + 1)
+      case recoveryFuncCallback recovery of
+        Just (freq, fcb)
+          | iterations `mod` freq == 0 -> do
+              bi <- blockInfo recovery mem textAddrRange info'
+              fcb addr bi
+        _ -> return ()
+      analyzeDiscoveredFunctions recovery mem textAddrRange info' (iterations + 1)
 
 toRegCFG :: forall arch ids
           . (MS.SymArchConstraints arch)
@@ -316,7 +308,6 @@ data Recovery arch =
            , recoveryArchInfo :: MC.ArchitectureInfo arch
            , recoveryHandleAllocator :: C.HandleAllocator
            , recoveryFuncCallback :: Maybe (Int, MC.ArchSegmentOff arch -> BlockInfo arch -> IO ())
-           , recoveryFuncFilter :: MC.ArchSegmentOff arch -> Maybe B.ByteString -> Bool
            , recoveryRefinement :: Maybe MR.RefinementConfig
            }
 

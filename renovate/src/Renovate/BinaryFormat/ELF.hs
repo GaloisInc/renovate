@@ -1274,9 +1274,6 @@ withAnalysisEnv logAction cfg hdlAlloc loadedBinary symmap textAddrRange k = do
                             , R.recoveryArchInfo = archInfo
                             , R.recoveryHandleAllocator = hdlAlloc
                             , R.recoveryFuncCallback = fmap (second ($ loadedBinary)) (rcFunctionCallback cfg)
-                            , R.recoveryFuncFilter = \_addr mnm -> case mnm of
-                                Just nm -> not (nm `elem` (rcIgnoredSymbols cfg))
-                                Nothing -> True
                             , R.recoveryRefinement = rcRefinementConfig cfg
                             }
   blockInfo <- IO.liftIO (R.recoverBlocks logAction recovery loadedBinary symmap elfEntryPoints textAddrRange)

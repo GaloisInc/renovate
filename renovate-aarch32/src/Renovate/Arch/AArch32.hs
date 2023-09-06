@@ -37,22 +37,4 @@ config analysis = R.RenovateConfig
   , R.rcDataLayoutBase = 0xb0000
   , R.rcExtratextOffset = 0
   , R.rcRefinementConfig = Nothing
-  , R.rcIgnoredSymbols = [ -- libc
-                           -- mandatory
-                           "fputs_unlocked", "fwrite_unlocked", "fopen"
-                          -- optional
-                         , "exit", "fclose", "nanosleep", "__fstatat", "__clock_gettime", "__gettimeofday_time64"
-                         , "fscanf", "vsnprintf", "ioctl", "tcsetattr", "tcgetattr", "__libc_free", "tcflush", "cfsetispeed"
-                         , "vsprintf", "fgetc", "locking_getc", "__stat_time64", "open"
-                         -- clock.c
-                         , "micros"
-                         -- gpio.c
-                         , "gpioWritePin", "gpioReadPin", "gpioSetupPin"
-                         -- uart.c
-                         , "uartInit"
-                         -- serialbus.c
-                         , "getBusAddress"
-                         -- watchdog.c
-                         , "WatchDogInit"
-                         ]
   }
