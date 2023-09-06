@@ -555,8 +555,7 @@ buildBlock disBlock asm1 mem blockStarts (funcAddr, (PU.Some pb)) = do
            Right [MC.ByteRegion bs] -> do
              let stopAddr = blockStopAddress blockStarts pb concAddr
              case disBlock pb concAddr stopAddr bs of
-               -- Left err -> trace (show funcAddr ++ "\n\n--------\n\n" ++ show segAddr ++ "\n\n--------\n\n" ++ show concAddr ++ "\n\n--------\n\n" ++ (showHex (B.head bs) "") ++ "\n\n--------\n\n") $ C.throwM (RCE.EmptyBlock concAddr err)
-               Left _err -> return (Left funcAddr) -- C.throwM (RCE.EmptyBlock concAddr err)
+               Left err -> return (Left funcAddr)
                Right bb ->
                  -- If we can't re-assemble all of the instructions we have found,
                  -- pretend we never saw this block.  Note that the caller will have to

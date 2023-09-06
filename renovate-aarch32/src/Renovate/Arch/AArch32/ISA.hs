@@ -65,6 +65,8 @@ import qualified SemMC.Architecture.AArch32 as A32
 import qualified Renovate as R
 import qualified Renovate.Arch.AArch32.Panic as RP
 import           Renovate.Arch.AArch32.Repr
+import qualified Data.Macaw.Discovery.State as MP
+import qualified Data.Macaw.ARM.Arch as MA
 
 -- | A wrapper around A32 and T32 instructions type indexed to ensure that ARM
 -- and Thumb instructions cannot be mixed in a single basic block
@@ -191,6 +193,7 @@ data InstructionDisassemblyFailure =
   InstructionDisassemblyFailure LBS.ByteString Int
   | EmptyBlock (R.ConcreteAddress MA.ARM)
   | OverlappingBlocks (R.ConcreteAddress MA.ARM) (R.ConcreteAddress MA.ARM)
+  | ThumbDisassemblyUnsupported
   deriving (Show)
 
 instance C.Exception InstructionDisassemblyFailure
@@ -224,25 +227,26 @@ disassemble :: forall m ids
             -> R.ConcreteAddress MA.ARM
             -> BS.ByteString
             -> m (R.ConcreteBlock MA.ARM)
-disassemble pb startAddr endAddr bs0 = throwAsFail $ do
-  
-  -- False <- return $ isThumbMode $ MP.blockAbstractState pb
-  let acon = toAnnotatedARM A32Repr
-  let minsns0 = go A32Repr acon DA.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
-  -- case DLN.nonEmpty =<< minsns0 of
-  case minsns0 of
-    Right insns' | Just insns <- DLN.nonEmpty insns' -> return (R.concreteBlock startAddr insns (A32Repr) pb)
-                 | otherwise -> C.throwM $ MySuperGreatException (show insns')
-    -- don't bother with thumb for now
-    Left e -> C.throwM e
-      {- do
-      let tcon = ThumbInstruction . toAnnotatedThumb
-      let minsns1 = go T32Repr tcon DT.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
-      case minsns1 of
-        Right insns' | Just insns <- DLN.nonEmpty insns' -> return (R.concreteBlock startAddr insns (T32Repr) pb)
-                     | otherwise -> C.throwM $ MySuperGreatException (show e ++ "Examine code to figure out what this means: " ++ show insns')
-        Left e' -> C.throwM $ MySuperGreatException ("Examine code to figure out what this means, part 2: " ++ show e)
-        -}
+disassemble pb startAddr endAddr bs0 = do
+  case (MP.pblockPrecond pb) of
+    Right (MA.bpPSTATE_T -> pstateT) -> case pstateT of 
+      False -> do
+        let acon = toAnnotatedARM A32Repr 
+        insns' <- go A32Repr acon DA.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
+        case DLN.nonEmpty insns' of
+          Just insns -> return (R.concreteBlock startAddr insns A32Repr pb)
+          Nothing -> C.throwM $ EmptyBlock startAddr
+      -- until we can rewrite Thumb mode instructions, we can skip attemping to disassemble thumb blocks
+      True -> C.throwM ThumbDisassemblyUnsupported
+      {-
+      True -> do
+        let tcon = ThumbInstruction . toAnnotatedThumb
+        insns' <- go T32Repr tcon DT.disassembleInstruction 0 (addressClearLeastBit startAddr) (LBS.fromStrict bs0) []
+        case DLN.nonEmpty insns' of
+          Just insns -> return (R.concreteBlock startAddr insns T32Repr pb)
+          Nothing -> C.throwM $ EmptyBlock startAddr
+       -}
+    Left _err -> C.throwM $ InstructionDisassemblyFailure (LBS.take 8 (LBS.fromStrict bs0)) 0
   where
     go :: forall tp i m'
         . (C.MonadThrow m')
