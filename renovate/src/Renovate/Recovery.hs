@@ -78,6 +78,8 @@ import           Renovate.ISA
 import           Renovate.Recovery.Overlap
 import           Renovate.Recovery.SymbolMap ( SymbolMap, toMacawSymbolMap )
 import Data.Macaw.Discovery (DiscoveryFunInfo)
+import qualified Data.Map.Merge.Strict as M
+import Control.Lens ((%~), (&))
 
 data Cached a = Cached (IO.IORef (Maybe a)) (IO a)
 type SCFG f arch = f (MS.MacawExt arch) (Ctx.EmptyCtx Ctx.::> MS.ArchRegStruct arch) (MS.ArchRegStruct arch)
@@ -189,14 +191,19 @@ cfgFromAddrsWith :: (MS.SymArchConstraints arch)
                  -> MC.Memory (MC.ArchAddrWidth arch)
                  -> (ConcreteAddress arch, ConcreteAddress arch)
                  -> MC.AddrSymMap (MC.ArchAddrWidth arch)
+                 -> M.Map (MC.ArchSegmentOff arch) MC.NoReturnFunStatus
                  -> [MC.ArchSegmentOff arch]
                  -> IO (MC.DiscoveryState arch)
-cfgFromAddrsWith recovery mem textAddrRange symbols initAddrs = do
-  let s1 = MC.markAddrsAsFunction MC.InitAddr initAddrs s0
-  s2 <- analyzeDiscoveredFunctions recovery mem textAddrRange s1 0
-  analyzeDiscoveredFunctions recovery mem textAddrRange s2 0
+cfgFromAddrsWith recovery mem textAddrRange symbols trustedFns initAddrs = do
+  s3 <- analyzeDiscoveredFunctions recovery mem textAddrRange s2 0
+  analyzeDiscoveredFunctions recovery mem textAddrRange s3 0
   where
     s0 = MC.emptyDiscoveryState mem symbols (recoveryArchInfo recovery)
+    -- add the given trusted function entry points, overwriting any that came
+    -- from the symbols
+    s1 = s0 & MC.trustedFunctionEntryPoints %~ 
+      (\m -> M.merge M.preserveMissing M.preserveMissing (M.zipWithMatched (\_ _l r -> r)) m trustedFns)
+    s2 = MC.markAddrsAsFunction MC.InitAddr initAddrs s1
 
 -- There can be overlapping blocks
 --
@@ -360,7 +367,9 @@ recoverBlocks logAction recovery loadedBinary symmap entries textAddrRange = do
   sam <- toMacawSymbolMap mem symmap
   putStrLn "2!!"
   let entries' = filter (\addr -> (M.lookup addr sam) == Just "main") (F.toList entries)
-  di <- cfgFromAddrsWith recovery mem textAddrRange sam entries'
+  let trustedEntries = 
+        M.fromList $ concat $ map (\addr -> if (M.lookup addr sam) == Just "exit" then [(addr, MC.NoReturnFun)] else []) (F.toList entries)
+  di <- cfgFromAddrsWith recovery mem textAddrRange sam trustedEntries entries'
   putStrLn "3!!"
   -- If the caller requested refinement, call refinement in a loop until nothing changes
   di' <- case recoveryRefinement recovery of
