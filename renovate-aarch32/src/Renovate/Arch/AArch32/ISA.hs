@@ -714,6 +714,8 @@ armConcretizeAddresses _mem toConcrete insnAddr i0 =
           let i1s = loadValueIntoReg (R.absoluteAddress (absAddr `R.addressAddOffset` 8)) cond rt
               i2 = ldr_i cond rt rt u w offset
           in DLN.append i1s (DLN.singleton i2)
+        (DA.ADR_A1, DA.Annotated _ rd DA.:< DA.Annotated _ cond DA.:< DA.Annotated (R.PCRelativeRelocation absAddr) _imm12 DA.:< DA.Nil) ->
+          loadValueIntoReg (R.absoluteAddress (absAddr `R.addressAddOffset` 8)) cond rd
         (DA.B_A1, DA.Annotated _ (DA.Bv4 cond)
             DA.:< DA.Annotated (R.SymbolicRelocation symTarget) (DA.Bv24 _off)
             DA.:< DA.Nil) ->
@@ -816,6 +818,34 @@ armInstruction mem pb insnAddr anni
   | Some jt <- armJumpType_ (toAnnotatedARM A32Repr (armDropAnnotations anni)) mem insnAddr pb = 
     ARMInstructionAnn anni jt
 
+-- Copied from arm_defs.asl
+ror :: forall n. KnownNat n => W.W n -> Int -> (W.W n)
+ror x shift =
+  let 
+    (n :: Int) = fromIntegral $ PN.intValue (PN.knownNat @n)
+    (m :: Int) = shift `mod` n
+    result = x `DB.shiftR` m DB..|. x `DB.shiftL` (n-m)
+  in result
+
+-- Copied from arm_defs.asl
+a32ExpandImm :: W.W 12 -> W.W 32
+a32ExpandImm w = 
+  let
+    -- select bottom 8 bits
+    -- 255 =  00000000 00000000 00000000 11111111
+    (bits_7_0 :: W.W 32) = 255 DB..&. (fromIntegral w)
+    -- select top 4 bits (from 12)
+    -- 3840 = 00000000 00000000 00001111 00000000
+    (bits_11_8 :: W.W 32) = (3840 DB..&. (fromIntegral w)) `DB.shiftR` 8 
+  in ror bits_7_0 (2*(fromIntegral bits_11_8))
+
+-- | Treat a single-bit word as a boolean
+pattern BitSet :: Bool -> W.W 1
+pattern BitSet b <- ((\x -> (DB.testBit x 0)) -> b) where
+  BitSet False = 0
+  BitSet True = 1
+{-#COMPLETE BitSet #-}
+
 armSymbolizeAddresses :: MM.Memory 32
                       -> (R.ConcreteAddress MA.ARM -> R.SymbolicAddress MA.ARM)
                       -> MD.ParsedBlock MA.ARM ids
@@ -829,7 +859,7 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
       case (opc, operands) of
         (DA.LDR_l_A1, DA.Annotated _ p
                 DA.:< DA.Annotated _ rt
-                DA.:< DA.Annotated _ (DA.Bv1 (asUnsignedInteger -> u_raw))
+                DA.:< DA.Annotated _ (DA.Bv1 u)
                 DA.:< DA.Annotated _ w
                 DA.:< DA.Annotated _ cond
                 -- Offset is always an unsigned value, where its sign is instead determined
@@ -837,20 +867,28 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
                 DA.:< DA.Annotated _ (DA.Bv12 (asUnsignedInteger -> off12))
                 DA.:< DA.Nil) ->
           -- See Note [Rewriting LDR] for details on this construction
-          let target = case u_raw of
+          let target = case u of
                 -- U flag indicates if this offset is added or subtracted, once rewritten
                 -- it doesn't matter any more, since the address has been concretized
-                1 -> insnAddr `R.addressAddOffset` fromIntegral off12
-                0 -> R.concreteFromAbsolute (R.absoluteAddress insnAddr - (fromIntegral off12))
-                _ -> err "armSymbolizeAddresses: impossible U value"
+                BitSet True -> insnAddr `R.addressAddOffset` fromIntegral off12
+                BitSet False -> R.concreteFromAbsolute (R.absoluteAddress insnAddr - (fromIntegral off12))
               i' = DA.Instruction (coerce opc) (     noRelocation p
                                                DA.:< register rt
-                                               DA.:< noRelocation (DA.Bv1 1)
+                                               DA.:< noRelocation (DA.Bv1 (BitSet True))
                                                DA.:< noRelocation w
                                                DA.:< conditionCode cond
                                                DA.:< DA.Annotated (R.PCRelativeRelocation target) (DA.Bv12 0)
                                                DA.:< DA.Nil
                                                )
+          in [armInstruction mem pb insnAddr i']
+        (DA.ADR_A1, DA.Annotated _ rd DA.:< DA.Annotated _ cond DA.:< DA.Annotated _ (DA.Bv12 imm12) DA.:< DA.Nil) ->
+          let target = insnAddr `R.addressAddOffset` (fromIntegral (a32ExpandImm imm12))
+              i' = DA.Instruction (coerce opc) (register rd DA.:< conditionCode cond DA.:< DA.Annotated (R.PCRelativeRelocation target) (DA.Bv12 0) DA.:< DA.Nil)
+          in [armInstruction mem pb insnAddr i']
+        (DA.ADR_A2, DA.Annotated _ rd DA.:< DA.Annotated _ cond DA.:< DA.Annotated _ (DA.Bv12 imm12) DA.:< DA.Nil) ->
+          let target = R.concreteFromAbsolute (R.absoluteAddress insnAddr - (fromIntegral (a32ExpandImm imm12)))
+              -- just swap to A1 so we only need to handle one case when concretizing
+              i' = DA.Instruction DA.ADR_A1 (register rd DA.:< conditionCode cond DA.:< DA.Annotated (R.PCRelativeRelocation target) (DA.Bv12 0) DA.:< DA.Nil)
           in [armInstruction mem pb insnAddr i']
         (DA.B_A1, DA.Annotated _ cond@(DA.Bv4 _) DA.:< DA.Annotated _ (DA.Bv24 _off) DA.:< DA.Nil)
           | Just reloc <- jumpTargetRelocation mem toSymbolic pb insnAddr i ->
