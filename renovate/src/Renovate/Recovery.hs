@@ -367,8 +367,11 @@ recoverBlocks logAction recovery loadedBinary symmap entries textAddrRange = do
   sam <- toMacawSymbolMap mem symmap
   putStrLn "2!!"
   let entries' = filter (\addr -> (M.lookup addr sam) == Just "main") (F.toList entries)
+  let isExit addr = case M.lookup addr sam of
+        Just nm -> nm `elem` ["exit", "_Exit", "perror"]
+        Nothing -> False
   let trustedEntries = 
-        M.fromList $ concat $ map (\addr -> if (M.lookup addr sam) == Just "exit" then [(addr, MC.NoReturnFun)] else []) (F.toList entries)
+        M.fromList $ concat $ map (\addr -> if isExit addr then [(addr, MC.NoReturnFun)] else []) (F.toList entries)
   di <- cfgFromAddrsWith recovery mem textAddrRange sam trustedEntries entries'
   putStrLn "3!!"
   -- If the caller requested refinement, call refinement in a loop until nothing changes
