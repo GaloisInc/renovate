@@ -16,6 +16,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE LambdaCase #-}
 module Renovate.Arch.AArch32.ISA (
   A32.AArch32,
   isa,
@@ -194,6 +195,7 @@ data InstructionDisassemblyFailure =
   | EmptyBlock (R.ConcreteAddress MA.ARM)
   | OverlappingBlocks (R.ConcreteAddress MA.ARM) (R.ConcreteAddress MA.ARM)
   | ThumbDisassemblyUnsupported
+  | TranslationError String
   deriving (Show)
 
 instance C.Exception InstructionDisassemblyFailure
@@ -209,6 +211,18 @@ data MySuperGreatException = MySuperGreatException String
   deriving (Show)
 
 instance C.Exception MySuperGreatException
+
+isErrorBlock :: MD.ParsedBlock MA.ARM ids -> Bool
+isErrorBlock pb = case MP.pblockTermStmt pb of
+  MP.ParsedTranslateError{} -> True
+  MP.ClassifyFailure{} -> True
+  _ -> any isErrorStmt (MP.pblockStmts pb)
+
+isErrorStmt :: MC.Stmt MA.ARM ids -> Bool
+isErrorStmt = \case
+  MC.ExecArchStmt (MA.UninterpretedA32Opcode{}) -> True
+  MC.ExecArchStmt (MA.UninterpretedT32Opcode{}) -> True
+  _ -> False
 
 -- | Disassemble a concrete block from a bytestring
 --
@@ -230,12 +244,14 @@ disassemble :: forall m ids
 disassemble pb startAddr endAddr bs0 = do
   case (MP.pblockPrecond pb) of
     Right (MA.bpPSTATE_T -> pstateT) -> case pstateT of 
+      -- don't even attempt to disassemble blocks that end in an error
+      _ | isErrorBlock pb -> C.throwM $ TranslationError (show (MP.pblockTermStmt pb))
       False -> do
         let acon = toAnnotatedARM A32Repr 
         insns' <- go A32Repr acon DA.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
         case DLN.nonEmpty insns' of
           Just insns -> return (R.concreteBlock startAddr insns A32Repr pb)
-          Nothing -> C.throwM $ EmptyBlock startAddr
+          _ -> C.throwM $ EmptyBlock startAddr
       -- until we can rewrite Thumb mode instructions, we can skip attemping to disassemble thumb blocks
       True -> C.throwM ThumbDisassemblyUnsupported
       {-
