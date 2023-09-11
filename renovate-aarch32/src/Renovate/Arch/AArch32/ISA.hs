@@ -124,8 +124,30 @@ pattern AI i <- ARMInstruction (armDropAnnotations -> i)
 -- pattern TI i <- ThumbInstruction (thumbDropAnnotations -> i)
 
 type instance R.Instruction MA.ARM = Instruction
-type instance R.ArchitectureRelocation MA.ARM = Void
+type instance R.ArchitectureRelocation MA.ARM = ARMRelocation
 type instance R.RegisterType MA.ARM = Operand
+
+data ARMRelocation where
+  GPR_ :: ARMRelocation
+  ConditionCode_ :: ARMRelocation
+  PC_ :: ARMRelocation -- should usually be replaced by a PCRelativeOffset
+  SP_ :: ARMRelocation
+  LR_ :: ARMRelocation
+
+pattern GPR :: R.Relocation MA.ARM
+pattern GPR = R.ArchRelocation GPR_
+
+pattern PC :: R.Relocation MA.ARM
+pattern PC = R.ArchRelocation PC_
+
+pattern ConditionCode :: R.Relocation MA.ARM
+pattern ConditionCode = R.ArchRelocation ConditionCode_
+
+pattern SP :: R.Relocation MA.ARM
+pattern SP = R.ArchRelocation SP_
+
+pattern LR :: R.Relocation MA.ARM
+pattern LR = R.ArchRelocation LR_
 
 
 -- | ARM operands
@@ -717,8 +739,8 @@ armConcretizeAddresses _mem toConcrete insnAddr i0 =
                 DA.:< DA.Annotated _ type1
                 DA.:< DA.Nil) | isPC rm || isPC rn ->
           let (r_source, addr) = case (annM, annN) of
-                (R.PCRelativeRelocation addrM, R.NoRelocation) -> (rn, addrM)
-                (R.NoRelocation, R.PCRelativeRelocation addrN) -> (rm, addrN)
+                (R.PCRelativeRelocation addrM, _) | not (isPC rn) -> (rn, addrM)
+                (_, R.PCRelativeRelocation addrN) | not (isPC rm) -> (rm, addrN)
                 _ -> RP.panic RP.ARMISA "armConcretizeAddresses" [ "Unsupported operands for ADD_r_A1", show i0]
               r_spare = spareRegister [r_source, rd]
               i1 = push cond r_spare -- stash spare
@@ -771,9 +793,17 @@ noRelocation :: DA.Operand tp -> DA.Annotated (R.Relocation MA.ARM) DA.Operand t
 noRelocation = DA.Annotated R.NoRelocation
 
 
+
+register :: DA.Operand "Bv4" -> DA.Annotated (R.Relocation MA.ARM) DA.Operand "Bv4"
+register (DA.Bv4 w) = case w of
+  15 -> DA.Annotated PC (DA.Bv4 w)
+  14 -> DA.Annotated LR (DA.Bv4 w)
+  13 -> DA.Annotated SP (DA.Bv4 w)
+  _ -> DA.Annotated GPR (DA.Bv4 w)
+
 isPC :: DA.Operand "Bv4" -> Bool
 isPC opc = case opc of
-  (DA.Bv4 (asUnsignedInteger -> 15)) -> True
+  (DA.Bv4 15) -> True
   _ -> False
 
 armInstruction
@@ -814,24 +844,24 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
                 0 -> R.concreteFromAbsolute (R.absoluteAddress insnAddr - (fromIntegral off12))
                 _ -> err "armSymbolizeAddresses: impossible U value"
               i' = DA.Instruction (coerce opc) (     noRelocation p
-                                               DA.:< noRelocation rt
+                                               DA.:< register rt
                                                DA.:< noRelocation (DA.Bv1 1)
                                                DA.:< noRelocation w
-                                               DA.:< noRelocation cond
+                                               DA.:< conditionCode cond
                                                DA.:< DA.Annotated (R.PCRelativeRelocation target) (DA.Bv12 0)
                                                DA.:< DA.Nil
                                                )
           in [armInstruction mem pb insnAddr i']
         (DA.B_A1, DA.Annotated _ cond@(DA.Bv4 _) DA.:< DA.Annotated _ (DA.Bv24 _off) DA.:< DA.Nil)
           | Just reloc <- jumpTargetRelocation mem toSymbolic pb insnAddr i ->
-              let i' = DA.Instruction (coerce opc) (     noRelocation cond
+              let i' = DA.Instruction (coerce opc) (     conditionCode cond
                                                    DA.:< DA.Annotated reloc (DA.Bv24 0)
                                                    DA.:< DA.Nil
                                                    )
               in [armInstruction mem pb insnAddr i']
         (DA.BL_i_A1, DA.Annotated _ cond@(DA.Bv4 _) DA.:< DA.Annotated _ (DA.Bv24 _off) DA.:< DA.Nil)
           | Just reloc <- jumpTargetRelocation mem toSymbolic pb insnAddr i ->
-            let i' = DA.Instruction (coerce opc) (     noRelocation cond
+            let i' = DA.Instruction (coerce opc) (     conditionCode cond
                                                  DA.:< DA.Annotated reloc (DA.Bv24 0)
                                                  DA.:< DA.Nil
                                                  )
@@ -839,7 +869,7 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
         (DA.BL_i_A2, DA.Annotated _ b1@(DA.Bv1 _) DA.:< DA.Annotated _ cond@(DA.Bv4 _) DA.:< DA.Annotated _ (DA.Bv24 _off) DA.:< DA.Nil)
           | Just reloc <- jumpTargetRelocation mem toSymbolic pb insnAddr i ->
             let i' = DA.Instruction (coerce opc) (     noRelocation b1
-                                                 DA.:< noRelocation cond
+                                                 DA.:< conditionCode cond
                                                  DA.:< DA.Annotated reloc (DA.Bv24 0)
                                                  DA.:< DA.Nil
                                                  )
@@ -851,15 +881,15 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
                 DA.:< DA.Annotated _ cond
                 DA.:< DA.Annotated _ imm5@(DA.Bv5 (asUnsignedInteger -> imm5_int))
                 DA.:< DA.Annotated _ type1@(DA.Bv2 (asUnsignedInteger -> type1_int))
-                DA.:< DA.Nil) | isPC rn || isPC rm -> case imm5_int == 0 && type1_int == 0 of
+                DA.:< DA.Nil) | (isPC rn || isPC rm) && not(isPC rd) -> case imm5_int == 0 && type1_int == 0 of
                     True -> 
                       let target = insnAddr
                           i' = DA.Instruction (coerce opc) 
-                            ((noRelocation rd)
-                            DA.:< (if isPC rm then DA.Annotated (R.PCRelativeRelocation target) rm else noRelocation rm)
-                            DA.:< (if isPC rn then DA.Annotated (R.PCRelativeRelocation target) rn else noRelocation rn)
+                            ((register rd)
+                            DA.:< (if isPC rm then DA.Annotated (R.PCRelativeRelocation target) rm else register rm)
+                            DA.:< (if isPC rn then DA.Annotated (R.PCRelativeRelocation target) rn else register rn)
                             DA.:< noRelocation s
-                            DA.:< noRelocation cond
+                            DA.:< conditionCode cond
                             DA.:< noRelocation imm5
                             DA.:< noRelocation type1
                             DA.:< DA.Nil
@@ -912,6 +942,9 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
     where
       err :: String -> a
       err msg = RP.panic RP.ARMISA "armSymbolizeAddresses" [msg, show pb]
+
+      conditionCode :: DA.Operand "Bv4" -> DA.Annotated (R.Relocation MA.ARM) DA.Operand "Bv4"
+      conditionCode (DA.Bv4 cond) = DA.Annotated ConditionCode (DA.Bv4 cond)
 
 isa :: R.ISA MA.ARM
 isa =
