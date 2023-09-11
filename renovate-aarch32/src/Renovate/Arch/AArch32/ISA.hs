@@ -79,8 +79,8 @@ data Instruction tp a where
   --   This is used to implement 'isaIsRelocatableJump', which needs to be able to decide
   --   if an instruction is a jump independent of its surrounding context
   ARMInstructionBare :: DA.AnnotatedInstruction () -> Instruction A32 ()
-  -- | Flag indicates that the instruction was a jump in the original block
-  ARMInstructionAnn :: DA.AnnotatedInstruction (R.Relocation MA.ARM) -> Bool -> Instruction A32 (R.Relocation MA.ARM)
+  -- | Instruction but with attached meta-data about its jump type so we don't need to recompute it
+  ARMInstructionAnn :: DA.AnnotatedInstruction (R.Relocation MA.ARM) -> R.JumpType MA.ARM k -> Instruction A32 (R.Relocation MA.ARM)
   -- | Raw bytes in the A32 instruction stream
   ARMBytes :: BS.ByteString -> Instruction A32 a
   -- | A T32 instruction
@@ -420,12 +420,12 @@ asUnsignedInteger w = toInteger w
 -- none, the post state of the terminator.  This means that we can avoid passing
 -- in any instructions: we just need to pass in the post arch state and use the
 -- instruction pointer value out of it
-armJumpType :: Instruction tp a
+armJumpType_ :: Instruction tp a
             -> MM.Memory 32
             -> R.ConcreteAddress MA.ARM
             -> MD.ParsedBlock MA.ARM ids
             -> Some (R.JumpType MA.ARM)
-armJumpType i mem insnAddr pb =
+armJumpType_ i mem insnAddr pb =
   case asParsedTerminator mem insnAddr pb of
     Nothing -> Some R.NoJump
     Just term ->
@@ -503,9 +503,14 @@ armJumpType i mem insnAddr pb =
   where
     nextInsnAddr = insnAddr `R.addressAddOffset` fromIntegral (armInstrSize i)
 
+armJumpType :: Instruction tp (R.Relocation MA.ARM) -> Some (R.JumpType MA.ARM)
+armJumpType i = case i of
+  ARMInstructionAnn _ jt -> Some jt
+  _ -> Some R.NoJump
+
 armIsRelocatableJump :: Instruction tp (R.Relocation MA.ARM) -> Bool
 armIsRelocatableJump i = case i of
-  ARMInstructionAnn _ b -> b
+  ARMInstructionAnn _ b -> R.isRelocatableJump (Some b)
   _ -> False
 
 data CurrentInstruction = NoInstruction
@@ -736,7 +741,7 @@ jumpTargetRelocation
   -> Instruction tp ()
   -> Maybe (R.Relocation MA.ARM)
 jumpTargetRelocation mem toSymbolic pb insnAddr i =
-  case armJumpType i mem insnAddr pb of
+  case armJumpType_ i mem insnAddr pb of
     Some (R.RelativeJump _jc src offset) -> Just (R.SymbolicRelocation (toSymbolic (src `R.addressAddOffset` offset)))
     Some (R.AbsoluteJump _jc target) -> Just (R.SymbolicRelocation (toSymbolic target))
     Some (R.IndirectJump {}) -> Nothing
@@ -761,9 +766,9 @@ armInstruction
   -> R.ConcreteAddress MA.ARM
   -> DA.AnnotatedInstruction (R.Relocation MA.ARM)
   -> Instruction A32 (R.Relocation MA.ARM)
-armInstruction mem pb insnAddr anni = 
-  let jt = armJumpType (toAnnotatedARM A32Repr (armDropAnnotations anni)) mem insnAddr pb
-  in ARMInstructionAnn anni (R.isRelocatableJump jt)
+armInstruction mem pb insnAddr anni 
+  | Some jt <- armJumpType_ (toAnnotatedARM A32Repr (armDropAnnotations anni)) mem insnAddr pb = 
+    ARMInstructionAnn anni jt
 
 armSymbolizeAddresses :: MM.Memory 32
                       -> (R.ConcreteAddress MA.ARM -> R.SymbolicAddress MA.ARM)
@@ -903,7 +908,7 @@ isa =
           [R.SomeInstructionArchRepr T32Repr]
         , R.isaMakeRelativeJumpTo = armMakeRelativeJumpTo
         , R.isaMaxRelativeJumpSize = armMaxRelativeJumpSize
-        , R.isaJumpType = armJumpType
+        , R.isaJumpType = armJumpType_
         , R.isaIsRelocatableJump = armIsRelocatableJump
         , R.isaConcretizeAddresses = armConcretizeAddresses
         , R.isaSymbolizeAddresses = armSymbolizeAddresses
