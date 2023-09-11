@@ -238,6 +238,11 @@ isErrorBlock :: MD.ParsedBlock MA.ARM ids -> Bool
 isErrorBlock pb = case MP.pblockTermStmt pb of
   MP.ParsedTranslateError{} -> True
   MP.ClassifyFailure{} -> True
+  MP.ParsedArchTermStmt a _ _ -> case a of
+    MA.CallIf{} -> True
+    MA.CallIfNot{} -> True
+    MA.ReturnIf{} -> True
+    MA.ReturnIfNot{} -> True
   _ -> any isErrorStmt (MP.pblockStmts pb)
 
 isErrorStmt :: MC.Stmt MA.ARM ids -> Bool
@@ -245,6 +250,28 @@ isErrorStmt = \case
   MC.ExecArchStmt (MA.UninterpretedA32Opcode{}) -> True
   MC.ExecArchStmt (MA.UninterpretedT32Opcode{}) -> True
   _ -> False
+
+-- | Mark individual instructions as being supported by disassembly
+--   Currently this filters out conditional loads and pc-relative adds.
+--   Fundamentally these should be possible to support, but they
+--   may require more careful consideration to avoid issues with
+--   the condition codes being clobbered.
+isSupportedInstruction :: Instruction A32 () -> Bool
+isSupportedInstruction i = case i of
+  AI (DA.Instruction DA.LDR_l_A1 (_p DA.:< _rt DA.:< _u DA.:< _w DA.:< cond DA.:< _offset DA.:< DA.Nil)) -> 
+    checkCond cond
+  AI (DA.Instruction DA.ADD_r_A1 (rd DA.:< rm DA.:< rn DA.:< _s DA.:< cond DA.:< _imm5 DA.:< _type1 DA.:< DA.Nil)) -> 
+    if isPC rm || isPC rn then checkCond cond && (not (isPC rd)) else True
+  AI (DA.Instruction DA.ADR_A1 (rd DA.:< cond DA.:< _imm12 DA.:< DA.Nil)) -> 
+    not (isPC rd) && checkCond cond
+  AI (DA.Instruction DA.ADR_A2 (rd DA.:< cond DA.:< _imm12 DA.:< DA.Nil)) -> 
+    not (isPC rd) && checkCond cond
+  _ -> True
+  where
+    checkCond :: DA.Operand "Bv4" -> Bool
+    checkCond (DA.Bv4 cond )= case cond of
+        14 -> True
+        _ -> False
 
 -- | Disassemble a concrete block from a bytestring
 --
@@ -272,7 +299,8 @@ disassemble pb startAddr endAddr bs0 = do
         let acon = toAnnotatedARM A32Repr 
         insns' <- go A32Repr acon DA.disassembleInstruction 0 startAddr (LBS.fromStrict bs0) []
         case DLN.nonEmpty insns' of
-          Just insns -> return (R.concreteBlock startAddr insns A32Repr pb)
+          Just insns | all isSupportedInstruction insns' -> 
+            return (R.concreteBlock startAddr insns A32Repr pb)
           _ -> C.throwM $ EmptyBlock startAddr
       -- until we can rewrite Thumb mode instructions, we can skip attemping to disassemble thumb blocks
       True -> C.throwM ThumbDisassemblyUnsupported
