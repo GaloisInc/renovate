@@ -444,9 +444,6 @@ armMaxRelativeJumpSize repr =
 asSignedInteger :: forall n . (KnownNat n, 1 PN.<= n) => W.W n -> Integer
 asSignedInteger w = PN.toSigned (PN.knownNat @n) (toInteger w)
 
-asUnsignedInteger :: forall n . (KnownNat n, 1 PN.<= n) => W.W n -> Integer
-asUnsignedInteger w = toInteger w
-
 -- FIXME: This one will be tricky - I think we can simplify it a lot if we pass
 -- in the macaw block containing the instruction.  If it isn't the entire block,
 -- perhaps just the sequence of macaw statements corresponding to this
@@ -764,7 +761,7 @@ armConcretizeAddresses _mem toConcrete insnAddr i0 =
     spareRegister :: [DA.Operand "Bv4"] -> DA.Operand "Bv4"
     spareRegister regs = go (DA.Bv4 0) regs
       where 
-        go (DA.Bv4 (asUnsignedInteger -> r1)) _ | r1 > 8 = RP.panic RP.ARMISA "armConcretizeAddresses" [ "No spare registers"]
+        go (DA.Bv4 r1) _ | r1 > 3 = RP.panic RP.ARMISA "armConcretizeAddresses" [ "No spare registers"]
         go (DA.Bv4 r1) ((DA.Bv4 r2) : rs) = if r1 == r2 then go (DA.Bv4 (r1 + 1)) regs else go (DA.Bv4 r1) rs
         go r1 [] = r1
 
@@ -864,7 +861,7 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
                 DA.:< DA.Annotated _ cond
                 -- Offset is always an unsigned value, where its sign is instead determined
                 -- by the 'U' flag
-                DA.:< DA.Annotated _ (DA.Bv12 (asUnsignedInteger -> off12))
+                DA.:< DA.Annotated _ (DA.Bv12 off12)
                 DA.:< DA.Nil) ->
           -- See Note [Rewriting LDR] for details on this construction
           let target = case u of
@@ -917,10 +914,10 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
                 DA.:< DA.Annotated _ rn
                 DA.:< DA.Annotated _ s
                 DA.:< DA.Annotated _ cond
-                DA.:< DA.Annotated _ imm5@(DA.Bv5 (asUnsignedInteger -> imm5_int))
-                DA.:< DA.Annotated _ type1@(DA.Bv2 (asUnsignedInteger -> type1_int))
-                DA.:< DA.Nil) | (isPC rn || isPC rm) && not(isPC rd) -> case imm5_int == 0 && type1_int == 0 of
-                    True -> 
+                DA.:< DA.Annotated _ imm5
+                DA.:< DA.Annotated _ type1
+                DA.:< DA.Nil) | (isPC rn || isPC rm) -> case isPC rd of
+                  False ->
                       let target = insnAddr
                           i' = DA.Instruction (coerce opc) 
                             ((register rd)
@@ -932,19 +929,8 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
                             DA.:< noRelocation type1
                             DA.:< DA.Nil
                             )
-                      {-
-                      let target = insnAddr
-                          i' = DA.Instruction DA.ADD_i_A1 
-                            (     noRelocation rd -- Rd - output register
-                            DA.:< noRelocation rm -- Rn - input register
-                            DA.:< noRelocation s -- S
-                            DA.:< noRelocation cond -- condition code (unusued)
-                            DA.:< DA.Annotated (R.PCRelativeRelocation target) (DA.Bv12 0) -- 'imm12' -- immediate value
-                            DA.:< DA.Nil
-                            )
-                      -}
                       in [armInstruction mem pb insnAddr i']
-                    False -> err $ "Unsupported operands for PC relative instruction:\n" ++ show i
+                  True -> err $ "Unsupported operands for PC relative instruction:\n" ++ show i
 
         -- FIXME: add instructions are potentially used to construct pc-relative offsets, and
         -- so we need to identify which operands may refer to the pc.
