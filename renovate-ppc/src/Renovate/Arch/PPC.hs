@@ -63,6 +63,7 @@ config32 analysis = R.RenovateConfig
   , R.rcDataLayoutBase = 0x20000000
   , R.rcExtratextOffset = 0
   , R.rcRefinementConfig = Nothing
+  , R.rcFunctionReturnStatus = \_ -> mempty
   }
 
 -- | A renovate configuration for 64 bit PowerPC
@@ -89,6 +90,7 @@ config64 analysis = R.RenovateConfig
   , R.rcDataLayoutBase = 0x20000000
   , R.rcExtratextOffset = 0
   , R.rcRefinementConfig = Nothing
+  , R.rcFunctionReturnStatus = \_ -> mempty
   }
 
 {- Note [Layout Addresses]

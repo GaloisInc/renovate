@@ -73,6 +73,7 @@ config analysis = R.RenovateConfig
   , R.rcDataLayoutBase = 0xa00000
   , R.rcExtratextOffset = 0
   , R.rcRefinementConfig = Nothing
+  , R.rcFunctionReturnStatus = \_ -> mempty
   }
 
 {- Note [Layout Addresses]

@@ -13,6 +13,8 @@ module Renovate.Arch.AArch32 (
   ISA.T32
   ) where
 
+import qualified Data.Map as M
+import qualified Data.Macaw.Discovery as MD
 import qualified Data.Macaw.BinaryLoader as MBL
 import qualified Data.Macaw.ARM as MA32
 import           Data.Macaw.AArch32.Symbolic ()
@@ -21,6 +23,7 @@ import           Data.Macaw.BinaryLoader.AArch32 ()
 import qualified Renovate as R
 import qualified Renovate.Arch.AArch32.ISA as ISA
 import qualified Renovate.Arch.AArch32.ABI as ABI
+import Data.Maybe (catMaybes)
 
 config :: (MBL.BinaryLoader ISA.AArch32 binFmt)
        => callbacks ISA.AArch32 binFmt a
@@ -37,4 +40,6 @@ config analysis = R.RenovateConfig
   , R.rcDataLayoutBase = 0xb0000
   , R.rcExtratextOffset = 0
   , R.rcRefinementConfig = Nothing
+  , R.rcFunctionReturnStatus = \sam ->
+      catMaybes $ map(\(addr,nm) -> if nm `elem` ["exit", "_Exit", "perror"] then Just (addr,MD.NoReturnFun) else Nothing) (M.toList sam)
   }

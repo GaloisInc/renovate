@@ -1268,6 +1268,11 @@ withAnalysisEnv logAction cfg hdlAlloc loadedBinary symmap textAddrRange k = do
   let isa = rcISA cfg
   let abi = rcABI cfg
   let archInfo = rcArchInfo cfg loadedBinary
+  let toSegOff concAddr =
+        case RA.concreteAsSegmentOff (MBL.memoryImage loadedBinary) concAddr of
+          Nothing -> error ("Invalid concrete address: " ++ show concAddr)
+          Just so -> so
+  let trustedEntries = Map.fromList $ map (\(addr,v) -> (toSegOff addr,v)) $ rcFunctionReturnStatus cfg symmap
   let recovery = R.Recovery { R.recoveryISA = isa
                             , R.recoveryDis = rcDisassembler cfg
                             , R.recoveryAsm = rcAssembler cfg
@@ -1276,7 +1281,7 @@ withAnalysisEnv logAction cfg hdlAlloc loadedBinary symmap textAddrRange k = do
                             , R.recoveryFuncCallback = fmap (second ($ loadedBinary)) (rcFunctionCallback cfg)
                             , R.recoveryRefinement = rcRefinementConfig cfg
                             }
-  blockInfo <- IO.liftIO (R.recoverBlocks logAction recovery loadedBinary symmap elfEntryPoints textAddrRange)
+  blockInfo <- IO.liftIO (R.recoverBlocks logAction recovery loadedBinary symmap trustedEntries elfEntryPoints textAddrRange)
   let env = AnalysisEnv { aeLoadedBinary = loadedBinary
                         , aeBlockInfo = blockInfo
                         , aeISA = isa

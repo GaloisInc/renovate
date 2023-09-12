@@ -28,6 +28,7 @@ import qualified Data.ByteString as B
 import           Data.Kind ( Type )
 import           Data.Map.Strict ( Map )
 import           Data.Word ( Word64 )
+import qualified Data.Map as M
 
 import qualified Data.Parameterized.NatRepr as NR
 import qualified Data.Macaw.BinaryLoader as MBL
@@ -46,6 +47,8 @@ import qualified Renovate.Core.Instruction as RCI
 import qualified Renovate.ISA as ISA
 import qualified Renovate.Recovery as R
 import qualified Renovate.Rewrite as RW
+import qualified Renovate.Recovery.SymbolMap as R
+
 
 -- | A wrapper around a 'RenovateConfig' that hides parameters and
 -- allows us to have collections of configs while capturing the
@@ -211,6 +214,8 @@ data RenovateConfig arch binFmt callbacks (b :: Type -> Type) = RenovateConfig
   , rcRefinementConfig :: Maybe MR.RefinementConfig
   -- ^ Optional configuration for macaw-refinement; if provided, call
   -- macaw-refinement to find additional code through SMT-based refinement
+  , rcFunctionReturnStatus :: R.SymbolMap arch -> [(RA.ConcreteAddress arch, MD.NoReturnFunStatus)]
+  -- ^ Initial configuration for function return status during code discovery
   }
 
 -- | Compose a list of instrumentation functions into a single
