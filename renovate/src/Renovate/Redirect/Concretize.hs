@@ -127,17 +127,18 @@ concretize strat startAddr blocks injectedCode injectedInstructions blockInfo = 
   -- Now go through and fix up all of the jumps to symbolic addresses (which
   -- happen to occur at the end of basic blocks).  Note that we only traverse
   -- the concrete blocks here, not the injected blocks.
-  S.liftIO $ putStrLn "Remappings:"
+  S.liftIO $ putStrLn "\n\n=================Blocks:=================\n\n"
   v <- T.forM  (RCL.programBlockLayout layout) $ \blk -> do
     v' <- (concretizeJumps symToConcAddrs) blk
     let orig = concreteBlockAddress $ RCL.originalBlock v'
     let new = concretizedBlockAddress (RCL.withoutProvenance v')
-    unless (orig == new) $
-      S.liftIO $ putStrLn $ (show orig) ++ " -> " ++ show (new)
+    case (orig == new) of
+      True -> S.liftIO $ putStrLn $ (show orig) ++ ": Unchanged"
+      False -> S.liftIO $ putStrLn $ (show orig) ++ " Moved: " ++ show (new)
     return v'
-  let complete addr = if S.member addr (biIncomplete blockInfo) then "Incomplete" else "Complete"
+  let complete addr = if S.member addr (biIncomplete blockInfo) then "Unchanged" else "Moved"
   S.liftIO $ do
-    putStrLn "Functions:"
+    putStrLn "\n\n=================Functions:=================\n\n"
     forM_ (M.toList (biFunctions blockInfo)) $ \(addr, (_, Some fnInfo)) -> do
       let nm = case discoveredFunSymbol fnInfo of
             Just sm -> show sm
