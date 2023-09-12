@@ -248,7 +248,6 @@ blockInfo recovery mem textAddrRange di = do
   let blockStarts = M.fromList [ (baddr, baddr `addressAddOffset` fromIntegral (MC.blockSize b))
                                | (archSegOff, (_, PU.Some b)) <- M.toList macawBlocks
                                , Just baddr <- return (concreteFromSegmentOff mem archSegOff)
-                               , MC.blockSize b /= 0
                                ]
 
   traceM (show blockStarts)
