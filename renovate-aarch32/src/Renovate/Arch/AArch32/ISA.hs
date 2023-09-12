@@ -501,11 +501,12 @@ armJumpType_ i mem insnAddr pb =
         --
         -- FIXME: Implement thumb cases
         MD.ParsedCall _regs _retLoc ->
-          case i of
-            AI (DA.Instruction DA.BL_i_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
-              Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
-            AI (DA.Instruction DA.BL_i_A2 (DA.Bv1 _ DA.:< DA.Bv4 _ DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
-              Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
+          let checkCond cond a = if cond == unconditional then a else Some (R.NotInstrumentable insnAddr)
+          in case i of
+            AI (DA.Instruction DA.BL_i_A1 (DA.Bv4 cond DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
+              checkCond cond $ Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
+            AI (DA.Instruction DA.BL_i_A2 (DA.Bv1 _ DA.:< DA.Bv4 cond DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
+              checkCond cond $ Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
             AI (DA.Instruction DA.BLX_r_A1 (DA.Bv4 _cond DA.:< DA.Bv4 _reg DA.:< DA.QuasiMask12 _ DA.:< DA.Nil)) ->
               Some R.IndirectCall
             _ -> Some (R.NotInstrumentable insnAddr)
