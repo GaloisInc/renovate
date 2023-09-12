@@ -34,11 +34,15 @@ import qualified Renovate.Core.Instruction as RCI
 import qualified Renovate.Core.Relocation as RCR
 import           Renovate.ISA
 import qualified Renovate.Panic as RP
-import           Renovate.Recovery ( BlockInfo(biCFG) )
+import           Renovate.Recovery ( BlockInfo(biCFG, biIncomplete, biFunctions) )
 import           Renovate.Redirect.LayoutBlocks ( layoutBlocks )
 import qualified Renovate.Core.Layout as RCL
 import           Renovate.Redirect.Monad
 import qualified Renovate.Rewrite as RRW
+import qualified Data.Set as S
+import Data.Parameterized (Some(..))
+import Data.Macaw.Discovery (DiscoveryFunInfo(..))
+import Control.Monad
 
 data InjectConcreteInstructions arch where
   InjectConcreteInstructions :: (RCI.InstructionConstraints arch tp)
@@ -123,7 +127,23 @@ concretize strat startAddr blocks injectedCode injectedInstructions blockInfo = 
   -- Now go through and fix up all of the jumps to symbolic addresses (which
   -- happen to occur at the end of basic blocks).  Note that we only traverse
   -- the concrete blocks here, not the injected blocks.
-  v <- T.traverse (concretizeJumps symToConcAddrs) (RCL.programBlockLayout layout)
+  S.liftIO $ putStrLn "Remappings:"
+  v <- T.forM  (RCL.programBlockLayout layout) $ \blk -> do
+    v' <- (concretizeJumps symToConcAddrs) blk
+    let orig = concreteBlockAddress $ RCL.originalBlock v'
+    let new = concretizedBlockAddress (RCL.withoutProvenance v')
+    unless (orig == new) $
+      S.liftIO $ putStrLn $ (show orig) ++ " -> " ++ show (new)
+    return v'
+  let complete addr = if S.member addr (biIncomplete blockInfo) then "Incomplete" else "Complete"
+  S.liftIO $ do
+    putStrLn "Functions:"
+    forM_ (M.toList (biFunctions blockInfo)) $ \(addr, (_, Some fnInfo)) -> do
+      let nm = case discoveredFunSymbol fnInfo of
+            Just sm -> show sm
+            Nothing -> show addr
+      putStrLn $ nm ++ ": " ++ complete addr
+
   concretizedInjectedInstructions <- mapM (concretizeInjectedInstructions symToConcAddrs) (RCL.injectedInstructionLayout layout)
   let concLayout = RCL.Layout { RCL.programBlockLayout = v
                               , RCL.layoutPaddingBlocks = RCL.layoutPaddingBlocks layout

@@ -154,8 +154,8 @@ analyzeDiscoveredFunctions recovery mem textAddrRange info !iterations =
   case M.lookupMin (info L.^. MC.unexploredFunctions) of
     Nothing -> return info
     Just (addr, rsn) -> do
-      (info', C.Some fnInfo) <- return $ MC.analyzeFunction addr rsn info
-      putStrLn $ "analyzeDiscoveredFunctions: addr=" ++ show addr ++ " sym:" ++ show (MC.discoveredFunSymbol fnInfo)
+      (info', C.Some _fnInfo) <- return $ MC.analyzeFunction addr rsn info
+      -- putStrLn $ "analyzeDiscoveredFunctions: addr=" ++ show addr ++ " sym:" ++ show (MC.discoveredFunSymbol fnInfo)
       case recoveryFuncCallback recovery of
         Just (freq, fcb)
           | iterations `mod` freq == 0 -> do
@@ -250,7 +250,7 @@ blockInfo recovery mem textAddrRange di = do
                                , Just baddr <- return (concreteFromSegmentOff mem archSegOff)
                                ]
 
-  traceM (show blockStarts)
+  -- traceM (show blockStarts)
 
   -- We collect not only the blocks, but also the addresses of functions
   -- containing untranslatable blocks so that they can be marked as incomplete.
@@ -357,34 +357,24 @@ recoverBlocks
   -> Recovery arch
   -> MBL.LoadedBinary arch binFmt
   -> SymbolMap arch
+  -> M.Map (MC.ArchSegmentOff arch) MC.NoReturnFunStatus
   -> NEL.NonEmpty (MC.MemSegmentOff (MC.ArchAddrWidth arch))
   -> (ConcreteAddress arch, ConcreteAddress arch)
   -> IO (BlockInfo arch)
-recoverBlocks logAction recovery loadedBinary symmap entries textAddrRange = do
-  putStrLn "1!!"
+recoverBlocks logAction recovery loadedBinary symmap trustedEntries entries textAddrRange = do
   let mem = MBL.memoryImage loadedBinary
   sam <- toMacawSymbolMap mem symmap
-  putStrLn "2!!"
+  -- let entries' = F.toList entries
   let entries' = filter (\addr -> (M.lookup addr sam) == Just "main") (F.toList entries)
-  let isExit addr = case M.lookup addr sam of
-        Just nm -> nm `elem` ["exit", "_Exit", "perror"]
-        Nothing -> False
-  let trustedEntries = 
-        M.fromList $ concat $ map (\addr -> if isExit addr then [(addr, MC.NoReturnFun)] else []) (F.toList entries)
   di <- cfgFromAddrsWith recovery mem textAddrRange sam trustedEntries entries'
-  putStrLn "3!!"
   -- If the caller requested refinement, call refinement in a loop until nothing changes
   di' <- case recoveryRefinement recovery of
-    Nothing -> putStrLn "3a!!" >> return di
+    Nothing -> return di
     Just refineCfg -> do
       rc <- MR.defaultRefinementContext refineCfg loadedBinary
-      putStrLn "3b!!"
       refineDiscoveryInfo logAction rc di
-  putStrLn "4!!"
   binfo <- blockInfo recovery mem textAddrRange di'
-  putStrLn "5!!"
   mapM_ (reportDiscoveryFailures logAction) (M.elems (biDiscoveryInfo binfo L.^. MC.funInfo))
-  putStrLn "6!!"
   return binfo
 
 newtype RefineM arch a = RefineM { unRefineM :: CMR.ReaderT (LJ.LogAction (RefineM arch) (MR.RefinementLog arch)) IO a }
