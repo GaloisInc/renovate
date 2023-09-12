@@ -528,8 +528,9 @@ armJumpType_ i mem insnAddr pb =
              , nextInsnAddr == tgtAddr -> Some R.NoJump
              | otherwise ->
                case i of
-                 AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
-                   Some (R.RelativeJump R.Unconditional insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
+                 AI (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
+                  let condition = if cond == unconditional then R.Unconditional else R.Conditional
+                  in Some (R.RelativeJump condition insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
                  -- FIXME: Handle Thumb cases
                  _ -> Some (R.NotInstrumentable insnAddr)
         -- Any instruction in ARM can be a conditional jump due to predication...
