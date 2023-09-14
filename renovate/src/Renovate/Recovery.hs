@@ -364,8 +364,8 @@ recoverBlocks
 recoverBlocks logAction recovery loadedBinary symmap trustedEntries entries textAddrRange = do
   let mem = MBL.memoryImage loadedBinary
   sam <- toMacawSymbolMap mem symmap
-  -- let entries' = F.toList entries
-  let entries' = filter (\addr -> (M.lookup addr sam) == Just "main") (F.toList entries)
+  let entries' = F.toList entries
+  -- let entries' = filter (\addr -> (M.lookup addr sam) == Just "main") (F.toList entries)
   di <- cfgFromAddrsWith recovery mem textAddrRange sam trustedEntries entries'
   -- If the caller requested refinement, call refinement in a loop until nothing changes
   di' <- case recoveryRefinement recovery of
