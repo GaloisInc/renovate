@@ -26,7 +26,17 @@ module Renovate.Arch.AArch32.ISA (
   InstructionDisassemblyFailure(..),
   ARMRepr(..),
   A32,
-  T32
+  T32,
+  Operand(..),
+  armJumpType,
+  pattern AI,
+  noRelocations,
+  ldr_i,
+  add_r,
+  push,
+  pop,
+  cmp_r,
+  mov_i
   ) where
 
 import Debug.Trace (trace)
@@ -48,7 +58,7 @@ import qualified Data.Text.Prettyprint.Doc as PP
 import           Data.Void ( Void )
 import           Data.Word ( Word8, Word64 )
 import qualified Data.Word.Indexed as W
-import           GHC.TypeNats ( KnownNat )
+import           GHC.TypeNats ( KnownNat, Nat )
 
 -- NOTE: Renovate currently does not rewrite thumb blocks
 --
@@ -68,6 +78,8 @@ import qualified Renovate.Arch.AArch32.Panic as RP
 import           Renovate.Arch.AArch32.Repr
 import qualified Data.Macaw.Discovery.State as MP
 import qualified Data.Macaw.ARM.Arch as MA
+import Data.Parameterized (Symbol, KnownSymbol, knownSymbol, SymbolRepr)
+import Data.Data (Typeable,eqT, (:~:) (Refl))
 
 -- | A wrapper around A32 and T32 instructions type indexed to ensure that ARM
 -- and Thumb instructions cannot be mixed in a single basic block
@@ -87,17 +99,20 @@ data Instruction tp a where
   -- | A T32 instruction
   ThumbInstruction :: DT.AnnotatedInstruction a -> Instruction T32 a
 
-asArmInstruction :: Instruction tp a -> Maybe (DA.AnnotatedInstruction a, tp PN.:~: A32)
+data TypeablePrf t where
+  TypeablePrf :: Typeable t => TypeablePrf t
+
+asArmInstruction :: Instruction tp a -> Maybe (DA.AnnotatedInstruction a, tp PN.:~: A32, TypeablePrf a)
 asArmInstruction i = case i of
-  ARMInstructionBare i' -> Just $ (i', PN.Refl)
-  ARMInstructionAnn i' _ -> Just $ (i', PN.Refl)
+  ARMInstructionBare i' -> Just $ (i', PN.Refl, TypeablePrf)
+  ARMInstructionAnn i' _ -> Just $ (i', PN.Refl, TypeablePrf)
   _ -> Nothing
 
 pattern ARMInstruction :: forall (tp :: ARMKind) a
             . ()
-           => (tp ~ A32)
+           => (tp ~ A32, Typeable a)
            => DA.AnnotatedInstruction a -> Instruction tp a
-pattern ARMInstruction i <- (asArmInstruction -> Just (i,PN.Refl))
+pattern ARMInstruction i <- (asArmInstruction -> Just (i,PN.Refl, TypeablePrf))
 
 {-#COMPLETE ARMInstruction, ARMBytes, ThumbInstruction #-}
 
@@ -111,11 +126,171 @@ armInstructionRepr i =
     ARMBytes {} -> A32Repr
     ThumbInstruction {} -> T32Repr
 
-pattern AI :: forall (tp :: ARMKind) a
-            . ()
-           => (tp ~ A32)
-           => DA.Instruction -> Instruction tp a
-pattern AI i <- ARMInstruction (armDropAnnotations -> i)
+-- Some type magic to avoid needing to use explicit operand constructors
+
+data OpPair sh where
+  OpPair :: KnownSymbols sh => DA.Opcode DA.Operand sh -> DA.List W.W (FromOperands sh) -> OpPair sh
+
+data KnownW (s :: Symbol) where
+  KnownW :: forall s. KnownSymbol s => W.W (FromOperand s) -> KnownW s
+
+asW :: forall s. DA.Operand s -> KnownW s
+asW o = case o of
+  DA.Bv1 w -> KnownW w
+  DA.Bv2 w -> KnownW w
+  DA.Bv3 w -> KnownW w
+  DA.Bv4 w -> KnownW w
+  DA.Bv5 w -> KnownW w
+  DA.Bv6 w -> KnownW w
+  DA.Bv7 w -> KnownW w
+  DA.Bv8 w -> KnownW w
+  DA.Bv9 w -> KnownW w
+  DA.Bv10 w -> KnownW w
+  DA.Bv11 w -> KnownW w
+  DA.Bv12 w -> KnownW w
+  DA.Bv13 w -> KnownW w
+  DA.Bv14 w -> KnownW w
+  DA.Bv15 w -> KnownW w
+  DA.Bv16 w -> KnownW w
+  DA.Bv24 w -> KnownW w
+  DA.QuasiMask1 w -> KnownW (fromIntegral w)
+  DA.QuasiMask2 w -> KnownW (fromIntegral w)
+  DA.QuasiMask3 w -> KnownW (fromIntegral w)
+  DA.QuasiMask4 w -> KnownW (fromIntegral w)
+  DA.QuasiMask8 w -> KnownW (fromIntegral w)
+  DA.QuasiMask9 w -> KnownW (fromIntegral w)
+  DA.QuasiMask10 w -> KnownW (fromIntegral w)
+  DA.QuasiMask11 w -> KnownW (fromIntegral w)
+  DA.QuasiMask12 w -> KnownW (fromIntegral w)
+  DA.QuasiMask13 w -> KnownW (fromIntegral w)
+  DA.QuasiMask14 w -> KnownW (fromIntegral w)
+  DA.QuasiMask15 w -> KnownW (fromIntegral w)
+  DA.QuasiMask16 w -> KnownW (fromIntegral w)
+  _ -> error $ "asW: Missing" ++ show o
+
+data KnownWs (ss :: [Symbol]) where
+  KnownWs :: forall ls. KnownSymbols ls => DA.List W.W (FromOperands ls) -> KnownWs ls
+
+
+mkWs :: DA.List DA.Operand sh -> KnownWs sh
+mkWs = \case
+  a DA.:< l | KnownW a' <- asW a, KnownWs as <- mkWs l -> KnownWs (a' DA.:< as)
+  DA.Nil -> KnownWs DA.Nil
+
+toOpcode :: DA.Instruction -> Some OpPair
+toOpcode i | DA.Instruction opc opers <- i, KnownWs opers' <- mkWs opers = Some (OpPair opc opers')
+
+fromW :: SymbolRepr s -> W.W (FromOperand s) -> DA.Operand s
+fromW s w = case () of
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv1") s -> DA.Bv1 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv2") s -> DA.Bv2 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv3") s -> DA.Bv3 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv4") s -> DA.Bv4 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv5") s -> DA.Bv5 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv6") s -> DA.Bv6 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv7") s -> DA.Bv7 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv8") s -> DA.Bv8 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv9") s -> DA.Bv9 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv10") s -> DA.Bv10 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv11") s -> DA.Bv11 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv12") s -> DA.Bv12 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv13") s -> DA.Bv13 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv14") s -> DA.Bv14 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv15") s -> DA.Bv15 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv16") s -> DA.Bv16 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"Bv24") s -> DA.Bv24 w
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask1") s -> DA.QuasiMask1 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask2") s -> DA.QuasiMask2 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask3") s -> DA.QuasiMask3 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask4") s -> DA.QuasiMask4 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask5") s -> DA.QuasiMask5 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask6") s -> DA.QuasiMask6 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask7") s -> DA.QuasiMask7 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask8") s -> DA.QuasiMask8 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask9") s -> DA.QuasiMask9 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask10") s -> DA.QuasiMask10 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask11") s -> DA.QuasiMask11 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask12") s -> DA.QuasiMask12 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask13") s -> DA.QuasiMask13 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask14") s -> DA.QuasiMask14 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask15") s -> DA.QuasiMask15 (fromIntegral w)
+  _ | Just Refl <- PN.testEquality (knownSymbol @"QuasiMask16") s -> DA.QuasiMask16 (fromIntegral w)
+  _ -> error "fromW"
+
+class KnownSymbols (x :: [Symbol]) where
+  knownSymbols :: DA.List SymbolRepr x
+
+instance forall s l. (KnownSymbol s, KnownSymbols l) => KnownSymbols (s ': l) where
+  knownSymbols = (knownSymbol @s) DA.:< knownSymbols @l
+
+instance KnownSymbols '[] where
+  knownSymbols = DA.Nil
+
+fromWs' :: DA.List SymbolRepr sh -> DA.List W.W (FromOperands sh) -> DA.List DA.Operand sh
+fromWs' ls ws = case (ls, ws) of
+  (s DA.:< ls', w DA.:< wl) -> fromW s w DA.:< fromWs' ls' wl
+  (DA.Nil, DA.Nil) -> DA.Nil
+
+
+fromWs :: KnownSymbols sh => DA.List W.W (FromOperands sh) -> DA.List DA.Operand sh
+fromWs ws = fromWs' knownSymbols ws
+
+asA :: forall tp a. Typeable a => Instruction tp () -> Maybe (Instruction tp a)
+asA i = case eqT @a @() of
+  Just PN.Refl -> Just i
+  Nothing -> Nothing
+
+type family FromOperand (s :: Symbol) :: Nat
+type instance FromOperand "Bv1" = 1
+type instance FromOperand "Bv2" = 2
+type instance FromOperand "Bv3" = 3
+type instance FromOperand "Bv4" = 4
+type instance FromOperand "Bv5" = 5
+type instance FromOperand "Bv6" = 6
+type instance FromOperand "Bv7" = 7
+type instance FromOperand "Bv8" = 8
+type instance FromOperand "Bv9" = 9
+type instance FromOperand "Bv10" = 10
+type instance FromOperand "Bv11" = 11
+type instance FromOperand "Bv12" = 12
+type instance FromOperand "Bv13" = 13
+type instance FromOperand "Bv14" = 14
+type instance FromOperand "Bv15" = 15
+type instance FromOperand "Bv16" = 16
+type instance FromOperand "Bv24" = 24
+
+type instance FromOperand "QuasiMask1" = 1
+type instance FromOperand "QuasiMask2" = 2
+type instance FromOperand "QuasiMask3" = 3
+type instance FromOperand "QuasiMask4" = 4
+type instance FromOperand "QuasiMask5" = 5
+type instance FromOperand "QuasiMask6" = 6
+type instance FromOperand "QuasiMask7" = 7
+type instance FromOperand "QuasiMask8" = 8
+type instance FromOperand "QuasiMask9" = 9
+type instance FromOperand "QuasiMask10" = 10
+type instance FromOperand "QuasiMask11" = 11
+type instance FromOperand "QuasiMask12" = 12
+type instance FromOperand "QuasiMask13" = 13
+type instance FromOperand "QuasiMask14" = 14
+type instance FromOperand "QuasiMask15" = 15
+type instance FromOperand "QuasiMask16" = 16
+
+type family FromOperands (l :: [Symbol]) :: [Nat]
+type instance FromOperands (s ': l) = FromOperand s ': FromOperands l
+type instance FromOperands '[] = '[]
+
+-- Used for constructing and deconstructing operands, exposing just indexed words
+pattern AI :: ()
+           => (tp ~ A32, Typeable a, KnownSymbols sh)
+           => DA.Opcode DA.Operand sh -> DA.List W.W (FromOperands sh) -> Instruction tp a
+pattern AI opc opers <- ARMInstruction ((\x -> toOpcode $ armDropAnnotations x) -> Some (OpPair opc opers)) where
+  -- we can use this in the forward direction as long as 'a' is unit
+  AI opc opers = case asA (toAnnotatedARM A32Repr (DA.Instruction opc (fromWs opers))) of
+    Just instr' -> instr'
+    Nothing -> 
+      -- Technically we could support other annotation types, but it's not really necessary
+      RP.panic RP.ARMISA "Renovate.Arch.Aarch32.AI" [ "Unsupported instruction annotation type. Expected (). "]
 
 -- pattern TI :: forall (tp :: ARMKind) a
 --             . ()
@@ -258,18 +433,18 @@ isErrorStmt = \case
 --   the condition codes being clobbered.
 isSupportedInstruction :: Instruction A32 () -> Bool
 isSupportedInstruction i = case i of
-  AI (DA.Instruction DA.LDR_l_A1 (_p DA.:< _rt DA.:< _u DA.:< _w DA.:< cond DA.:< _offset DA.:< DA.Nil)) -> 
+  AI DA.LDR_l_A1 (_p DA.:< _rt DA.:< _u DA.:< _w DA.:< cond DA.:< _offset DA.:< DA.Nil) -> 
     checkCond cond
-  AI (DA.Instruction DA.ADD_r_A1 (rd DA.:< rm DA.:< rn DA.:< _s DA.:< cond DA.:< _imm5 DA.:< _type1 DA.:< DA.Nil)) -> 
+  AI DA.ADD_r_A1 (rd DA.:< rm DA.:< rn DA.:< _s DA.:< cond DA.:< _imm5 DA.:< _type1 DA.:< DA.Nil) -> 
     if isPC rm || isPC rn then checkCond cond && (not (isPC rd)) else True
-  AI (DA.Instruction DA.ADR_A1 (rd DA.:< cond DA.:< _imm12 DA.:< DA.Nil)) -> 
+  AI DA.ADR_A1 (rd DA.:< cond DA.:< _imm12 DA.:< DA.Nil) -> 
     not (isPC rd) && checkCond cond
-  AI (DA.Instruction DA.ADR_A2 (rd DA.:< cond DA.:< _imm12 DA.:< DA.Nil)) -> 
+  AI DA.ADR_A2 (rd DA.:< cond DA.:< _imm12 DA.:< DA.Nil) -> 
     not (isPC rd) && checkCond cond
   _ -> True
   where
-    checkCond :: DA.Operand "Bv4" -> Bool
-    checkCond (DA.Bv4 cond )= case cond of
+    checkCond :: W.W 4 -> Bool
+    checkCond cond = case cond of
         14 -> True
         _ -> False
 
@@ -503,11 +678,11 @@ armJumpType_ i mem insnAddr pb =
         MD.ParsedCall _regs _retLoc ->
           let checkCond cond a = if cond == unconditional then a else Some (R.NotInstrumentable insnAddr)
           in case i of
-            AI (DA.Instruction DA.BL_i_A1 (DA.Bv4 cond DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
+            AI DA.BL_i_A1 (cond DA.:< (asSignedInteger -> off) DA.:< DA.Nil) ->
               checkCond cond $ Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
-            AI (DA.Instruction DA.BL_i_A2 (DA.Bv1 _ DA.:< DA.Bv4 cond DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
+            AI DA.BL_i_A2 (_ DA.:< cond DA.:< (asSignedInteger -> off) DA.:< DA.Nil) ->
               checkCond cond $ Some (R.DirectCall insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
-            AI (DA.Instruction DA.BLX_r_A1 (DA.Bv4 _cond DA.:< DA.Bv4 _reg DA.:< DA.QuasiMask12 _ DA.:< DA.Nil)) ->
+            AI DA.BLX_r_A1 (_cond DA.:< _reg DA.:< _ DA.:< DA.Nil) ->
               Some R.IndirectCall
             _ -> Some (R.NotInstrumentable insnAddr)
         -- PLT stubs won't be encountered in renovate (note: this terminator is
@@ -529,7 +704,7 @@ armJumpType_ i mem insnAddr pb =
              , nextInsnAddr == tgtAddr -> Some R.NoJump
              | otherwise ->
                case i of
-                 AI (DA.Instruction DA.B_A1 (DA.Bv4 cond DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
+                 AI DA.B_A1 (cond DA.:< (asSignedInteger -> off) DA.:< DA.Nil) ->
                   let condition = if cond == unconditional then R.Unconditional else R.Conditional
                   in Some (R.RelativeJump condition insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
                  -- FIXME: Handle Thumb cases
@@ -539,7 +714,7 @@ armJumpType_ i mem insnAddr pb =
         -- We are only handling B with condition codes here.
         MD.ParsedBranch {} ->
           case i of
-            AI (DA.Instruction DA.B_A1 (DA.Bv4 _cond DA.:< DA.Bv24 (asSignedInteger -> off) DA.:< DA.Nil)) ->
+            AI DA.B_A1 (_cond DA.:< (asSignedInteger -> off) DA.:< DA.Nil) ->
               Some (R.RelativeJump R.Conditional insnAddr (fromIntegral (off `DB.shiftL` 2) + 8))
             -- FIXME: Handle T32 cases
             _ -> Some (R.NotInstrumentable insnAddr)
@@ -631,82 +806,109 @@ singleton :: DA.Instruction -> DLN.NonEmpty (Instruction A32 ())
 singleton = (DLN.:| []) . toAnnotatedARM A32Repr
 
 -- | Read the value at the address in the source register into the target register
-ldr_i :: DA.Operand "Bv4" {-^ condition code -}
-      -> DA.Operand "Bv4" {-^ source register -}
-      -> DA.Operand "Bv4" {-^ target register -}
-      -> DA.Operand "Bv1" {-^ add or subtract offset from PC. 1: add; 0: subtract -}
-      -> DA.Operand "Bv1" {-^ writeback address to source register. 1: add; 0: subtract -}
-      -> DA.Operand "Bv12" {-^ offset -}
+ldr_i :: W.W 4 {-^ source register -}
+      -> W.W 4 {-^ target register -}
+      -> W.W 1 {-^ add or subtract offset from PC. 1: add; 0: subtract -}
+      -> W.W 1 {-^ writeback address to source register. 1: add; 0: subtract -}
+      -> W.W 12 {-^ offset -}
       -> Instruction A32 ()
-ldr_i cond rn rt u w offset = ARMInstructionBare $ DA.Instruction DA.LDR_i_A1_off $
+ldr_i rn rt u w offset = AI DA.LDR_i_A1_off $
   -- Notably LDR_i_A1 is the base instruction, while LDR_i_A1_off is a restriction
   -- on the operands where P=1 and W=0 
   -- 
   -- See: LDR_i_A1_off in A32.dump-splices (dismantle-aarch32 template haskell dump) to look at pretty printer to find operand order
   -- See: LDR_i_A1 in arm-instrs.asl (asl-translator/data) to view semantics for the instruction
   -- See: LDR_i_A1_off in dismantle-arm-xml/data/ISA_v85A_AArch32_xml_00bet9/ldr_i.xml to look at the restriction for the '_off' variant
-  (DA.Annotated () (DA.Bv1 1) -- P - 1: read from source register; 0: read from register + offset
-  DA.:< DA.Annotated () rn -- Rn - source register
-  DA.:< DA.Annotated () rt -- Rt - target register
-  DA.:< DA.Annotated () u --  - U - 1: add offset to source register; 0: subtract offset from source register
-  DA.:< DA.Annotated () w --  - W - 1: write address back to source register; 0: no writes to source register
-  DA.:< DA.Annotated () cond -- condition code
-  DA.:< DA.Annotated () offset -- offset
-  DA.:< DA.Nil)
+        1 -- P - 1: read from source register; 0: read from register + offset
+  DA.:< rn -- Rn - source register
+  DA.:< rt -- Rt - target register
+  DA.:< u --  - U - 1: add offset to source register; 0: subtract offset from source register
+  DA.:< w --  - W - 1: write address back to source register; 0: no writes to source register
+  DA.:< unconditional -- condition code
+  DA.:< offset -- offset
+  DA.:< DA.Nil
 
 -- | Add registers Rn and Rm and put the value in Rd
-add_r :: DA.Operand "Bv4" {-^ condition code -}
-      -> DA.Operand "Bv4" {-^ target register (Rd) -}
-      -> DA.Operand "Bv4" {-^ source register (Rm) -}
-      -> DA.Operand "Bv4" {-^ source register (Rn) -}
-      -> DA.Operand "Bv1" {-^ flag to set condition registers on overflow -}
-      -> DA.Operand "Bv5" {-^ shift Rm according to type1 register -}
-      -> DA.Operand "Bv2" {-^ enum to set shift type -}
+add_r :: W.W 4 {-^ target register (Rd) -}
+      -> W.W 4 {-^ source register (Rm) -}
+      -> W.W 4 {-^ source register (Rn) -}
+      -> W.W 1 {-^ flag to set condition registers on overflow -}
+      -> W.W 5 {-^ shift Rm according to type1 register -}
+      -> W.W 2 {-^ enum to set shift type -}
       -> Instruction A32 ()
-add_r cond rd rn rm s imm5 type1 = ARMInstructionBare $ DA.Instruction DA.ADD_r_A1 $
-  (DA.Annotated () rd
-  DA.:< DA.Annotated () rm
-  DA.:< DA.Annotated () rn
-  DA.:< DA.Annotated () s
-  DA.:< DA.Annotated () cond
-  DA.:< DA.Annotated () imm5
-  DA.:< DA.Annotated () type1
-  DA.:< DA.Nil)
+add_r rd rn rm s imm5 type1 = AI DA.ADD_r_A1 $
+        rd
+  DA.:< rm
+  DA.:< rn
+  DA.:< s
+  DA.:< unconditional
+  DA.:< imm5
+  DA.:< type1
+  DA.:< DA.Nil
 
 -- | Push the source register onto the stack
-push :: DA.Operand "Bv4" {-^ condition code -}
-     -> DA.Operand "Bv4" {-^ source register -}
+push :: W.W 4 {-^ source register -}
      -> Instruction A32 ()
-push cond (DA.Bv4 rn) = ARMInstructionBare $ DA.Instruction DA.STMDB_A1 $
-  (DA.Annotated () (DA.Bv4 13) -- Rn (hardcoded to SP here)
-  DA.:< DA.Annotated () (DA.Bv1 1) -- W: writeback (increment SP)
-  DA.:< DA.Annotated () cond -- condition code
-  DA.:< DA.Annotated () (DA.Bv16 $ (W.w 1) `DB.shiftL` (fromIntegral rn)) -- indexed register list
-  DA.:< DA.Nil)
+push rn = AI DA.STMDB_A1 $
+        13 -- Rn (hardcoded to SP here)
+  DA.:< 1 -- W: writeback (increment SP)
+  DA.:< unconditional -- condition code
+  DA.:< (W.w 1) `DB.shiftL` (fromIntegral rn) -- indexed register list
+  DA.:< DA.Nil
 
 -- | Pop the top of the stack and write it to the target register
-pop :: DA.Operand "Bv4" {-^ condition code -}
-     -> DA.Operand "Bv4" {-^ target register -}
-     -> Instruction A32 ()
-pop cond (DA.Bv4 rn) = ARMInstructionBare $ DA.Instruction DA.LDM_A1 $
-  (DA.Annotated () (DA.Bv4 13) -- Rn (hardcoded to SP here)
-  DA.:< DA.Annotated () (DA.Bv1 1) -- W: writeback (decrement SP)
-  DA.:< DA.Annotated () cond -- condition code
-  DA.:< DA.Annotated () (DA.Bv16 $ (W.w 1) `DB.shiftL` (fromIntegral rn)) -- indexed register list
-  DA.:< DA.Nil)
+pop :: W.W 4 {-^ target register -}
+    -> Instruction A32 ()
+pop rn = AI DA.LDM_A1 $
+        13 -- Rn (hardcoded to SP here)
+  DA.:< 1 -- W: writeback (decrement SP)
+  DA.:< unconditional -- condition code
+  DA.:< (W.w 1) `DB.shiftL` (fromIntegral rn) -- indexed register list
+  DA.:< DA.Nil
 
+-- | Compare Rm and Rn and set the condition code.
+cmp_r :: W.W 4 {-^ source register (Rm) -}
+      -> W.W 4 {-^ source register (Rn)  -}
+      -- -> DA.Operand "QuasiMask4" {-^ quasimask -}
+      -> Instruction A32 ()
+cmp_r rm rn = AI DA.CMP_r_A1 $
+        rm
+  DA.:< rn
+  DA.:< unconditional -- condition code
+  -- these allow for shifting the input before comparison
+  -- we set them to zero for now since that's the usual case
+  DA.:< 0 -- imm5
+  DA.:< 0 -- type1
+  -- extra mask info that should be concretely known
+  -- see aarch32_CMP_r_A in arm_instrs.asl
+  DA.:< 0
+  DA.:< DA.Nil
+
+
+-- | Move an immediate value into a register
+mov_i :: W.W 4 {-^ target register (Rd) -}
+      -> W.W 12 {-^ source value (imm12) -}
+      -> Instruction A32 ()
+mov_i rd imm12 = AI DA.MOV_i_A1 $
+        rd
+  DA.:< 0 -- S
+  DA.:< unconditional -- condition code
+  DA.:< imm12 -- imm12
+  -- extra mask info that should be concretely known
+  -- see aarch32_MOV_i_A1_A in arm_instrs.asl
+  DA.:< 0
+  DA.:< DA.Nil
 
 -- | Read the given concrete value into the register
 --   See Note [Rewriting LDR] for details on this construction
 loadValueIntoReg :: MM.MemWord 32 {-^ address to read from -}
-                 -> DA.Operand "Bv4" {-^ condition code -}
-                 -> DA.Operand "Bv4" {-^ input register -}
+                 -> W.W 4 {-^ input register -}
                  -> DLN.NonEmpty (Instruction A32 ())
-loadValueIntoReg absAddr cond rt = 
+loadValueIntoReg absAddr rt = 
   let 
     w32 = fromIntegral absAddr
-    i1 = ARMInstructionBare $ DA.Instruction DA.LDR_l_A1 (DA.Annotated () (DA.Bv1 1) DA.:< DA.Annotated () rt DA.:< DA.Annotated () (DA.Bv1 1) DA.:< DA.Annotated () (DA.Bv1 0) DA.:< DA.Annotated () cond DA.:< DA.Annotated () (DA.Bv12 0) DA.:< DA.Nil)
-    i2 = toAnnotatedARM A32Repr $ DA.Instruction DA.B_A1 (DA.Bv4 unconditional DA.:< DA.Bv24 (0 `DB.shiftR` 2) DA.:< DA.Nil)
+    i1 = AI DA.LDR_l_A1 $ 1 DA.:< rt DA.:< 1 DA.:< 0 DA.:< unconditional DA.:< 0 DA.:< DA.Nil
+    i2 = AI DA.B_A1 $ unconditional DA.:< (0 `DB.shiftR` 2) DA.:< DA.Nil
     i3 = ARMBytes (LBS.toStrict (BB.toLazyByteString (BB.word32LE w32)))
   in i1 DLN.:| [ i2, i3 ]
 
@@ -731,18 +933,18 @@ armConcretizeAddresses _mem toConcrete insnAddr i0 =
     ARMInstruction (DA.Instruction opc operands) ->
       case (opc, operands) of
         (DA.LDR_l_A1, DA.Annotated _ _p
-                DA.:< DA.Annotated _ rt
-                DA.:< DA.Annotated _ u
-                DA.:< DA.Annotated _ w
-                DA.:< DA.Annotated _ cond
-                DA.:< DA.Annotated (R.PCRelativeRelocation absAddr) offset
+                DA.:< DA.Annotated _ (DA.Bv4 rt)
+                DA.:< DA.Annotated _ (DA.Bv1 u)
+                DA.:< DA.Annotated _ (DA.Bv1 w)
+                DA.:< DA.Annotated _ (assertUnconditional -> True)
+                DA.:< DA.Annotated (R.PCRelativeRelocation absAddr) (DA.Bv12 offset)
                 DA.:< DA.Nil) ->
           -- See Note [Rewriting LDR] for details on this construction
-          let i1s = loadValueIntoReg (R.absoluteAddress (absAddr `R.addressAddOffset` 8)) cond rt
-              i2 = ldr_i cond rt rt u w offset
+          let i1s = loadValueIntoReg (R.absoluteAddress (absAddr `R.addressAddOffset` 8)) rt
+              i2 = ldr_i rt rt u w offset
           in DLN.append i1s (DLN.singleton i2)
-        (DA.ADR_A1, DA.Annotated _ rd DA.:< DA.Annotated _ cond DA.:< DA.Annotated (R.PCRelativeRelocation absAddr) _imm12 DA.:< DA.Nil) ->
-          loadValueIntoReg (R.absoluteAddress (absAddr `R.addressAddOffset` 8)) cond rd
+        (DA.ADR_A1, DA.Annotated _ (DA.Bv4 rd) DA.:< DA.Annotated _ (assertUnconditional -> True) DA.:< DA.Annotated (R.PCRelativeRelocation absAddr) _imm12 DA.:< DA.Nil) ->
+          loadValueIntoReg (R.absoluteAddress (absAddr `R.addressAddOffset` 8)) rd
         (DA.B_A1, DA.Annotated _ (DA.Bv4 cond)
             DA.:< DA.Annotated (R.SymbolicRelocation symTarget) (DA.Bv24 _off)
             DA.:< DA.Nil) ->
@@ -759,40 +961,45 @@ armConcretizeAddresses _mem toConcrete insnAddr i0 =
                DA.:< DA.Nil) ->
           let newOff = jumpOffset insnAddr (toConcrete symTarget)
           in singleton (DA.Instruction DA.BL_i_A2 (DA.Bv1 b1 DA.:< DA.Bv4 cond DA.:< DA.Bv24 newOff DA.:< DA.Nil))
-        (DA.ADD_r_A1, DA.Annotated _ rd
-                DA.:< DA.Annotated annM rm
-                DA.:< DA.Annotated annN rn
-                DA.:< DA.Annotated _ s
+        (DA.ADD_r_A1, DA.Annotated _ (DA.Bv4 rd)
+                DA.:< DA.Annotated annM (DA.Bv4 rm)
+                DA.:< DA.Annotated annN (DA.Bv4 rn)
+                DA.:< DA.Annotated _ (DA.Bv1 s)
                 DA.:< DA.Annotated _ cond
-                DA.:< DA.Annotated _ imm5
-                DA.:< DA.Annotated _ type1
-                DA.:< DA.Nil) | isPC rm || isPC rn ->
+                DA.:< DA.Annotated _ (DA.Bv5 imm5)
+                DA.:< DA.Annotated _ (DA.Bv2 type1)
+                DA.:< DA.Nil) | (isPC rm || isPC rn), assertUnconditional cond ->
           let (r_source, addr) = case (annM, annN) of
                 (R.PCRelativeRelocation addrM, _) | not (isPC rn) -> (rn, addrM)
                 (_, R.PCRelativeRelocation addrN) | not (isPC rm) -> (rm, addrN)
                 _ -> RP.panic RP.ARMISA "armConcretizeAddresses" [ "Unsupported operands for ADD_r_A1", show i0]
               r_spare = spareRegister [r_source, rd]
-              i1 = push cond r_spare -- stash spare
-              i2s = loadValueIntoReg (R.absoluteAddress (addr `R.addressAddOffset` 8)) cond r_spare -- read into r_spare
-              i3 = add_r cond rd r_spare r_source s imm5 type1 -- add r_spare and source value
-              i4 = pop cond r_spare -- restore r_spare 
+              i1 = push r_spare -- stash spare
+              i2s = loadValueIntoReg (R.absoluteAddress (addr `R.addressAddOffset` 8)) r_spare -- read into r_spare
+              i3 = add_r rd r_spare r_source s imm5 type1 -- add r_spare and source value
+              i4 = pop r_spare -- restore r_spare 
           in i1 DLN.:| (DLN.toList i2s) ++ [i3,i4]
         _ -> ARMInstructionBare (DA.Instruction (coerce opc) (FC.fmapFC toUnitAnnotation operands)) DLN.:| []
     ThumbInstruction {} ->
       RP.panic RP.ARMISA "armConcretizeAddresses" [ "Thumb rewriting is not yet supported"
                                                   ]
   where
+    assertUnconditional :: DA.Operand "Bv4" -> Bool
+    assertUnconditional (DA.Bv4 cond) = case cond == unconditional of
+      True -> True
+      False -> RP.panic RP.ARMISA "armConcretizeAddresses" [ "Unexpected conditional: ", show i0 ]
+
     toUnitAnnotation :: forall tp
                       . DA.Annotated (R.Relocation MA.ARM) DA.Operand tp
                      -> DA.Annotated () DA.Operand tp
     toUnitAnnotation (DA.Annotated _ op) = DA.Annotated () op
     
     -- find a spare register disjoint from the given registers
-    spareRegister :: [DA.Operand "Bv4"] -> DA.Operand "Bv4"
-    spareRegister regs = go (DA.Bv4 0) regs
+    spareRegister :: [W.W 4] -> W.W 4
+    spareRegister regs = go 0 regs
       where 
-        go (DA.Bv4 r1) _ | r1 > 3 = RP.panic RP.ARMISA "armConcretizeAddresses" [ "No spare registers"]
-        go (DA.Bv4 r1) ((DA.Bv4 r2) : rs) = if r1 == r2 then go (DA.Bv4 (r1 + 1)) regs else go (DA.Bv4 r1) rs
+        go r1 _ | r1 > 3 = RP.panic RP.ARMISA "armConcretizeAddresses" [ "No spare registers"]
+        go r1 (r2 : rs) = if r1 == r2 then go (r1 + 1) regs else go r1 rs
         go r1 [] = r1
 
 
@@ -823,16 +1030,16 @@ noRelocation = DA.Annotated R.NoRelocation
 
 
 
-register :: DA.Operand "Bv4" -> DA.Annotated (R.Relocation MA.ARM) DA.Operand "Bv4"
-register (DA.Bv4 w) = case w of
+register :: W.W 4 -> DA.Annotated (R.Relocation MA.ARM) DA.Operand "Bv4"
+register w = case w of
   15 -> DA.Annotated PC (DA.Bv4 w)
   14 -> DA.Annotated LR (DA.Bv4 w)
   13 -> DA.Annotated SP (DA.Bv4 w)
   _ -> DA.Annotated GPR (DA.Bv4 w)
 
-isPC :: DA.Operand "Bv4" -> Bool
+isPC :: W.W 4 -> Bool
 isPC opc = case opc of
-  (DA.Bv4 15) -> True
+  15 -> True
   _ -> False
 
 armInstruction
@@ -873,6 +1080,14 @@ pattern BitSet b <- ((\x -> (DB.testBit x 0)) -> b) where
   BitSet True = 1
 {-#COMPLETE BitSet #-}
 
+noRelocations :: R.Instruction MA.ARM tp () -> R.Instruction MA.ARM tp (R.Relocation MA.ARM)
+noRelocations i = case i of
+  ARMInstruction (DA.Instruction opc operands) -> 
+    ARMInstructionAnn (DA.Instruction (coerce opc) (FC.fmapFC (\(DA.Annotated () x) -> DA.Annotated R.NoRelocation x) operands)) R.NoJump
+  ThumbInstruction (DT.Instruction opc operands) ->
+    ThumbInstruction (DT.Instruction (coerce opc) (FC.fmapFC (\(DA.Annotated () x) -> DA.Annotated R.NoRelocation x) operands))
+  ARMBytes bs -> ARMBytes bs
+
 armSymbolizeAddresses :: MM.Memory 32
                       -> (R.ConcreteAddress MA.ARM -> R.SymbolicAddress MA.ARM)
                       -> MD.ParsedBlock MA.ARM ids
@@ -885,7 +1100,7 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
     ARMInstruction (DA.Instruction opc operands) ->
       case (opc, operands) of
         (DA.LDR_l_A1, DA.Annotated _ p
-                DA.:< DA.Annotated _ rt
+                DA.:< DA.Annotated _ (DA.Bv4 rt)
                 DA.:< DA.Annotated _ (DA.Bv1 u)
                 DA.:< DA.Annotated _ w
                 DA.:< DA.Annotated _ cond
@@ -908,11 +1123,11 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
                                                DA.:< DA.Nil
                                                )
           in [armInstruction mem pb insnAddr i']
-        (DA.ADR_A1, DA.Annotated _ rd DA.:< DA.Annotated _ cond DA.:< DA.Annotated _ (DA.Bv12 imm12) DA.:< DA.Nil) ->
+        (DA.ADR_A1, DA.Annotated _ (DA.Bv4 rd) DA.:< DA.Annotated _ cond DA.:< DA.Annotated _ (DA.Bv12 imm12) DA.:< DA.Nil) ->
           let target = insnAddr `R.addressAddOffset` (fromIntegral (a32ExpandImm imm12))
               i' = DA.Instruction (coerce opc) (register rd DA.:< conditionCode cond DA.:< DA.Annotated (R.PCRelativeRelocation target) (DA.Bv12 0) DA.:< DA.Nil)
           in [armInstruction mem pb insnAddr i']
-        (DA.ADR_A2, DA.Annotated _ rd DA.:< DA.Annotated _ cond DA.:< DA.Annotated _ (DA.Bv12 imm12) DA.:< DA.Nil) ->
+        (DA.ADR_A2, DA.Annotated _ (DA.Bv4 rd) DA.:< DA.Annotated _ cond DA.:< DA.Annotated _ (DA.Bv12 imm12) DA.:< DA.Nil) ->
           let target = R.concreteFromAbsolute (R.absoluteAddress insnAddr - (fromIntegral (a32ExpandImm imm12)))
               -- just swap to A1 so we only need to handle one case when concretizing
               i' = DA.Instruction DA.ADR_A1 (register rd DA.:< conditionCode cond DA.:< DA.Annotated (R.PCRelativeRelocation target) (DA.Bv12 0) DA.:< DA.Nil)
@@ -939,9 +1154,9 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
                                                  DA.:< DA.Nil
                                                  )
             in [armInstruction mem pb insnAddr i']
-        (DA.ADD_r_A1, DA.Annotated _ rd
-                DA.:< DA.Annotated _ rm
-                DA.:< DA.Annotated _ rn
+        (DA.ADD_r_A1, DA.Annotated _ (DA.Bv4 rd)
+                DA.:< DA.Annotated _ (DA.Bv4 rm)
+                DA.:< DA.Annotated _ (DA.Bv4 rn)
                 DA.:< DA.Annotated _ s
                 DA.:< DA.Annotated _ cond
                 DA.:< DA.Annotated _ imm5
@@ -951,8 +1166,8 @@ armSymbolizeAddresses mem toSymbolic pb insnAddr i =
                       let target = insnAddr
                           i' = DA.Instruction (coerce opc) 
                             ((register rd)
-                            DA.:< (if isPC rm then DA.Annotated (R.PCRelativeRelocation target) rm else register rm)
-                            DA.:< (if isPC rn then DA.Annotated (R.PCRelativeRelocation target) rn else register rn)
+                            DA.:< (if isPC rm then DA.Annotated (R.PCRelativeRelocation target) (DA.Bv4 rm) else register rm)
+                            DA.:< (if isPC rn then DA.Annotated (R.PCRelativeRelocation target) (DA.Bv4 rn) else register rn)
                             DA.:< noRelocation s
                             DA.:< conditionCode cond
                             DA.:< noRelocation imm5
