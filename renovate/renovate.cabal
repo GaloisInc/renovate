@@ -31,6 +31,7 @@ common bldflags
 library
   import: bldflags
   exposed-modules:     Renovate
+                       Renovate.Metrics
                        Renovate.BinaryFormat.ELF.Internal
                        Renovate.BinaryFormat.ELF.Common.Internal
   other-modules:
@@ -47,7 +48,6 @@ library
                        Renovate.Core.Instruction
                        Renovate.Core.Layout
                        Renovate.Core.Relocation
-                       Renovate.Metrics
                        Renovate.Redirect
                        Renovate.Redirect.Concretize
                        Renovate.Redirect.Internal
