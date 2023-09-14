@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 module Renovate.Arch.AArch32 (
   config,
   ISA.AArch32,
@@ -10,7 +11,17 @@ module Renovate.Arch.AArch32 (
   ISA.InstructionDisassemblyFailure(..),
   ISA.ARMRepr(..),
   ISA.A32,
-  ISA.T32
+  ISA.T32,
+  ISA.Operand(..),
+  ISA.armJumpType,
+  pattern ISA.AI,
+  ISA.noRelocations,
+  ISA.ldr_i,
+  ISA.add_r,
+  ISA.push,
+  ISA.pop,
+  ISA.cmp_r,
+  ISA.mov_i
   ) where
 
 import qualified Data.Map as M
