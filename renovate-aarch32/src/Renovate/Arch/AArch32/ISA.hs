@@ -36,7 +36,12 @@ module Renovate.Arch.AArch32.ISA (
   push,
   pop,
   cmp_r,
-  mov_i
+  jumpOff,
+  getCond,
+  unconditional,
+  exit_call,
+  svc,
+  mov32
   ) where
 
 import Debug.Trace (trace)
@@ -626,7 +631,7 @@ jumpOffset source target =
     adjustedOffset = (rawOff - 8) `DB.shiftR` 2
 
 
-unconditional :: W.W 4
+unconditional :: Cond
 unconditional = 14
 
 -- | The maximum range we can jump on 32 bit ARM
@@ -806,8 +811,8 @@ singleton :: DA.Instruction -> DLN.NonEmpty (Instruction A32 ())
 singleton = (DLN.:| []) . toAnnotatedARM A32Repr
 
 -- | Read the value at the address in the source register into the target register
-ldr_i :: W.W 4 {-^ source register -}
-      -> W.W 4 {-^ target register -}
+ldr_i :: GPR {-^ source register -}
+      -> GPR {-^ target register -}
       -> W.W 1 {-^ add or subtract offset from PC. 1: add; 0: subtract -}
       -> W.W 1 {-^ writeback address to source register. 1: add; 0: subtract -}
       -> W.W 12 {-^ offset -}
@@ -829,9 +834,9 @@ ldr_i rn rt u w offset = AI DA.LDR_i_A1_off $
   DA.:< DA.Nil
 
 -- | Add registers Rn and Rm and put the value in Rd
-add_r :: W.W 4 {-^ target register (Rd) -}
-      -> W.W 4 {-^ source register (Rm) -}
-      -> W.W 4 {-^ source register (Rn) -}
+add_r :: GPR {-^ target register (Rd) -}
+      -> GPR {-^ source register (Rm) -}
+      -> GPR {-^ source register (Rn) -}
       -> W.W 1 {-^ flag to set condition registers on overflow -}
       -> W.W 5 {-^ shift Rm according to type1 register -}
       -> W.W 2 {-^ enum to set shift type -}
@@ -847,7 +852,7 @@ add_r rd rn rm s imm5 type1 = AI DA.ADD_r_A1 $
   DA.:< DA.Nil
 
 -- | Push the source register onto the stack
-push :: W.W 4 {-^ source register -}
+push :: GPR {-^ source register -}
      -> Instruction A32 ()
 push rn = AI DA.STMDB_A1 $
         13 -- Rn (hardcoded to SP here)
@@ -857,7 +862,7 @@ push rn = AI DA.STMDB_A1 $
   DA.:< DA.Nil
 
 -- | Pop the top of the stack and write it to the target register
-pop :: W.W 4 {-^ target register -}
+pop :: GPR {-^ target register -}
     -> Instruction A32 ()
 pop rn = AI DA.LDM_A1 $
         13 -- Rn (hardcoded to SP here)
@@ -867,8 +872,8 @@ pop rn = AI DA.LDM_A1 $
   DA.:< DA.Nil
 
 -- | Compare Rm and Rn and set the condition code.
-cmp_r :: W.W 4 {-^ source register (Rm) -}
-      -> W.W 4 {-^ source register (Rn)  -}
+cmp_r :: GPR {-^ source register (Rm) -}
+      -> GPR {-^ source register (Rn)  -}
       -- -> DA.Operand "QuasiMask4" {-^ quasimask -}
       -> Instruction A32 ()
 cmp_r rm rn = AI DA.CMP_r_A1 $
@@ -884,20 +889,92 @@ cmp_r rm rn = AI DA.CMP_r_A1 $
   DA.:< 0
   DA.:< DA.Nil
 
+type Cond = W.W 4
+type GPR = W.W 4
+
+-- | Give the condition code corresponding to
+--   a comparison
+--   See: asl-translator/data/arm_defs.asl:ConditionHolds
+getCond :: Ordering {-^ comparison -}
+        -> Cond {-^ condition code -}
+getCond = \case
+  EQ -> 4 -- 0100
+  LT -> 11 -- 1011
+  GT -> 12 -- 1100
+
+jumpOff :: Cond
+        -> W.W 24 {-^ target addres -}
+        -> Instruction A32 ()
+jumpOff cond imm24 = AI DA.B_A1 $
+        cond
+  DA.:< imm24
+  DA.:< DA.Nil
+
+-- | Execute a syscall 
+svc :: Cond 
+    -> W.W 24
+    -> Instruction A32 ()
+svc cond imm24 = AI DA.SVC_A1 $
+      cond
+  DA.:< imm24
+  DA.:< DA.Nil
+
+-- | Conditional exit
+exit_call :: Cond -> [Instruction A32 ()]
+exit_call cond = concat $
+  [ 
+    mov32 cond 0 1, -- mov r0, 1
+    mov32 cond 7 1, -- mov r7, 1
+    [svc cond 0] -- svc 0
+  ]
 
 -- | Move an immediate value into a register
-mov_i :: W.W 4 {-^ target register (Rd) -}
+movw_i :: Cond {-^ condition code -}
+      -> GPR {-^ target register (Rd) -}
       -> W.W 12 {-^ source value (imm12) -}
+      -> W.W 4 {-^ source value (imm12) -}
       -> Instruction A32 ()
-mov_i rd imm12 = AI DA.MOV_i_A1 $
+movw_i cond rd imm12 imm4 = AI DA.MOV_i_A2 $
         rd
-  DA.:< 0 -- S
-  DA.:< unconditional -- condition code
+  DA.:< cond -- condition code
   DA.:< imm12 -- imm12
-  -- extra mask info that should be concretely known
-  -- see aarch32_MOV_i_A1_A in arm_instrs.asl
-  DA.:< 0
+  DA.:< imm4
   DA.:< DA.Nil
+
+movt_i :: Cond -> GPR -> W.W 12 -> W.W 4 -> Instruction A32 ()
+movt_i cond rd imm12 imm4 = AI DA.MOVT_A1 $
+  rd DA.:< cond DA.:< imm12 DA.:< imm4 DA.:< DA.Nil
+
+-- | Load a 32 bit value by either emitting a single
+--   mov into the low bits of the register, or
+--   with a second mov into the high bits of the register
+--   if the value is too large to fit into a single
+--   movw
+mov32 :: Cond {-^ condition code -}
+      -> GPR
+      -> W.W 32 {-^ source value -}
+      -> [Instruction A32 ()]
+mov32 cond rd imm32 =
+  [movw_i cond rd i_11_0 i_15_12]
+  ++ if i_27_16 == 0 && i_31_28 == 0 then []
+     else [movt_i cond rd i_27_16 i_31_28]
+  where
+    -- For each mov we need to split up the input 16 bits
+    -- into a 12 bit and 4 bit operand, i.e:
+    -- movw rd imm32<15:2> imm32<11:0>
+    -- movt rd imm32<31:28> imm32<27:16>
+    i_11_0 = slice (PN.knownNat @0) imm32
+    i_15_12 = slice (PN.knownNat @12) imm32
+    i_27_16 = slice (PN.knownNat @16) imm32
+    i_31_28 = slice (PN.knownNat @28) imm32
+
+-- | Take a slice from a word of length m at index x
+--   to get a word of length n
+slice :: forall n m x. (KnownNat n, KnownNat m, n PN.<= m, x PN.<= m) => 
+  PN.NatRepr x -> W.W m -> W.W n
+slice x w = 
+  let shifted = DB.shiftR w (fromIntegral (PN.intValue x))
+  in W.w (fromIntegral shifted)
 
 -- | Read the given concrete value into the register
 --   See Note [Rewriting LDR] for details on this construction

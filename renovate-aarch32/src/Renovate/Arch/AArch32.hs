@@ -21,7 +21,12 @@ module Renovate.Arch.AArch32 (
   ISA.push,
   ISA.pop,
   ISA.cmp_r,
-  ISA.mov_i
+  ISA.getCond,
+  ISA.jumpOff,
+  ISA.unconditional,
+  ISA.exit_call,
+  ISA.svc,
+  ISA.mov32
   ) where
 
 import qualified Data.Map as M
