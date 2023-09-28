@@ -978,16 +978,12 @@ slice x w =
 
 -- | Read the given concrete value into the register
 --   See Note [Rewriting LDR] for details on this construction
-loadValueIntoReg :: MM.MemWord 32 {-^ address to read from -}
-                 -> W.W 4 {-^ input register -}
+loadValueIntoReg :: MM.MemWord 32 {-^ value to load -}
+                 -> GPR {-^ input register -}
                  -> DLN.NonEmpty (Instruction A32 ())
-loadValueIntoReg absAddr rt = 
-  let 
-    w32 = fromIntegral absAddr
-    i1 = AI DA.LDR_l_A1 $ 1 DA.:< rt DA.:< 1 DA.:< 0 DA.:< unconditional DA.:< 0 DA.:< DA.Nil
-    i2 = AI DA.B_A1 $ unconditional DA.:< (0 `DB.shiftR` 2) DA.:< DA.Nil
-    i3 = ARMBytes (LBS.toStrict (BB.toLazyByteString (BB.word32LE w32)))
-  in i1 DLN.:| [ i2, i3 ]
+loadValueIntoReg absAddr rt | a:as <- mov32 unconditional rt (fromIntegral absAddr) =
+  a DLN.:| as
+loadValueIntoReg _ _ = error "loadValueIntoReg: invalid mov32 result"
 
 -- | Resolve relocations in instructions (turning them from symbolic instructions to concrete instructions)
 --
@@ -1375,15 +1371,14 @@ text section from the new one.
 
 We will fix that by translating into a three instruction sequence:
 
-> ldr rt, [pc, #8]
+> movw rt, <address that the data is really at>
+> movt rt, <address that the data is really at> << 16
 > ldr [rt], [rt, #0]
-> b +8
-> .word <address that the data is really at>
 
-That is: we put the real address of the original piece of data
-inline as an absolute address that we can load locally.  We add a
-fallthrough jump to make sure that we never execute the inline
-data.
+That is: we split the address into two 16 bit chunks, and use
+movw to load the bottom 16 bits into rt, and movt to load the 
+top 16 bits into rt. The movt can be omitted if the top 16 bits
+are all zero.
 
 This is a bit awkward, as the address we are loading is actually
 a pointer to a table that has the address of the real variable
@@ -1394,7 +1389,7 @@ Note that the pseudo-code above is reflected oddly below.
 
  * First, the computed address has to be offset by 8 to account
    for the odd semantics of reading the PC.
- * Second, the two jump offsets are 0 for the same reason (you
+ * Second, the jump offset is 0 for the same reason (you
    automatically get a +8 vs the PC, so we don't need any extra)
 
 -}
